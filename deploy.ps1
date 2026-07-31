@@ -236,6 +236,20 @@ try {
 
         $outcome.results += $entry
         Save-Outcome
+
+        # A per-certificate copy of the outcome, so the page can show the last
+        # known deployment state for each row without re-probing every node on
+        # page load. Written whether the deployment succeeded or not - a failed
+        # deployment is exactly the state worth remembering.
+        try {
+            Write-TextFileAtomic -Path (Join-Path $script:JobsDir "deploy-$certId.json") `
+                -Content (@{
+                    certId = $certId; name = $cert.displayName; ok = $entry.ok
+                    at = (Get-Date).ToString('o'); serial = $(if ($entry.preflight) { $entry.preflight.serial } else { $null })
+                    error = $entry.error; targets = $entry.targets
+                } | ConvertTo-Json -Depth 10)
+        }
+        catch { Write-Log "Could not record the deployment state: $($_.Exception.Message)" 'warn' }
     }
 
     $failed = @($outcome.results | Where-Object { -not $_.ok }).Count

@@ -268,6 +268,55 @@ function Get-StateResponse {
         $catalogOut[$k] = @{ label = $script:PluginCatalog[$k].Label; args = @($script:PluginCatalog[$k].Args) }
     }
 
+    # Deployment targets. Same rule as everywhere else: report whether a secret
+    # is stored, never the secret.
+    $targetsOut = @()
+    foreach ($t in @($settings.targets)) {
+        $catalog  = $script:TargetCatalog[$t.type]
+        $argState = @{}
+        if ($catalog) {
+            foreach ($a in $catalog.Args) {
+                $have = ($t.args -and $t.args.ContainsKey($a.Name))
+                if ($a.Secret)            { $argState[$a.Name] = [bool](Test-TrackerSecret -Key "$($t.id):$($a.Name)") }
+                elseif ($a.Type -eq 'bool'){ $argState[$a.Name] = [bool]$(if ($have) { $t.args[$a.Name] } else { $false }) }
+                elseif ($have)             { $argState[$a.Name] = [string]$t.args[$a.Name] }
+                else                       { $argState[$a.Name] = '' }
+            }
+        }
+        $targetsOut += @{
+            id    = $t.id
+            label = $t.label
+            type  = $t.type
+            nodes = @(@($t.nodes) | ForEach-Object {
+                @{ name = $_.name; url = $_.url
+                   verifyHost = $(if ($_.ContainsKey('verifyHost')) { $_.verifyHost } else { '' }) }
+            })
+            args  = $argState
+        }
+    }
+
+    $targetCatalogOut = @{}
+    foreach ($k in $script:TargetCatalog.Keys) {
+        $targetCatalogOut[$k] = @{ label = $script:TargetCatalog[$k].Label; args = @($script:TargetCatalog[$k].Args) }
+    }
+
+    # Which targets each certificate is assigned to, plus the outcome of the last
+    # deployment so the page can show per-node state without re-probing.
+    $deployOut = @{}
+    foreach ($c in @($grouping.certs)) {
+        $assigned = @()
+        if ($settings.certs -and $settings.certs.ContainsKey($c.certId)) {
+            $cfg = $settings.certs[$c.certId]
+            if ($cfg.ContainsKey('targets')) { $assigned = @($cfg.targets) }
+        }
+        $last = $null
+        $lastFile = Join-Path $script:JobsDir "deploy-$($c.certId).json"
+        if (Test-Path $lastFile) {
+            try { $last = (Get-Content $lastFile -Raw -Encoding UTF8) | ConvertFrom-Json } catch { }
+        }
+        $deployOut[$c.certId] = @{ targets = $assigned; last = $last }
+    }
+
     return @{
         generated  = $checker.generated
         certs      = @($grouping.certs)
@@ -295,9 +344,12 @@ function Get-StateResponse {
                 }
             })
             providers   = @($providers)
+            targets     = @($targetsOut)
         }
-        catalog    = $catalogOut
-        acmeReady  = [bool](Get-VendoredPoshAcme)
+        catalog       = $catalogOut
+        targetCatalog = $targetCatalogOut
+        deployment    = $deployOut
+        acmeReady     = [bool](Get-VendoredPoshAcme)
     }
 }
 
@@ -414,6 +466,68 @@ function Invoke-SaveSettings {
         }
 
         $settings.providers = $kept
+    }
+
+    if ($Payload.PSObject.Properties['targets'] -and $null -ne $Payload.targets) {
+        $keptTargets = @()
+        foreach ($t in @($Payload.targets)) {
+            $id = [string]$t.id
+            if (-not $id -or $id -notmatch '^[a-zA-Z0-9_\-]{1,64}$') { throw "A deployment target has an invalid id." }
+
+            $type = [string]$t.type
+            if (-not $script:TargetCatalog.ContainsKey($type)) { throw "Unknown deployment target type '$type'." }
+            if (-not $t.label) { throw "Every deployment target needs a name." }
+
+            $nodes = @()
+            foreach ($n in @($t.nodes)) {
+                if (-not $n.url) { continue }
+                # A malformed URL here becomes an unexplained failure much later,
+                # during a deployment, so reject it at save time.
+                try { [void][Uri]$n.url } catch { throw "'$($n.url)' is not a valid URL." }
+                $nodes += @{
+                    name = $(if ($n.name) { [string]$n.name } else { ([Uri]$n.url).Host })
+                    url  = [string]$n.url
+                    verifyHost = [string]$n.verifyHost
+                }
+            }
+            if (-not $nodes.Count) { throw "'$([string]$t.label)' needs at least one node." }
+
+            $plain = @{}
+            foreach ($a in $script:TargetCatalog[$type].Args) {
+                $val = $null
+                if ($t.args -and $t.args.PSObject.Properties[$a.Name]) { $val = $t.args.($a.Name) }
+
+                if ($a.Secret) {
+                    # Blank means "keep what is stored", so an unchanged form
+                    # cannot wipe a credential nobody retyped.
+                    if ($val) { Set-TrackerSecret -Key "$id`:$($a.Name)" -Value ([string]$val) }
+                }
+                elseif ($a.Type -eq 'bool') { $plain[$a.Name] = [bool]$val }
+                else { $plain[$a.Name] = [string]$val }
+            }
+
+            $keptTargets += @{ id = $id; label = [string]$t.label; type = $type; nodes = $nodes; args = $plain }
+        }
+
+        # Only prune when something survives - an empty list is far more likely a
+        # bug than a deliberate "delete every credential".
+        if (@($keptTargets).Count -gt 0) {
+            $liveTargetIds = @($keptTargets | ForEach-Object { $_.id })
+            $knownTypes    = @($script:TargetCatalog.Keys)
+            $store = Get-SecretStore
+            $removed = 0
+            foreach ($key in @($store.Keys)) {
+                if ($key -like 'ca:*') { continue }
+                $owner = ($key -split ':')[0]
+                # Only prune keys that clearly belong to a removed TARGET; DNS
+                # provider secrets are pruned by their own branch above.
+                $isTargetKey = @($settings.targets | ForEach-Object { $_.id }) -contains $owner
+                if ($isTargetKey -and $liveTargetIds -notcontains $owner) { $store.Remove($key); $removed++ }
+            }
+            if ($removed -gt 0) { Save-SecretStore $store }
+        }
+
+        $settings.targets = $keptTargets
     }
 
     Save-TrackerSettings -Settings $settings
@@ -586,6 +700,102 @@ function Invoke-Route {
             if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
             try { Send-Json $Stream (Invoke-SaveSettings -Payload $payload) }
             catch { Send-Error $Stream 400 $_.Exception.Message }
+            return
+        }
+
+        '^/api/targets/test$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+
+            $wanted = $null
+            if ($payload -and $payload.PSObject.Properties['targetId']) { $wanted = [string]$payload.targetId }
+
+            $settings = Get-TrackerSettings
+            $results = @()
+            foreach ($t in @($settings.targets)) {
+                if ($wanted -and $t.id -ne $wanted) { continue }
+
+                $user     = Get-TargetArg -Target $t -Name 'user'
+                $password = Get-TargetSecret -TargetId $t.id -Name 'password'
+                $insecure = [bool](Get-TargetArg -Target $t -Name 'insecureTls' -Default $false)
+
+                foreach ($n in @($t.nodes)) {
+                    $r = @{ targetId = $t.id; targetLabel = $t.label; node = $n.name; url = $n.url
+                            ok = $false; apiVersion = $null; certificates = @(); error = $null }
+                    try {
+                        $api = Get-DataPlaneApiVersion -BaseUrl $n.url -User $user -Password $password -InsecureTls:$insecure
+                        $r.apiVersion = $api
+                        $r.certificates = @(Get-HAProxyCertificates -BaseUrl $n.url -User $user -Password $password `
+                                              -ApiVersion $api -InsecureTls:$insecure)
+                        $r.ok = $true
+                    }
+                    catch { $r.error = ($_.Exception.Message -split "`n")[0].Trim() }
+                    $results += $r
+                }
+            }
+
+            if (-not $results.Count) { Send-Error $Stream 400 'No deployment target to test.'; return }
+            Send-Json $Stream @{ ok = (@($results | Where-Object { -not $_.ok }).Count -eq 0); nodes = @($results) }
+            return
+        }
+
+        '^/api/deploy$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+
+            $certIds = @()
+            if ($payload -and $payload.PSObject.Properties['certs']) { $certIds = @($payload.certs) }
+            if (-not $certIds.Count) { Send-Error $Stream 400 'No certificate was selected.'; return }
+            if ($certIds.Count -gt 50) { Send-Error $Stream 400 'Too many certificates in one run.'; return }
+
+            $settings = Get-TrackerSettings
+            foreach ($c in $certIds) {
+                $cl = ([string]$c).ToLowerInvariant()
+                if (-not (Test-SafeCertName $cl)) { Send-Error $Stream 400 "'$c' is not a valid certificate name."; return }
+
+                # Refuse early rather than spawning a job that will only fail.
+                $assigned = @()
+                if ($settings.certs -and $settings.certs.ContainsKey($cl)) {
+                    $cfg = $settings.certs[$cl]
+                    if ($cfg.ContainsKey('targets')) { $assigned = @($cfg.targets) }
+                }
+                if (-not $assigned.Count) {
+                    Send-Error $Stream 400 "'$c' has no deployment target assigned. Pick one on its row first."
+                    return
+                }
+            }
+
+            $id = [Guid]::NewGuid().ToString('n').Substring(0, 12)
+            $resultPath = Join-Path $script:JobsDir "$id.result.json"
+            $scriptArgs = @((Join-Path $PSScriptRoot 'deploy.ps1'), '-ResultPath', $resultPath, '-Cert') + $certIds
+
+            $jobId = Start-ChildJob -Kind 'deploy' -ScriptArgs $scriptArgs
+            $script:Jobs[$jobId].result = $resultPath
+            $script:Jobs[$jobId].certs  = @($certIds)
+
+            Send-Json $Stream @{ jobId = $jobId }
+            return
+        }
+
+        '^/api/cert/(?<certId>[^/]+)/targets$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+
+            $certKey = ([string]$Matches.certId).ToLowerInvariant()
+            if (-not (Test-SafeCertName $certKey)) { Send-Error $Stream 400 'Invalid certificate name.'; return }
+
+            $settings = Get-TrackerSettings
+            $wanted = @()
+            if ($payload -and $payload.PSObject.Properties['targets']) { $wanted = @($payload.targets) }
+
+            $known = @($settings.targets | ForEach-Object { $_.id })
+            foreach ($w in $wanted) {
+                if ($known -notcontains [string]$w) { Send-Error $Stream 400 "Unknown deployment target '$w'."; return }
+            }
+
+            if (-not $settings.certs) { $settings.certs = @{} }
+            if (-not $settings.certs.ContainsKey($certKey)) { $settings.certs[$certKey] = @{} }
+            $settings.certs[$certKey].targets = @($wanted)
+
+            Save-TrackerSettings -Settings $settings
+            Send-Json $Stream @{ ok = $true; certId = $certKey; targets = @($wanted) }
             return
         }
 

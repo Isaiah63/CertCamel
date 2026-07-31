@@ -161,6 +161,10 @@ function New-DefaultSettings {
         cas         = $cas
         defaultCaId = 'letsencrypt'
         providers   = @()
+        # Where issued certificates get pushed. Empty by default: issuing works
+        # perfectly well on its own, and a half-configured target is worse than
+        # no target at all.
+        targets     = @()
         certs       = @{}
     }
 }
@@ -207,6 +211,7 @@ function Get-TrackerSettings {
         if (-not $s.ContainsKey($k) -or $null -eq $s[$k]) { $s[$k] = $def[$k] }
     }
     $s.providers = @($s.providers)
+    $s.targets   = @($s.targets)
     $s.cas       = @($s.cas)
     if (-not @($s.cas).Count) { $s.cas = $def.cas }
 
@@ -1050,6 +1055,7 @@ function Get-CertificateGroups {
             $names    = @($k.names)
             $external = $false
             $caId     = $null
+            $targets  = @()
             $override = $null
 
             # Overrides are keyed by the certificate identifier, so the SAN and
@@ -1057,6 +1063,10 @@ function Get-CertificateGroups {
             if ($Settings.certs -and $Settings.certs.ContainsKey($k.id)) {
                 $override = $Settings.certs[$k.id]
                 if ($override.ContainsKey('caId') -and $override.caId) { $caId = [string]$override.caId }
+                # Which load balancers this certificate belongs on. Empty means
+                # issued but never deployed, which the page states outright
+                # rather than leaving as a blank column.
+                if ($override.ContainsKey('targets') -and $override.targets) { $targets = @($override.targets) }
                 # "Managed elsewhere": still watched, never renewed from here. A
                 # domain someone else auto-renews is worth watching precisely so
                 # you find out when that automation stops - but issuing a second
@@ -1095,6 +1105,7 @@ function Get-CertificateGroups {
                 categories    = @($(if ($g) { $g.categories } else { @() }))
                 wildcard      = ($k.kind -eq 'wildcard')
                 external      = $external
+                targets       = @($targets)
                 caId          = $ca.id
                 caLabel       = $ca.label
                 caStaging     = [bool]$ca.useStaging
@@ -1314,6 +1325,11 @@ function Invoke-DataPlaneRequest {
     try {
         [Net.ServicePointManager]::SecurityProtocol =
             [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        # .NET sends "Expect: 100-continue" on request bodies by default and then
+        # waits for the interim response. Plenty of servers and reverse proxies
+        # never send it, which shows up as a body that silently never uploads.
+        # Certificates are small; the round trip buys nothing here.
+        [Net.ServicePointManager]::Expect100Continue = $false
     } catch { }
 
     $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${User}:${Password}"))
@@ -1377,6 +1393,7 @@ function Get-DataPlaneApiVersion {
         return $script:DataPlaneApiVersion[$BaseUrl]
     }
 
+    $lastError = $null
     foreach ($v in @('v3', 'v2')) {
         try {
             [void](Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
@@ -1385,12 +1402,18 @@ function Get-DataPlaneApiVersion {
             return $v
         }
         catch {
+            $lastError = ($_.Exception.Message -split "`n")[0].Trim()
             # A 401 means we reached the API and it works - the credentials are
             # simply wrong. Retrying under a different version prefix would only
             # produce a more confusing error, so surface this one.
-            if ("$($_)" -match 'HTTP 401|HTTP 403') { throw }
+            if ($lastError -match 'HTTP 401|HTTP 403') { throw }
         }
     }
+
+    # Carry the last real response through. "Nothing answered" when the node in
+    # fact replied 500 sends people hunting for a network fault that is not
+    # there; the server's own error is the useful thing to report.
+    if ($lastError) { throw "No usable Data Plane API at $BaseUrl (tried /v3 and /v2). Last response: $lastError" }
     throw "No Data Plane API answered at $BaseUrl on /v3 or /v2."
 }
 
