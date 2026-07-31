@@ -215,6 +215,13 @@ $worker = {
             issuer    = Get-IssuerLabel $cert.Issuer
             subject   = Get-DnField $cert.Subject 'CN'
             sans      = @(Get-CertificateSans $cert)
+            # The serial is unique per issuance, which makes it the only value
+            # that proves a specific certificate is the one being served. Expiry
+            # dates cannot do that: two certificates issued the same day look
+            # identical by date, so "days remaining went up" is reassurance
+            # rather than evidence. Deployment verification compares serials.
+            serial     = $cert.SerialNumber
+            thumbprint = $cert.Thumbprint
             renewOnly = $false
             error     = $null
         }
@@ -234,6 +241,8 @@ $worker = {
             issuer    = $null
             subject   = $null
             sans      = @()
+            serial     = $null
+            thumbprint = $null
             renewOnly = $false
             error     = $msg
         }
@@ -316,7 +325,7 @@ try {
             $byKey[$key] = [pscustomobject]@{
                 host = $r.Target.Host; port = $r.Target.Port; category = $r.Target.Category
                 ok = $false; notAfter = $null; notBefore = $null; issuer = $null
-                subject = $null; sans = @(); renewOnly = $false
+                subject = $null; sans = @(); serial = $null; thumbprint = $null; renewOnly = $false
                 error = ($_.Exception.Message -split "`n")[0].Trim()
             }
         }
@@ -337,7 +346,7 @@ foreach ($t in $targets) {
         $results += [pscustomobject]@{
             host = $t.Host; port = $t.Port; category = $t.Category
             ok = $false; notAfter = $null; notBefore = $null; issuer = $null
-            subject = $null; sans = @(); renewOnly = $true; error = $null
+            subject = $null; sans = @(); serial = $null; thumbprint = $null; renewOnly = $true; error = $null
         }
         continue
     }
