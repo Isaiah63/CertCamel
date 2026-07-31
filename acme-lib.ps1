@@ -1230,3 +1230,571 @@ function Test-SafeCertName {
     if ($Name -match '\.\.')                 { return $false }
     return ($Name -match '^[a-z0-9][a-z0-9.\-]*$')
 }
+
+# --------------------------------------------------------------------------- #
+# Deployment targets
+# --------------------------------------------------------------------------- #
+# A third profile type alongside DNS providers and certificate authorities, and
+# deliberately the same shape: a catalog entry describes the fields, values live
+# in settings.json, and anything marked Secret goes to the DPAPI store instead.
+
+$script:TargetCatalog = @{
+    'haproxy-dataplane' = @{
+        Label = 'HAProxy (Data Plane API)'
+        Args  = @(
+            @{ Name = 'user';     Label = 'API username'; Secret = $false; Type = 'text'
+               Hint  = 'From the HAProxy userlist that dataplaneapi.yml points at.' }
+            @{ Name = 'password'; Label = 'API password'; Secret = $true;  Type = 'text' }
+            @{ Name = 'remoteName'; Label = 'Certificate filename on HAProxy'; Secret = $false; Type = 'text'
+               Hint  = 'Inside the Data Plane API ssl_certs_dir. Leave blank for "<cert>.pem". This is the certificate IDENTITY to HAProxy - it must never change between renewals, so no dates in it.' }
+            @{ Name = 'crtList';  Label = 'crt-list path (optional)'; Secret = $false; Type = 'text'
+               Hint  = 'e.g. /etc/hapee-3.0/crt-list.txt. Only needed to add a certificate HAProxy has never loaded; renewals of an existing one do not use it.' }
+            @{ Name = 'verifyPort'; Label = 'Port to verify on'; Secret = $false; Type = 'text'
+               Hint  = 'Usually 443. Verification connects to each node here and reads what it actually serves.' }
+            @{ Name = 'insecureTls'; Label = 'Skip TLS verification of the API endpoint'; Secret = $false; Type = 'bool'
+               Hint  = 'Only for a Data Plane API using a self-signed certificate. It does not affect certificate verification, which never trusts anything anyway.' }
+        )
+    }
+}
+
+# Nodes are stored separately from the catalog args because they are a list, not
+# a scalar: one target is a group of load balancers sharing credentials and a
+# certificate set. Verification is still per node - that is the whole point.
+function Get-TargetProfile {
+    param([hashtable]$Settings, [string]$TargetId)
+
+    if (-not $Settings.ContainsKey('targets')) { return $null }
+    $match = @(@($Settings.targets) | Where-Object { $_.id -eq $TargetId })
+    if ($match.Count) { return $match[0] }
+    return $null
+}
+
+function Get-TargetArg {
+    param([hashtable]$Target, [string]$Name, $Default = $null)
+
+    if ($Target.ContainsKey('args') -and $Target.args -and $Target.args.ContainsKey($Name)) {
+        $v = $Target.args[$Name]
+        if ($null -ne $v -and "$v" -ne '') { return $v }
+    }
+    return $Default
+}
+
+# Same "<id>:<argName>" convention the DNS providers and CAs already use, so
+# every credential in the tool lives in one DPAPI-encrypted store.
+function Get-TargetSecret {
+    param([string]$TargetId, [string]$Name)
+    return Get-TrackerSecret -Key "$TargetId`:$Name" -AsPlainText
+}
+
+# --------------------------------------------------------------------------- #
+# HAProxy Data Plane API
+# --------------------------------------------------------------------------- #
+# Chosen over the raw Runtime API for one reason: the Runtime API is memory-only.
+# A certificate pushed that way is live immediately but vanishes on the next
+# reload for any unrelated cause, silently reverting to whatever is on disk. The
+# Data Plane API storage endpoint writes to disk AND pushes to the runtime
+# socket, falling back to a reload only if the runtime push fails. Durable and
+# hitless, which is the combination that matters.
+
+$script:DataPlaneApiVersion = @{}
+
+function Invoke-DataPlaneRequest {
+    param(
+        [string]$BaseUrl,
+        [string]$User,
+        [string]$Password,
+        [string]$Method = 'GET',
+        [string]$Path,
+        $Body = $null,
+        [string]$ContentType = 'application/json',
+        [switch]$InsecureTls,
+        [int]$TimeoutSeconds = 30
+    )
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch { }
+
+    $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${User}:${Password}"))
+    $headers = @{ Authorization = "Basic $auth"; Accept = 'application/json' }
+
+    $uri = $BaseUrl.TrimEnd('/') + $Path
+
+    # ServerCertificateValidationCallback is process-global on PS 5.1 - there is
+    # no per-request option. Save and restore it so one target's self-signed API
+    # certificate cannot quietly disable validation for everything else.
+    $savedCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
+    try {
+        if ($InsecureTls) {
+            [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        }
+
+        $params = @{
+            Uri = $uri; Method = $Method; Headers = $headers
+            TimeoutSec = $TimeoutSeconds; ErrorAction = 'Stop'
+        }
+        if ($null -ne $Body) { $params.Body = $Body; $params.ContentType = $ContentType }
+
+        return Invoke-RestMethod @params
+    }
+    catch {
+        $status = $null; $detail = $null
+        if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) {
+            try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+            try {
+                $sr = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
+                $raw = $sr.ReadToEnd(); $sr.Dispose()
+                $parsed = $raw | ConvertFrom-Json
+                if ($parsed.message) { $detail = $parsed.message } elseif ($raw) { $detail = $raw }
+            } catch { }
+        }
+
+        $msg = switch ($status) {
+            401     { 'authentication failed - check the Data Plane API username and password' }
+            403     { 'authorised but forbidden - the user may lack write permission' }
+            404     { 'endpoint not found - check the URL and API version' }
+            409     { 'configuration version conflict - something else changed HAProxy config mid-flight' }
+            default { $_.Exception.Message }
+        }
+        if ($detail) { $msg = "$msg ($detail)" }
+        throw "$Method $Path -> $(if ($status) { "HTTP $status" } else { 'no response' }): $msg"
+    }
+    finally {
+        [Net.ServicePointManager]::ServerCertificateValidationCallback = $savedCallback
+    }
+}
+
+function Get-DataPlaneApiVersion {
+    <#
+      Probe /v3 first, fall back to /v2. HAPEE 3.0 serves v3; older builds serve
+      v2, and pinning either one would break on upgrade. Cached per base URL for
+      the life of the process.
+    #>
+    param([string]$BaseUrl, [string]$User, [string]$Password, [switch]$InsecureTls)
+
+    if ($script:DataPlaneApiVersion.ContainsKey($BaseUrl)) {
+        return $script:DataPlaneApiVersion[$BaseUrl]
+    }
+
+    foreach ($v in @('v3', 'v2')) {
+        try {
+            [void](Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                     -Path "/$v/services/haproxy/configuration/version" -InsecureTls:$InsecureTls -TimeoutSeconds 15)
+            $script:DataPlaneApiVersion[$BaseUrl] = $v
+            return $v
+        }
+        catch {
+            # A 401 means we reached the API and it works - the credentials are
+            # simply wrong. Retrying under a different version prefix would only
+            # produce a more confusing error, so surface this one.
+            if ("$($_)" -match 'HTTP 401|HTTP 403') { throw }
+        }
+    }
+    throw "No Data Plane API answered at $BaseUrl on /v3 or /v2."
+}
+
+function Get-DataPlaneConfigVersion {
+    param([string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion, [switch]$InsecureTls)
+
+    $v = Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+            -Path "/$ApiVersion/services/haproxy/configuration/version" -InsecureTls:$InsecureTls
+    return [int]$v
+}
+
+function Get-HAProxyCertificates {
+    <#
+      Every certificate in the Data Plane API's ssl_certs_dir. Used by Test
+      connection, and to decide whether a push is a replace or a first upload.
+    #>
+    param([string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion, [switch]$InsecureTls)
+
+    $resp = Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                -Path "/$ApiVersion/services/haproxy/storage/ssl_certificates" -InsecureTls:$InsecureTls
+
+    $names = @()
+    foreach ($c in @($resp)) {
+        if ($c.storage_name) { $names += [string]$c.storage_name }
+        elseif ($c.file)     { $names += [string]$c.file }
+        elseif ($c -is [string]) { $names += $c }
+    }
+    return @($names)
+}
+
+function Push-CertificateToNode {
+    <#
+      Upload a combined PEM to one HAProxy node.
+
+      Replace (PUT) when the file already exists, create (POST, multipart) when
+      it does not. The distinction matters: PUT against a name HAProxy has never
+      seen returns 404, and POST against one it has returns a conflict.
+
+      force_reload and skip_reload are deliberately not passed. skip_reload
+      suppresses the fallback, so a failed runtime push would leave disk and
+      memory diverged with no error - the exact silent failure this whole design
+      exists to avoid. The default (runtime push, reload only if that fails) is
+      what is wanted.
+    #>
+    param(
+        [string]$BaseUrl, [string]$User, [string]$Password,
+        [string]$RemoteName, [string]$PemContent,
+        [switch]$InsecureTls
+    )
+
+    $out = @{ node = $BaseUrl; remoteName = $RemoteName; ok = $false
+              action = $null; apiVersion = $null; error = $null }
+
+    try {
+        $api = Get-DataPlaneApiVersion -BaseUrl $BaseUrl -User $User -Password $Password -InsecureTls:$InsecureTls
+        $out.apiVersion = $api
+
+        $existing = @()
+        try { $existing = Get-HAProxyCertificates -BaseUrl $BaseUrl -User $User -Password $Password -ApiVersion $api -InsecureTls:$InsecureTls } catch { }
+        $isReplace = ($existing -contains $RemoteName)
+
+        $cfgVer = Get-DataPlaneConfigVersion -BaseUrl $BaseUrl -User $User -Password $Password -ApiVersion $api -InsecureTls:$InsecureTls
+
+        if ($isReplace) {
+            $out.action = 'replace'
+            [void](Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                     -Method 'PUT' -ContentType 'text/plain' -Body $PemContent -InsecureTls:$InsecureTls `
+                     -Path "/$api/services/haproxy/storage/ssl_certificates/$RemoteName`?version=$cfgVer")
+        }
+        else {
+            $out.action = 'create'
+            # multipart/form-data by hand: Invoke-RestMethod -Form is PS 6+.
+            $boundary = [Guid]::NewGuid().ToString('n')
+            $lf = "`r`n"
+            $body = "--$boundary$lf" +
+                    "Content-Disposition: form-data; name=`"file_upload`"; filename=`"$RemoteName`"$lf" +
+                    "Content-Type: application/octet-stream$lf$lf" +
+                    $PemContent + $lf +
+                    "--$boundary--$lf"
+
+            [void](Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                     -Method 'POST' -ContentType "multipart/form-data; boundary=$boundary" `
+                     -Body $body -InsecureTls:$InsecureTls `
+                     -Path "/$api/services/haproxy/storage/ssl_certificates`?version=$cfgVer")
+        }
+
+        $out.ok = $true
+    }
+    catch { $out.error = ($_.Exception.Message -split "`n")[0].Trim() }
+
+    return $out
+}
+
+# --------------------------------------------------------------------------- #
+# Certificate bundle validation  (verification tier T0)
+# --------------------------------------------------------------------------- #
+# Run before anything is pushed anywhere. Deploying a broken bundle to six load
+# balancers is the worst outcome this tool can produce, and it is entirely
+# preventable: everything below is checkable locally, in milliseconds, with no
+# network involved.
+
+function Read-PemBlocks {
+    <#
+      Split a PEM into its labelled blocks. Returns objects with Label (e.g.
+      "CERTIFICATE", "PRIVATE KEY") and Der (the decoded bytes).
+    #>
+    param([string]$Text)
+
+    $blocks = @()
+    foreach ($m in [regex]::Matches($Text,
+        '-----BEGIN (?<label>[A-Z0-9 ]+)-----(?<b64>[\s\S]*?)-----END \k<label>-----')) {
+        $der = $null
+        try { $der = [Convert]::FromBase64String(($m.Groups['b64'].Value -replace '\s','')) } catch { }
+        $blocks += [pscustomobject]@{ Label = $m.Groups['label'].Value.Trim(); Der = $der }
+    }
+    return $blocks
+}
+
+function Get-RsaModulusFromKeyDer {
+    <#
+      Pull the RSA modulus out of a private key so it can be compared against the
+      certificate's. This is the check that catches a certificate and key from
+      different orders being stitched together - the one failure mode that looks
+      perfectly valid on inspection and takes the site down on deployment.
+
+      Hand-rolled ASN.1 because .NET Framework has no PEM key import;
+      RSA.ImportRSAPrivateKey arrived in .NET Core 3.0. Only the shape needed is
+      parsed, not a general DER decoder.
+
+        PKCS#1  RSAPrivateKey ::= SEQUENCE { version INTEGER, modulus INTEGER, ... }
+        PKCS#8  PrivateKeyInfo ::= SEQUENCE { version INTEGER,
+                                              algorithm SEQUENCE,
+                                              privateKey OCTET STRING (a PKCS#1 blob) }
+
+      Returns $null for anything not RSA - EC keys have no modulus, and are
+      reported as "not verified" rather than failed.
+    #>
+    param([byte[]]$Der, [string]$Label)
+
+    if (-not $Der) { return $null }
+
+    $pos = 0
+    function Read-Len {
+        param([byte[]]$B, [ref]$P)
+        $first = $B[$P.Value]; $P.Value++
+        if ($first -lt 0x80) { return [int]$first }
+        $n = $first -band 0x7F
+        $len = 0
+        for ($i = 0; $i -lt $n; $i++) { $len = ($len -shl 8) -bor $B[$P.Value]; $P.Value++ }
+        return $len
+    }
+
+    try {
+        if ($Der[$pos] -ne 0x30) { return $null }        # outer SEQUENCE
+        $pos++; [void](Read-Len $Der ([ref]$pos))
+
+        if ($Der[$pos] -ne 0x02) { return $null }        # version INTEGER
+        $pos++
+        $vLen = Read-Len $Der ([ref]$pos)
+        $pos += $vLen
+
+        if ($Label -eq 'PRIVATE KEY') {
+            # PKCS#8: skip the algorithm SEQUENCE, then unwrap the OCTET STRING
+            # and recurse into the PKCS#1 structure it contains.
+            if ($Der[$pos] -ne 0x30) { return $null }
+            $pos++
+            $aLen = Read-Len $Der ([ref]$pos)
+            $pos += $aLen
+
+            if ($Der[$pos] -ne 0x04) { return $null }    # OCTET STRING
+            $pos++
+            $oLen = Read-Len $Der ([ref]$pos)
+            $inner = New-Object byte[] $oLen
+            [Array]::Copy($Der, $pos, $inner, 0, $oLen)
+            return Get-RsaModulusFromKeyDer -Der $inner -Label 'RSA PRIVATE KEY'
+        }
+
+        if ($Der[$pos] -ne 0x02) { return $null }        # modulus INTEGER
+        $pos++
+        $mLen = Read-Len $Der ([ref]$pos)
+        $mod = New-Object byte[] $mLen
+        [Array]::Copy($Der, $pos, $mod, 0, $mLen)
+
+        # DER signs its INTEGERs, so a high bit set means a leading 0x00 pad that
+        # the certificate's raw modulus will not have.
+        if ($mod.Length -gt 1 -and $mod[0] -eq 0) {
+            $trimmed = New-Object byte[] ($mod.Length - 1)
+            [Array]::Copy($mod, 1, $trimmed, 0, $trimmed.Length)
+            $mod = $trimmed
+        }
+        return $mod
+    }
+    catch { return $null }
+}
+
+function Test-CertificateBundle {
+    <#
+      Validate a combined PEM before it goes anywhere. Returns a result object
+      with ok, plus per-check detail so the log can say which part failed rather
+      than just "invalid".
+    #>
+    param(
+        [string]$Path,
+        [string[]]$ExpectedNames = @(),
+        [int]$MinimumDaysRemaining = 1
+    )
+
+    $result = @{
+        ok = $false; path = $Path; checks = @(); errors = @()
+        serial = $null; notAfter = $null; notBefore = $null; subject = $null
+        issuer = $null; names = @(); chainCount = 0; keyType = $null
+    }
+    function Add-Check { param($Name, $Pass, $Detail)
+        $result.checks += @{ name = $Name; pass = [bool]$Pass; detail = $Detail }
+        if (-not $Pass) { $result.errors += "$Name - $Detail" }
+    }
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        Add-Check 'file exists' $false "no file at $Path"
+        return $result
+    }
+
+    $text   = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($Path))
+    $blocks = Read-PemBlocks -Text $text
+    $certs  = @($blocks | Where-Object { $_.Label -eq 'CERTIFICATE' -and $_.Der })
+    $keys   = @($blocks | Where-Object { $_.Label -like '*PRIVATE KEY' -and $_.Der })
+
+    Add-Check 'PEM parses' ($blocks.Count -gt 0) "$($blocks.Count) block(s)"
+    Add-Check 'has a certificate' ($certs.Count -ge 1) "$($certs.Count) certificate block(s)"
+    Add-Check 'exactly one private key' ($keys.Count -eq 1) "$($keys.Count) key block(s)"
+    if ($certs.Count -lt 1 -or $keys.Count -ne 1) { return $result }
+
+    # HAProxy wants leaf first, then intermediates, then the key. A bundle
+    # assembled in another order still loads but the leaf would be misidentified
+    # here, so check it rather than assume.
+    $leaf = $null
+    try { $leaf = New-Object Security.Cryptography.X509Certificates.X509Certificate2 (,$certs[0].Der) }
+    catch { Add-Check 'leaf parses' $false $_.Exception.Message; return $result }
+    Add-Check 'leaf parses' $true $leaf.Subject
+
+    $result.serial     = $leaf.SerialNumber
+    $result.notAfter   = $leaf.NotAfter.ToString('o')
+    $result.notBefore  = $leaf.NotBefore.ToString('o')
+    $result.subject    = $leaf.Subject
+    $result.issuer     = $leaf.Issuer
+    $result.chainCount = $certs.Count - 1
+
+    $now  = Get-Date
+    $days = [math]::Floor(($leaf.NotAfter - $now).TotalDays)
+    Add-Check 'not expired' ($days -ge $MinimumDaysRemaining) "$days day(s) remaining"
+    Add-Check 'already valid' ($leaf.NotBefore -le $now) "valid from $($leaf.NotBefore.ToString('yyyy-MM-dd'))"
+
+    # A leaf on its own will fail validation for most clients, because they have
+    # no way to build a path to the root. Publicly-trusted CAs always issue via
+    # an intermediate, so a single-certificate bundle is almost always a mistake.
+    Add-Check 'chain included' ($certs.Count -ge 2) "$($certs.Count - 1) intermediate(s)"
+
+    $sans = @()
+    $ext = $leaf.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }
+    if ($ext) {
+        foreach ($line in (($ext.Format($true)) -split "`r?`n")) {
+            if ($line -match '=\s*(?<v>\S+)\s*$') {
+                $v = $Matches.v.Trim().TrimEnd('.').ToLowerInvariant()
+                if ($v -match '^(\*\.)?([a-z0-9]([a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,}$' -and $sans -notcontains $v) {
+                    $sans += $v
+                }
+            }
+        }
+    }
+    $result.names = @($sans)
+
+    if ($ExpectedNames.Count) {
+        $missing = @()
+        foreach ($n in $ExpectedNames) {
+            $nl = $n.ToLowerInvariant()
+            if ($sans -notcontains $nl) { $missing += $nl }
+        }
+        Add-Check 'covers expected names' ($missing.Count -eq 0) $(
+            if ($missing.Count) { "missing: $($missing -join ', ')" } else { "$($sans.Count) name(s)" })
+    }
+
+    # The one that matters most.
+    $certMod = $null
+    try {
+        $rsa = $leaf.PublicKey.Key -as [Security.Cryptography.RSA]
+        if ($rsa) { $certMod = $rsa.ExportParameters($false).Modulus; $result.keyType = 'RSA' }
+        else { $result.keyType = $leaf.PublicKey.Oid.FriendlyName }
+    } catch { }
+
+    if ($certMod) {
+        $keyMod = Get-RsaModulusFromKeyDer -Der $keys[0].Der -Label $keys[0].Label
+        if (-not $keyMod) {
+            Add-Check 'key matches certificate' $false 'could not read the private key modulus'
+        } else {
+            $match = ($keyMod.Length -eq $certMod.Length)
+            if ($match) { for ($i = 0; $i -lt $keyMod.Length; $i++) { if ($keyMod[$i] -ne $certMod[$i]) { $match = $false; break } } }
+            Add-Check 'key matches certificate' $match $(
+                if ($match) { "RSA $($certMod.Length * 8)-bit" } else { 'the private key belongs to a DIFFERENT certificate' })
+        }
+    }
+    else {
+        # EC keys have no modulus to compare, and deriving the public point from
+        # the private key is not available on .NET Framework. Say so rather than
+        # implying the pair was checked.
+        $result.checks += @{ name = 'key matches certificate'; pass = $true
+                             detail = "not verified - $($result.keyType) key, RSA-only check" }
+    }
+
+    $result.ok = (@($result.checks | Where-Object { -not $_.pass }).Count -eq 0)
+    return $result
+}
+
+# --------------------------------------------------------------------------- #
+# Served-certificate probe  (verification tier T3)
+# --------------------------------------------------------------------------- #
+
+function Get-ServedCertificate {
+    <#
+      Read the certificate a specific endpoint actually serves for a given SNI.
+
+      The connect address and the SNI name are separate parameters on purpose.
+      Verification has to reach ONE NODE by its own address while asking for a
+      name that node serves - connecting to the name instead would resolve to the
+      VIP, and with a floating VIP that only ever tests whichever node currently
+      holds it. A stale standby stays invisible until failover.
+    #>
+    param(
+        [string]$ConnectHost,
+        [int]$Port = 443,
+        [string]$SniName,
+        [int]$TimeoutSeconds = 8
+    )
+
+    if (-not $SniName) { $SniName = $ConnectHost }
+
+    $client = $null; $stream = $null
+    try {
+        $client = New-Object Net.Sockets.TcpClient
+        $client.ReceiveTimeout = $TimeoutSeconds * 1000
+        $client.SendTimeout    = $TimeoutSeconds * 1000
+
+        $connect = $client.ConnectAsync($ConnectHost, $Port)
+        $completed = $false
+        try   { $completed = $connect.Wait($TimeoutSeconds * 1000) }
+        catch { throw $_.Exception.GetBaseException() }
+        if (-not $completed) { throw "Timed out connecting to ${ConnectHost}:$Port" }
+
+        # Accept anything: the point is to inspect what is served, including a
+        # certificate that is expired, self-signed or for the wrong name.
+        $validate = [Net.Security.RemoteCertificateValidationCallback] { $true }
+        $stream = New-Object Net.Security.SslStream($client.GetStream(), $false, $validate)
+        $stream.AuthenticateAsClient($SniName)
+
+        New-Object Security.Cryptography.X509Certificates.X509Certificate2 $stream.RemoteCertificate
+    }
+    finally {
+        if ($stream) { $stream.Dispose() }
+        if ($client) { $client.Close() }
+    }
+}
+
+function Test-ServedCertificate {
+    <#
+      T3: is the expected certificate the one this endpoint is actually serving?
+
+      Compares SERIAL, not expiry. A serial is unique per issuance, so it is the
+      only value that identifies a specific certificate. Two certificates issued
+      the same day have indistinguishable expiry dates, which is why "days
+      remaining went up" is reassurance and not evidence. Days remaining is still
+      reported, because it is the number a human wants to see.
+    #>
+    param(
+        [string]$ConnectHost,
+        [int]$Port = 443,
+        [string]$SniName,
+        [string]$ExpectedSerial,
+        [int]$TimeoutSeconds = 8
+    )
+
+    $out = @{
+        node = "${ConnectHost}:$Port"; sni = $SniName; ok = $false
+        servedSerial = $null; expectedSerial = $ExpectedSerial
+        notAfter = $null; daysRemaining = $null; issuer = $null; error = $null
+    }
+
+    try {
+        $cert = Get-ServedCertificate -ConnectHost $ConnectHost -Port $Port `
+                    -SniName $SniName -TimeoutSeconds $TimeoutSeconds
+
+        $out.servedSerial  = $cert.SerialNumber
+        $out.notAfter      = $cert.NotAfter.ToString('o')
+        $out.daysRemaining = [math]::Floor(($cert.NotAfter - (Get-Date)).TotalDays)
+        $out.issuer        = $cert.Issuer
+
+        if ($ExpectedSerial) {
+            $out.ok = ($cert.SerialNumber -eq $ExpectedSerial)
+            if (-not $out.ok) {
+                $out.error = "serving serial $($cert.SerialNumber), expected $ExpectedSerial"
+            }
+        } else {
+            $out.ok = $true   # nothing to compare against; report what is served
+        }
+    }
+    catch { $out.error = ($_.Exception.Message -split "`n")[0].Trim() }
+
+    return $out
+}
