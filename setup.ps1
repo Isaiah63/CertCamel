@@ -144,6 +144,62 @@ if ($answer -match '^[Yy]') {
 }
 
 # --------------------------------------------------------------------------- #
+# 6. Unattended renewal (optional, and deliberately opt-in)
+# --------------------------------------------------------------------------- #
+
+$renewTask   = 'Cert Camel Renew'
+$renewScript = Join-Path $root 'renew-due.ps1'
+
+Write-Host ""
+Write-Host "  [+] Unattended renewal" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "      Registers '$renewTask' to run daily. It renews only what the"
+Write-Host "      certificate authority says is due, then pushes each certificate to"
+Write-Host "      its load balancers and checks every node is really serving it."
+Write-Host ""
+Write-Host "      Only worth enabling on a machine that is always on. If this one"  -ForegroundColor DarkGray
+Write-Host "      sleeps or gets shut down, nothing renews and the first you hear"  -ForegroundColor DarkGray
+Write-Host "      of it is an expiry warning." -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "      Set up load balancers in Settings first, or renewal will issue" -ForegroundColor DarkGray
+Write-Host "      certificates that go nowhere." -ForegroundColor DarkGray
+Write-Host ""
+
+$wantRenew = Read-Host "      Register daily unattended renewal? (Y/N)"
+
+if ($wantRenew -match '^[Yy]') {
+    try {
+        $rAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+            -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$renewScript`""
+
+        # 03:20 rather than on the hour: ACME rate limits are per-CA and shared
+        # by everyone, and the top of the hour is where every naive scheduler
+        # piles up.
+        $rTrigger = New-ScheduledTaskTrigger -Daily -At 3:20am
+
+        $rSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+            -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries `
+            -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+
+        Register-ScheduledTask -TaskName $renewTask -Action $rAction -Trigger $rTrigger `
+            -Settings $rSettings -Description 'Renews certificates the CA reports as due, deploys them, and verifies each load balancer is serving them.' `
+            -Force | Out-Null
+
+        Write-Host ""
+        Write-Host "      Registered. Runs daily at 3:20 AM." -ForegroundColor Green
+        Write-Host "      Try it safely first:" -ForegroundColor DarkGray
+        Write-Host "        powershell -ExecutionPolicy Bypass -File `"$renewScript`" -WhatIfOnly" -ForegroundColor DarkGray
+    }
+    catch {
+        Write-Host ""
+        Write-Host "      Could not register it: $($_.Exception.Message)" -ForegroundColor Red
+    }
+} else {
+    Write-Host ""
+    Write-Host "      Skipped. Renew from the page, or run renew-due.ps1 by hand." -ForegroundColor Yellow
+}
+
+# --------------------------------------------------------------------------- #
 # Done
 # --------------------------------------------------------------------------- #
 

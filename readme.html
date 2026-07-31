@@ -180,6 +180,9 @@ here is presumably something you intend to renew, so the two halves are one tool
     <li><a href="#staging">Staging first</a></li>
     <li><a href="#elsewhere">Managed elsewhere</a></li>
     <li><a href="#output">What you get</a></li>
+    <li><a href="#deploy">Deploying to HAProxy</a></li>
+    <li><a href="#verify">How it is verified</a></li>
+    <li><a href="#auto">Unattended renewal</a></li>
     <li><a href="#security">Security</a></li>
     <li><a href="#trouble">When it breaks</a></li>
     <li><a href="#clock">The 47-day future</a></li>
@@ -424,7 +427,94 @@ another. Sequential on purpose: concurrent orders against one DNS account collid
 <code>_acme-challenge</code> record, and serialising keeps you away from the rate limits. One
 failure does not abandon the rest. Expect a few minutes per certificate, mostly waiting for DNS.</p>
 
-<h2 id="security">10. Security</h2>
+<h2 id="deploy">10. Deploying to HAProxy</h2>
+<p>Issuing a certificate does not fix anything until it reaches the load balancers. Cert Camel
+pushes it over the <strong>HAProxy Data Plane API</strong> &mdash; no reload &mdash; and then checks
+that every node is genuinely serving it.</p>
+<div class="callout note">
+  <div class="h">Why not the Runtime API directly?</div>
+  <p>The Runtime API updates a certificate live, but the change is <strong>memory only</strong>. The
+  next reload for any unrelated reason silently reverts to whatever is on disk, and you would not
+  find out until it expired. The Data Plane API storage endpoint writes to disk <em>and</em> pushes
+  to the runtime socket, falling back to a reload only if that push fails. Durable and hitless.
+  Needs HAProxy 2.2 or newer.</p>
+</div>
+<h3>The one-time HAProxy change</h3>
+<p><strong>HAProxy identifies a certificate by its file path.</strong> A path with a date in it
+cannot be updated in place &mdash; next year it is a different path, which means a config edit,
+which means a reload.</p>
+<pre><code>Before                                     After
+/certs/2026.example.com/fullchain.pem  -&gt;  /certs/example.com.pem
+/certs/2027.example.com/fullchain.pem      (path never changes; contents replaced)</code></pre>
+<p>No history is lost &mdash; previous versions are archived under
+<code>certs\&lt;id&gt;\history\</code> with an <code>about.json</code>, finer-grained than a folder
+per year. The certificates also have to sit inside the directory the Data Plane API manages
+(<code>resources.ssl_certs_dir</code>); converging them there is usually more work than the config
+lines. <strong>One reload to migrate, zero reloads thereafter.</strong></p>
+<p>Using <code>crt-list</code> rather than <code>crt</code> additionally makes <em>adding</em> a new
+domain hitless, not just renewing an existing one. Both are supported.</p>
+<h3>Setting it up</h3>
+<p><em>Settings &rarr; Load balancers</em> &rarr; add a group. One entry per set of nodes sharing
+credentials; each node is still pushed to and verified individually. Nodes go one per line:</p>
+<pre><code>lb1 https://10.0.0.11:5555
+lb2 https://10.0.0.12:5555
+dr1 https://10.9.0.11:5555  10.9.0.11</code></pre>
+<p>Name, then the Data Plane API URL. The optional third value is the address to verify against,
+for when the site is not served from the same host as the API. Then assign the group to a
+certificate on its row and press <strong>Deploy</strong>.</p>
+
+<h2 id="verify">11. How deployment is verified</h2>
+<p>&ldquo;The API returned 200&rdquo; is not evidence that anything is being served.</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Tier</th><th>Check</th><th>Catches</th></tr></thead>
+  <tbody>
+    <tr><td><strong>T0</strong></td>
+        <td>Before any push: the bundle parses, <strong>the private key matches the
+        certificate</strong>, the chain is present, it is not expired, and it covers the expected
+        names</td>
+        <td>Pushing a broken certificate to every node at once</td></tr>
+    <tr><td><strong>T1</strong></td><td>Each node's API accepted the upload</td>
+        <td>Auth, network, config-version conflicts</td></tr>
+    <tr><td><strong>T2</strong></td>
+        <td>Implicit &mdash; the Data Plane API only falls back to a reload if the runtime push
+        failed, so a node passing T3 has loaded it</td>
+        <td>Written to disk but never loaded</td></tr>
+    <tr><td><strong>T3</strong></td>
+        <td>Connect to <strong>each node directly</strong> and compare the <strong>serial</strong>
+        of what it serves</td>
+        <td>The real proof: wrong crt-list entry, wrong SNI mapping, one node missed</td></tr>
+  </tbody>
+</table></div>
+<div class="callout warn">
+  <div class="h">Serial, not expiry date &mdash; and each node, never the VIP</div>
+  <p>A serial is unique per issuance, so it is the only value identifying a specific certificate.
+  Two certificates issued the same day have indistinguishable expiry dates, which makes &ldquo;days
+  remaining went up&rdquo; reassurance rather than evidence. Days remaining is still reported,
+  because it is the number you actually want to see.</p>
+  <p>And with a floating VIP, testing the VIP only ever exercises whichever node currently holds
+  it. A node that missed the push stays invisible until failover &mdash; precisely when you cannot
+  afford it. That is why the Deployed column shows one pip per node.</p>
+</div>
+<p>A deployment is green only when <strong>every</strong> node passes. One node failing does not
+stop the others, and the exit code is non-zero.</p>
+
+<h2 id="auto">12. Unattended renewal</h2>
+<p><code>renew-due.ps1</code> renews only what the certificate authority says is due, then deploys
+and verifies. <code>First Time Setup.bat</code> can register it as a daily task.</p>
+<p>Timing comes from <strong>ACME Renewal Information (ARI)</strong>, not a number we picked. The CA
+tells each client when to come back, which spreads load and &mdash; during a mass revocation
+&mdash; lets the CA pull every renewal window forward. A hard-coded &ldquo;30 days before
+expiry&rdquo; cannot hear that. A fixed threshold is only the fallback for a CA publishing no ARI.</p>
+<p>Try it safely first &mdash; this reports what it would renew and stops:</p>
+<pre><code>powershell -ExecutionPolicy Bypass -File .\renew-due.ps1 -WhatIfOnly</code></pre>
+<div class="callout crit">
+  <div class="h">Only on a machine that is always on</div>
+  <p>If it sleeps or gets shut down, nothing renews and the first you hear about it is an expiry
+  warning. Credentials are DPAPI-encrypted and bound to one Windows user on one machine, so they
+  are re-entered on that server rather than copied to it.</p>
+</div>
+
+<h2 id="security">13. Security</h2>
 <ul>
   <li>The server listens on <code>127.0.0.1</code> only and requires a per-launch random token.</li>
   <li>DNS credentials are encrypted with <strong>Windows DPAPI</strong> in <code>secrets.xml</code>,
@@ -449,7 +539,7 @@ useless, but anything already running as you can decrypt it. That is the normal 
 tool &mdash; it is not a vault. It also means credentials do not travel when you copy the folder,
 which is the right behaviour for something meant to be shared.</p>
 
-<h2 id="trouble">11. When it breaks</h2>
+<h2 id="trouble">14. When it breaks</h2>
 <div class="tablewrap"><table>
   <thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
   <tbody>
@@ -489,7 +579,7 @@ which is the right behaviour for something meant to be shared.</p>
 <p>Renewal logs live in <code>jobs\</code> and include the script line number on failure, which is
 usually most of the diagnosis.</p>
 
-<h2 id="clock">12. The 47-day future</h2>
+<h2 id="clock">15. The 47-day future</h2>
 <p>Under CA/Browser Forum ballot SC-081v3, the maximum certificate lifetime dropped to
 <strong>200 days on 15 March 2026</strong>, falls to <strong>100 days in March 2027</strong>, and to
 <strong>47 days in 2029</strong>. This applies to every public CA, paid ones included, and domain
@@ -497,7 +587,7 @@ validation reuse periods shrink alongside it.</p>
 <p>Whatever you renew by hand today needs doing roughly twice as often next year, and about eight
 times as often by 2029. That is the actual argument for automating this.</p>
 
-<h2 id="files">13. Files</h2>
+<h2 id="files">16. Files</h2>
 <pre><code>Open Tracker.bat      start the server and open the page  &lt;- use this
 ssl-tracker.html      the dashboard (read-only on its own)
 readme.html           this page
@@ -506,9 +596,11 @@ domains.example.txt   the shipped sample
 Check Now.bat         refresh the data
 First Time Setup.bat  one-time setup
 
-check-ssl.ps1         the checker (parallel, records SANs)
+check-ssl.ps1         the checker (parallel, records SANs and serials)
 serve.ps1             the local server
-renew.ps1             performs one renewal (also runnable standalone)
+renew.ps1             performs one renewal, then deploys it
+deploy.ps1            pushes to load balancers and verifies every node
+renew-due.ps1         renews whatever the CA says is due (scheduled task)
 acme-lib.ps1          shared settings, secrets and grouping logic
 setup.ps1             what setup runs
 

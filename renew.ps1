@@ -34,7 +34,12 @@ param(
     [string]$ResultPath,
 
     # Order even if the current certificate still has plenty of life left.
-    [switch]$Force
+    [switch]$Force,
+
+    # Issue only, do not push to the load balancers. For proving an issuance in
+    # isolation; the normal path deploys, because a certificate that never
+    # reaches a load balancer has not solved the problem it was renewed for.
+    [switch]$NoDeploy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -308,7 +313,49 @@ try {
             $entry.files    = @($files | Select-Object -Unique)
             $entry.notAfter = $paCert.NotAfter.ToString('o')
 
-            Write-Log "$display done." 'ok'
+            Write-Log "$display issued." 'ok'
+
+            # --- deploy ---------------------------------------------------- #
+            # A renewed certificate sitting in a folder has not fixed anything.
+            # Deployment runs in-process rather than as another job so the log
+            # reads as one story, and so a renewal that cannot be delivered is
+            # reported as a failure rather than a success with a caveat.
+            $certTargets = @()
+            if ($settings.certs -and $settings.certs.ContainsKey($certId)) {
+                $cfg = $settings.certs[$certId]
+                if ($cfg.ContainsKey('targets')) { $certTargets = @($cfg.targets) }
+            }
+
+            if (-not $certTargets.Count) {
+                Write-Log "$display has no load balancer assigned - issued but not deployed." 'warn'
+                $entry.deployed = $null
+            }
+            elseif ($NoDeploy) {
+                Write-Log "$display : deployment skipped (-NoDeploy)." 'warn'
+                $entry.deployed = $null
+            }
+            else {
+                Write-Log "Deploying $display to $($certTargets -join ', ')..."
+                $deployScript = Join-Path $PSScriptRoot 'deploy.ps1'
+                $deployResult = Join-Path $script:JobsDir "renew-deploy-$certId.json"
+
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $deployScript `
+                    -Cert $certId -ResultPath $deployResult 2>&1 |
+                  ForEach-Object { Write-Output $_ }
+                $deployOk = ($LASTEXITCODE -eq 0)
+
+                $entry.deployed = $deployOk
+                if (-not $deployOk) {
+                    # The certificate exists and is valid; it just is not live
+                    # anywhere yet. Say exactly that rather than implying the
+                    # issuance failed.
+                    $entry.ok    = $false
+                    $entry.error = 'Issued successfully, but deployment did not fully succeed.'
+                    Write-Log "$display : issued, but NOT fully deployed." 'error'
+                } else {
+                    Write-Log "$display issued and deployed." 'ok'
+                }
+            }
         }
         catch {
             # One bad zone must not abandon the rest of a bulk run.
