@@ -1,0 +1,1232 @@
+<#
+  acme-lib.ps1 - shared plumbing for the renewal side of the tracker.
+
+  Dot-sourced by serve.ps1, renew.ps1 and setup.ps1; it is not meant to be run
+  on its own. Everything resolves from $PSScriptRoot so the folder stays
+  copy-anywhere, with one documented exception: saved credentials are encrypted
+  with DPAPI and are therefore bound to this Windows user on this machine.
+
+  Contents:
+    paths and constants        - where everything lives
+    settings                   - settings.json read/write
+    secrets                    - DPAPI-encrypted credential store
+    Posh-ACME                  - vendored install + import
+    DNS Made Easy              - signed API client, zone listing
+    zone cache                 - zones.json
+    certificate grouping       - hosts -> zones -> SAN lists
+    PEM output                 - the combined fullchain+key file
+#>
+
+# --------------------------------------------------------------------------- #
+# Paths and constants
+# --------------------------------------------------------------------------- #
+
+$script:Root         = $PSScriptRoot
+$script:SettingsFile = Join-Path $script:Root 'settings.json'
+$script:SecretsFile  = Join-Path $script:Root 'secrets.xml'
+$script:ZonesFile    = Join-Path $script:Root 'zones.json'
+$script:LibDir       = Join-Path $script:Root 'lib'
+$script:AcmeState    = Join-Path $script:Root 'acme-state'
+$script:CertsDir     = Join-Path $script:Root 'certs'
+$script:JobsDir      = Join-Path $script:Root 'jobs'
+
+$script:SettingsVersion = 2
+
+# Certificate authorities are profiles, not a single global setting: a real
+# estate often keeps some certificates on a paid CA for policy reasons while
+# moving the rest to a free one. Each certificate picks a CA; anything without
+# an explicit choice uses the default.
+#
+# Let's Encrypt ships as the default because it is free and needs no account.
+# Any ACME CA works - point directoryUrl elsewhere and supply EAB if it asks.
+$script:BuiltInCAs = @(
+    @{
+        id           = 'letsencrypt'
+        label        = "Let's Encrypt"
+        directoryUrl = 'https://acme-v02.api.letsencrypt.org/directory'
+        stagingUrl   = 'https://acme-staging-v02.api.letsencrypt.org/directory'
+        # Staging defaults ON. A first run against production burns real rate
+        # limit on a configuration nobody has proven yet.
+        useStaging   = $true
+        eabKid       = ''
+    }
+)
+
+# Which DNS plugins the settings UI knows how to render a form for. Posh-ACME
+# ships ~100; renew.ps1 passes whatever is here straight through as -PluginArgs,
+# so adding another provider is an entry in this table, not new code.
+$script:PluginCatalog = @{
+    DMEasy = @{
+        Label = 'DNS Made Easy'
+        Args  = @(
+            @{ Name = 'DMEKey';        Label = 'API Key';    Secret = $false; Type = 'text' }
+            @{ Name = 'DMESecret';     Label = 'Secret Key'; Secret = $true;  Type = 'text' }
+            @{ Name = 'DMEUseSandbox'; Secret = $false; Type = 'bool'
+               Label = 'Use the DNS Made Easy sandbox (sandbox.dnsmadeeasy.com)'
+               Hint  = 'Free test account with its own API keys. Good for proving credentials and zone discovery work, but sandbox zones are not authoritative on the internet, so a certificate authority cannot validate against them - no real certificate can be issued this way.' }
+        )
+    }
+    NS1 = @{
+        Label = 'NS1 (IBM NS1 Connect)'
+        Args  = @(
+            @{ Name = 'NS1Key'; Label = 'API Key'; Secret = $true; Type = 'text'
+               Hint  = 'NS1 portal: Account Settings > API Keys. Needs DNS read and record write on the zones you want to renew.' }
+        )
+    }
+    Cloudflare = @{
+        Label = 'Cloudflare'
+        Args  = @(
+            # A scoped API token, not the old Global API Key: the global key can
+            # do anything to the whole account, a token can be limited to DNS
+            # edit on specific zones.
+            @{ Name = 'CFToken'; Label = 'API Token'; Secret = $true; Type = 'text'
+               Hint  = 'Cloudflare dashboard: My Profile > API Tokens > Create Token. Permissions needed are Zone:Zone:Read and Zone:DNS:Edit. Do not use the Global API Key.' }
+        )
+    }
+}
+
+# --------------------------------------------------------------------------- #
+# Small shared helpers
+# --------------------------------------------------------------------------- #
+
+# Set-Content -Encoding utf8 writes a BOM on PS 5.1, which breaks anything that
+# parses the file strictly. Write via .tmp + move so an interrupted write can
+# never leave a half-file behind - same approach check-ssl.ps1 uses.
+function Write-TextFileAtomic {
+    param([string]$Path, [string]$Content)
+
+    $tmp  = "$Path.tmp"
+    $utf8 = New-Object Text.UTF8Encoding $false
+    [IO.File]::WriteAllText($tmp, $Content, $utf8)
+    Move-Item -Path $tmp -Destination $Path -Force
+}
+
+function New-TrackerDirectories {
+    foreach ($d in @($script:LibDir, $script:AcmeState, $script:CertsDir, $script:JobsDir)) {
+        if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+    }
+}
+
+# PowerShell 5.1 has no ConvertFrom-Json -AsHashtable, and PSCustomObject is
+# awkward to build up incrementally. This walks a parsed object into hashtables.
+function ConvertTo-HashtableDeep {
+    param($InputObject)
+
+    if ($null -eq $InputObject) { return $null }
+
+    if ($InputObject -is [hashtable]) { return $InputObject }
+
+    if ($InputObject -is [System.Collections.IEnumerable] -and $InputObject -isnot [string]) {
+        return @($InputObject | ForEach-Object { ConvertTo-HashtableDeep $_ })
+    }
+
+    # Test the type rather than the property count: an empty JSON object parses
+    # to a PSCustomObject with no properties, and returning that unchanged would
+    # hand callers something without .ContainsKey().
+    if ($InputObject -is [System.Management.Automation.PSCustomObject]) {
+        $h = @{}
+        foreach ($p in $InputObject.PSObject.Properties) {
+            $h[$p.Name] = ConvertTo-HashtableDeep $p.Value
+        }
+        return $h
+    }
+
+    return $InputObject
+}
+
+function ConvertFrom-SecureStringPlain {
+    param([System.Security.SecureString]$Secure)
+
+    if (-not $Secure) { return $null }
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+    try   { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
+}
+
+# --------------------------------------------------------------------------- #
+# Settings
+# --------------------------------------------------------------------------- #
+
+function New-DefaultSettings {
+    $cas = @()
+    foreach ($c in $script:BuiltInCAs) {
+        $copy = @{}
+        foreach ($k in $c.Keys) { $copy[$k] = $c[$k] }
+        $cas += $copy
+    }
+
+    @{
+        version     = $script:SettingsVersion
+        contact     = ''
+        cas         = $cas
+        defaultCaId = 'letsencrypt'
+        providers   = @()
+        certs       = @{}
+    }
+}
+
+function Get-TrackerSettings {
+    if (-not (Test-Path $script:SettingsFile)) { return New-DefaultSettings }
+
+    try {
+        $raw = Get-Content $script:SettingsFile -Raw -Encoding UTF8
+        if (-not $raw.Trim()) { return New-DefaultSettings }
+        $s = ConvertTo-HashtableDeep ($raw | ConvertFrom-Json)
+    }
+    catch {
+        throw "settings.json could not be read: $($_.Exception.Message)"
+    }
+
+    # v1 stored a single global 'ca'. Promote it to the first CA profile so an
+    # existing configuration keeps issuing from the same place after an upgrade.
+    if ($s.ContainsKey('ca') -and $s.ca -and -not $s.ContainsKey('cas')) {
+        $old = $s.ca
+        $s.cas = @(@{
+            id           = 'letsencrypt'
+            label        = $(if ($old.ContainsKey('label') -and $old.label) { $old.label } else { "Let's Encrypt" })
+            directoryUrl = $old.directoryUrl
+            stagingUrl   = $old.stagingUrl
+            useStaging   = [bool]$old.useStaging
+            eabKid       = $(if ($old.ContainsKey('eabKid')) { $old.eabKid } else { '' })
+        })
+        $s.defaultCaId = 'letsencrypt'
+        $s.Remove('ca')
+
+        # The v1 EAB secret was stored unqualified; re-key it to the profile.
+        $legacy = Get-TrackerSecret -Key 'ca:eabHmacKey' -AsPlainText
+        if ($legacy) {
+            Set-TrackerSecret -Key 'ca:letsencrypt:eabHmacKey' -Value $legacy
+            Set-TrackerSecret -Key 'ca:eabHmacKey' -Value ''
+        }
+    }
+
+    # Fill in anything a hand-edited or older file is missing, so a partial file
+    # degrades to defaults instead of throwing somewhere further down.
+    $def = New-DefaultSettings
+    foreach ($k in $def.Keys) {
+        if (-not $s.ContainsKey($k) -or $null -eq $s[$k]) { $s[$k] = $def[$k] }
+    }
+    $s.providers = @($s.providers)
+    $s.cas       = @($s.cas)
+    if (-not @($s.cas).Count) { $s.cas = $def.cas }
+
+    # The in-memory shape is now current whether or not it has been written
+    # back, so report it as such rather than echoing the version on disk.
+    $s.version = $script:SettingsVersion
+
+    return $s
+}
+
+# Resolve the CA a certificate should use. An unknown or missing id falls back
+# to the default rather than failing - a renamed profile should not strand a
+# certificate with no way to be issued.
+function Get-CaProfile {
+    param([hashtable]$Settings, [string]$CaId)
+
+    $cas = @($Settings.cas)
+    if ($CaId) {
+        $match = @($cas | Where-Object { $_.id -eq $CaId })
+        if ($match.Count) { return $match[0] }
+    }
+    $match = @($cas | Where-Object { $_.id -eq $Settings.defaultCaId })
+    if ($match.Count) { return $match[0] }
+    if ($cas.Count) { return $cas[0] }
+
+    throw "No certificate authority is configured."
+}
+
+function Save-TrackerSettings {
+    param([hashtable]$Settings)
+
+    $Settings.version = $script:SettingsVersion
+    Write-TextFileAtomic -Path $script:SettingsFile -Content ($Settings | ConvertTo-Json -Depth 10)
+}
+
+# The directory URL actually in force for one CA, honouring its staging toggle.
+# Staging is per-CA: Let's Encrypt has a test environment, many CAs do not.
+function Get-ActiveDirectoryUrl {
+    param([hashtable]$Ca)
+
+    if ($Ca.useStaging -and $Ca.stagingUrl) { return $Ca.stagingUrl }
+    return $Ca.directoryUrl
+}
+
+# --------------------------------------------------------------------------- #
+# Secrets
+# --------------------------------------------------------------------------- #
+# Export-Clixml encrypts any SecureString it serialises with DPAPI, scoped to
+# the current user on the current machine. That is why credentials do not travel
+# with the folder: someone else copying this bundle re-enters their own, which
+# is the behaviour we want for a tool meant to be shared.
+
+function Get-SecretStore {
+    <#
+      Returning an empty store on a read failure is how credentials get silently
+      destroyed: the caller modifies that empty store and saves it back over a
+      perfectly good file. So a genuine read failure throws, and only a genuinely
+      absent file yields an empty store.
+    #>
+    if (-not (Test-Path $script:SecretsFile)) { return @{} }
+
+    try   { $store = Import-Clixml $script:SecretsFile }
+    catch {
+        # Wrong Windows user or wrong machine: DPAPI refuses to decrypt.
+        throw "secrets.xml exists but could not be read ($($_.Exception.Message)). Refusing to continue, because saving now would overwrite it. If this folder came from another PC or user, delete secrets.xml and re-enter the credentials."
+    }
+
+    if ($null -eq $store) { return @{} }
+    if ($store -is [hashtable]) { return $store }
+    throw "secrets.xml is not in the expected format. Delete it and re-enter the credentials in Settings."
+}
+
+function Save-SecretStore {
+    <#
+      Writing an empty store over a file that had entries is almost always a bug
+      rather than an intention, so it needs saying out loud. -AllowEmpty is for
+      the one caller that really does mean "remove the last credential".
+    #>
+    param([hashtable]$Store, [switch]$AllowEmpty)
+
+    if ($Store.Keys.Count -eq 0 -and -not $AllowEmpty -and (Test-Path $script:SecretsFile)) {
+        $existing = 0
+        try { $existing = @((Import-Clixml $script:SecretsFile).Keys).Count } catch { $existing = 0 }
+        if ($existing -gt 0) {
+            throw "Refusing to replace $existing stored credential(s) with an empty store. This is a bug - report it rather than working around it."
+        }
+    }
+
+    $Store | Export-Clixml -Path $script:SecretsFile -Force
+}
+
+# Secrets are keyed "<providerId>:<argName>" so one provider can hold several.
+function Set-TrackerSecret {
+    param([string]$Key, [string]$Value)
+
+    $store = Get-SecretStore
+    if ([string]::IsNullOrEmpty($Value)) { $store.Remove($Key) }
+    else { $store[$Key] = ConvertTo-SecureString $Value -AsPlainText -Force }
+    Save-SecretStore $store
+}
+
+function Get-TrackerSecret {
+    param([string]$Key, [switch]$AsPlainText)
+
+    $store = Get-SecretStore
+    if (-not $store.ContainsKey($Key)) { return $null }
+    if ($AsPlainText) { return ConvertFrom-SecureStringPlain $store[$Key] }
+    return $store[$Key]
+}
+
+function Test-TrackerSecret {
+    param([string]$Key)
+    (Get-SecretStore).ContainsKey($Key)
+}
+
+# --------------------------------------------------------------------------- #
+# Posh-ACME
+# --------------------------------------------------------------------------- #
+
+function Get-VendoredPoshAcme {
+    $manifest = Get-ChildItem -Path $script:LibDir -Filter 'Posh-ACME.psd1' -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending |
+                Select-Object -First 1
+    if ($manifest) { return $manifest.FullName }
+    return $null
+}
+
+function Install-PoshAcmeLocal {
+    <#
+      Vendors Posh-ACME into lib/ with Save-Module. Two things reliably go wrong
+      on Windows PowerShell 5.1 and both produce unhelpful errors, so handle
+      them up front: the default security protocol excludes TLS 1.2 (PSGallery
+      requires it) and the NuGet provider may not be present yet.
+    #>
+    param([switch]$Force)
+
+    New-TrackerDirectories
+
+    if (-not $Force) {
+        $existing = Get-VendoredPoshAcme
+        if ($existing) { return $existing }
+    }
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch { }
+
+    if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
+        Install-PackageProvider -Name NuGet -Scope CurrentUser -Force -ErrorAction Stop | Out-Null
+    }
+
+    Save-Module -Name 'Posh-ACME' -Path $script:LibDir -Force -ErrorAction Stop
+
+    $manifest = Get-VendoredPoshAcme
+    if (-not $manifest) { throw "Save-Module reported success but no Posh-ACME.psd1 landed in $($script:LibDir)." }
+    return $manifest
+}
+
+function Import-PoshAcme {
+    <#
+      POSHACME_HOME must be set BEFORE the module is imported - it is read at
+      import time, and changing it afterwards has no effect without a -Force
+      re-import. Pointing it inside the bundle keeps account keys and order
+      state with the folder rather than in %LOCALAPPDATA%.
+    #>
+    New-TrackerDirectories
+    $env:POSHACME_HOME = $script:AcmeState
+
+    $manifest = Get-VendoredPoshAcme
+    if (-not $manifest) {
+        throw "Posh-ACME is not installed in this folder. Run 'First Time Setup.bat' to fetch it."
+    }
+
+    Import-Module $manifest -Force -ErrorAction Stop
+}
+
+# --------------------------------------------------------------------------- #
+# DNS Made Easy API
+# --------------------------------------------------------------------------- #
+# Used only to discover which zones an account manages, so hostnames can be
+# grouped into certificates. The actual challenge records are written by
+# Posh-ACME's own DMEasy plugin during a renewal.
+
+function Get-DMEBaseUrl {
+    param([switch]$Sandbox)
+    if ($Sandbox) { return 'https://api.sandbox.dnsmadeeasy.com/V2.0' }
+    return 'https://api.dnsmadeeasy.com/V2.0'
+}
+
+function Invoke-DMERequest {
+    <#
+      DNS Made Easy signs each request with an HMAC-SHA1 of the request date,
+      keyed by the secret. The server rejects anything more than ~30 seconds
+      out of step with its own clock, which otherwise surfaces as a bare 403 -
+      so that case is detected and reported in plain language.
+    #>
+    param(
+        [string]$Path,
+        [string]$ApiKey,
+        [string]$SecretKey,
+        [switch]$Sandbox
+    )
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch { }
+
+    # RFC 1123 in the invariant culture: a non-English locale would otherwise
+    # emit localised day and month names and every signature would fail.
+    $requestDate = [DateTime]::UtcNow.ToString('r', [Globalization.CultureInfo]::InvariantCulture)
+
+    $hmac = New-Object Security.Cryptography.HMACSHA1
+    $hmac.Key = [Text.Encoding]::UTF8.GetBytes($SecretKey)
+    $sig = ($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($requestDate)) |
+            ForEach-Object { $_.ToString('x2') }) -join ''
+    $hmac.Dispose()
+
+    $headers = @{
+        'x-dnsme-apiKey'      = $ApiKey
+        'x-dnsme-requestDate' = $requestDate
+        'x-dnsme-hmac'        = $sig
+        'Accept'              = 'application/json'
+    }
+
+    $uri = (Get-DMEBaseUrl -Sandbox:$Sandbox) + $Path
+
+    try {
+        Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -TimeoutSec 30 -ErrorAction Stop
+    }
+    catch {
+        $status = $null
+        $serverDate = $null
+        if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) {
+            try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+            try { $serverDate = $_.Exception.Response.Headers['Date'] } catch { }
+        }
+
+        if ($status -eq 403) {
+            # Prefer the server's own clock for the comparison; fall back to
+            # saying "check the clock" when the header is missing.
+            if ($serverDate) {
+                $skew = [Math]::Abs(([DateTime]::Parse($serverDate)).ToUniversalTime().Subtract([DateTime]::UtcNow).TotalSeconds)
+                if ($skew -gt 30) {
+                    throw ("This PC's clock is {0:N0} seconds off from DNS Made Easy, which rejects requests more than 30 seconds out. Sync the system clock and try again." -f $skew)
+                }
+            }
+            throw "DNS Made Easy rejected the credentials (403). Check the API key and secret key, and that this PC's clock is accurate."
+        }
+
+        if ($status -eq 404) { throw "DNS Made Easy returned 404 for $Path." }
+        throw "DNS Made Easy request failed: $($_.Exception.Message)"
+    }
+}
+
+function Get-DMEZones {
+    <#
+      Returns every managed zone name on the account. The endpoint pages, and an
+      account with more zones than fit on one page would otherwise silently lose
+      the tail - which would show up much later as "why is that domain
+      unmapped?", so follow the pages properly.
+    #>
+    param([string]$ApiKey, [string]$SecretKey, [switch]$Sandbox)
+
+    $names = @()
+    $page  = 0
+
+    while ($true) {
+        $resp = Invoke-DMERequest -Path "/dns/managed?rows=500&page=$page" `
+                                  -ApiKey $ApiKey -SecretKey $SecretKey -Sandbox:$Sandbox
+
+        if ($resp -and $resp.PSObject.Properties['data'] -and $resp.data) {
+            foreach ($z in $resp.data) { if ($z.name) { $names += [string]$z.name } }
+        }
+
+        $totalPages = 1
+        if ($resp -and $resp.PSObject.Properties['totalPages'] -and $resp.totalPages) {
+            $totalPages = [int]$resp.totalPages
+        }
+
+        $page++
+        if ($page -ge $totalPages) { break }
+    }
+
+    return @($names | Sort-Object -Unique)
+}
+
+# --------------------------------------------------------------------------- #
+# NS1 API
+# --------------------------------------------------------------------------- #
+
+function Get-NS1Zones {
+    <#
+      Every zone on an NS1 account. Simpler than DNS Made Easy: a single header,
+      no request signing, no clock sensitivity, and the list is not paged.
+    #>
+    param([string]$ApiKey)
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch { }
+
+    try {
+        $resp = Invoke-RestMethod -Uri 'https://api.nsone.net/v1/zones' `
+                    -Headers @{ 'X-NSONE-Key' = $ApiKey; 'Accept' = 'application/json' } `
+                    -Method Get -TimeoutSec 30 -ErrorAction Stop
+    }
+    catch {
+        $status = $null
+        if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) {
+            try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+        }
+        if ($status -eq 401 -or $status -eq 403) {
+            throw "NS1 rejected the API key. Check it in the NS1 portal under Account Settings > API Keys, and that it has DNS permissions."
+        }
+        throw "NS1 request failed: $($_.Exception.Message)"
+    }
+
+    $names = @()
+    foreach ($z in @($resp)) { if ($z.zone) { $names += [string]$z.zone } }
+    return @($names | Sort-Object -Unique)
+}
+
+# --------------------------------------------------------------------------- #
+# Cloudflare API
+# --------------------------------------------------------------------------- #
+
+function Get-CloudflareZones {
+    <#
+      Every zone the token can see. Cloudflare reports its own failures inside a
+      200 response ("success": false), so the body has to be checked rather than
+      relying on the HTTP status alone - a wrong permission scope otherwise looks
+      like an account with no zones.
+    #>
+    param([string]$Token)
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch { }
+
+    $headers = @{ 'Authorization' = "Bearer $Token"; 'Accept' = 'application/json' }
+    $names = @()
+    $page  = 1
+
+    while ($true) {
+        try {
+            $resp = Invoke-RestMethod -Uri "https://api.cloudflare.com/client/v4/zones?per_page=50&page=$page" `
+                        -Headers $headers -Method Get -TimeoutSec 30 -ErrorAction Stop
+        }
+        catch {
+            # Cloudflare answers a malformed token with 400, not 401, and puts
+            # the real reason in the body. Read it, or an obvious credential
+            # mistake surfaces as an unexplained "400 Bad Request".
+            $status = $null
+            $detail = $null
+            if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) {
+                try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+                try {
+                    $sr = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
+                    $body = $sr.ReadToEnd(); $sr.Dispose()
+                    $parsed = $body | ConvertFrom-Json
+                    if ($parsed.errors -and @($parsed.errors).Count) {
+                        $detail = (@($parsed.errors) | ForEach-Object { $_.message }) -join '; '
+                    }
+                } catch { }
+            }
+
+            if ($status -in @(400, 401, 403)) {
+                $msg = "Cloudflare rejected the API token"
+                if ($detail) { $msg += ": $detail" }
+                throw "$msg. It must be a scoped API token (not the Global API Key) with Zone:Read and DNS:Edit permissions."
+            }
+            if ($detail) { throw "Cloudflare request failed: $detail" }
+            throw "Cloudflare request failed: $($_.Exception.Message)"
+        }
+
+        if ($resp -and $resp.PSObject.Properties['success'] -and -not $resp.success) {
+            $msg = 'unknown error'
+            if ($resp.errors -and @($resp.errors).Count) { $msg = (@($resp.errors) | ForEach-Object { $_.message }) -join '; ' }
+            throw "Cloudflare returned an error: $msg"
+        }
+
+        foreach ($z in @($resp.result)) { if ($z.name) { $names += [string]$z.name } }
+
+        $totalPages = 1
+        if ($resp.PSObject.Properties['result_info'] -and $resp.result_info -and $resp.result_info.total_pages) {
+            $totalPages = [int]$resp.result_info.total_pages
+        }
+        $page++
+        if ($page -gt $totalPages) { break }
+    }
+
+    return @($names | Sort-Object -Unique)
+}
+
+# --------------------------------------------------------------------------- #
+# Provider dispatch
+# --------------------------------------------------------------------------- #
+
+# Assemble the -PluginArgs hashtable for one provider: plain values from
+# settings.json, secret values decrypted from secrets.xml.
+function Get-ProviderPluginArgs {
+    param([hashtable]$Provider)
+
+    # Not $args - that is an automatic variable inside a function.
+    $pluginArgs = @{}
+
+    $catalog = $script:PluginCatalog[$Provider.plugin]
+    if (-not $catalog) { throw "Unknown DNS plugin '$($Provider.plugin)'." }
+
+    foreach ($a in $catalog.Args) {
+        if ($a.Secret) {
+            # Posh-ACME's secure parameter sets want the SecureString itself.
+            $secure = Get-TrackerSecret -Key "$($Provider.id):$($a.Name)"
+            if ($secure) { $pluginArgs[$a.Name] = $secure }
+            continue
+        }
+
+        $value = $null
+        if ($Provider.ContainsKey('args') -and $Provider.args -and $Provider.args.ContainsKey($a.Name)) {
+            $value = $Provider.args[$a.Name]
+        }
+
+        if ($a.Type -eq 'bool') {
+            # These map to switch parameters. Passing $false is fine, but only
+            # send it when it is actually on so the args stay readable in logs.
+            if ($value) { $pluginArgs[$a.Name] = $true }
+        }
+        elseif ($null -ne $value -and "$value" -ne '') {
+            $pluginArgs[$a.Name] = $value
+        }
+    }
+
+    return $pluginArgs
+}
+
+function Get-ProviderZones {
+    <#
+      Ask one provider which zones it manages. Only DNS Made Easy is wired up;
+      other Posh-ACME plugins can still be used for renewal, they just cannot
+      auto-discover zones yet, so they fall back to the suffix heuristic.
+    #>
+    param([hashtable]$Provider)
+
+    switch ($Provider.plugin) {
+        'DMEasy' {
+            $key = $null
+            if ($Provider.ContainsKey('args') -and $Provider.args -and $Provider.args.ContainsKey('DMEKey')) {
+                $key = $Provider.args.DMEKey
+            }
+            $secret = Get-TrackerSecret -Key "$($Provider.id):DMESecret" -AsPlainText
+
+            if (-not $key -or -not $secret) {
+                throw "This DNS Made Easy profile is missing its API key or secret key."
+            }
+
+            $sandbox = $false
+            if ($Provider.ContainsKey('args') -and $Provider.args -and $Provider.args.ContainsKey('DMEUseSandbox')) {
+                $sandbox = [bool]$Provider.args.DMEUseSandbox
+            }
+
+            return Get-DMEZones -ApiKey $key -SecretKey $secret -Sandbox:$sandbox
+        }
+        'NS1' {
+            $key = Get-TrackerSecret -Key "$($Provider.id):NS1Key" -AsPlainText
+            if (-not $key) { throw "This NS1 profile is missing its API key." }
+            return Get-NS1Zones -ApiKey $key
+        }
+        'Cloudflare' {
+            $token = Get-TrackerSecret -Key "$($Provider.id):CFToken" -AsPlainText
+            if (-not $token) { throw "This Cloudflare profile is missing its API token." }
+            return Get-CloudflareZones -Token $token
+        }
+        default {
+            throw "Zone discovery is not implemented for the '$($Provider.plugin)' plugin yet. Renewal itself will still work - the zone just has to be covered by another configured profile."
+        }
+    }
+}
+
+# --------------------------------------------------------------------------- #
+# Write-access probe
+# --------------------------------------------------------------------------- #
+
+function Test-ProviderWriteAccess {
+    <#
+      Actually write a challenge record and delete it again.
+
+      Listing zones only proves read access, and a token with read but not write
+      sails through a read-only check and then dies partway through a renewal -
+      after an order has been created and an account registered. Since the
+      permission that matters is the one nobody can see, exercise it directly.
+
+      This calls the plugin's own Add-DnsTxt / Remove-DnsTxt, dot-sourced inside
+      the Posh-ACME module scope so its internal helpers resolve. That means it
+      tests the exact code path a renewal uses, for any of the ~100 plugins,
+      without a line of per-provider code.
+    #>
+    param([hashtable]$Provider, [string]$Zone)
+
+    Import-PoshAcme
+    $mod = Get-Module Posh-ACME
+    if (-not $mod) { throw "Posh-ACME is not loaded." }
+
+    $pluginFile = Join-Path (Join-Path (Split-Path $mod.Path) 'Plugins') "$($Provider.plugin).ps1"
+    if (-not (Test-Path $pluginFile)) {
+        throw "No Posh-ACME plugin file found for '$($Provider.plugin)'."
+    }
+
+    $pluginArgs = Get-ProviderPluginArgs -Provider $Provider
+
+    # The same record name a real challenge uses, so zone detection is exercised
+    # too. A value that is obviously a probe, in case one is ever left behind.
+    $recordName = "_acme-challenge.$Zone"
+    $bytes = New-Object byte[] 16
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    $rng.GetBytes($bytes); $rng.Dispose()
+    $txtValue = 'tracker-write-probe-' + (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+
+    $result = & $mod {
+        param($pf, $rec, $val, $pargs)
+
+        . $pf
+        $out = @{ wrote = $false; cleaned = $false; error = $null }
+
+        try {
+            Add-DnsTxt -RecordName $rec -TxtValue $val @pargs -ErrorAction Stop
+            # Plugins that batch their changes only commit on Save-DnsTxt; ones
+            # that write immediately define it as a no-op.
+            if (Get-Command Save-DnsTxt -ErrorAction SilentlyContinue) {
+                Save-DnsTxt @pargs -ErrorAction Stop
+            }
+            $out.wrote = $true
+        }
+        catch {
+            $out.error = ($_.Exception.Message -split "`n")[0].Trim()
+            return $out
+        }
+
+        # Clean up on a best-effort basis. A leftover probe record is harmless -
+        # a CA looks for a matching value among the TXT records, so an extra one
+        # is ignored - but it should be reported rather than left silently.
+        try {
+            Remove-DnsTxt -RecordName $rec -TxtValue $val @pargs -ErrorAction Stop
+            if (Get-Command Save-DnsTxt -ErrorAction SilentlyContinue) {
+                Save-DnsTxt @pargs -ErrorAction SilentlyContinue
+            }
+            $out.cleaned = $true
+        }
+        catch { $out.cleaned = $false }
+
+        return $out
+    } $pluginFile $recordName $txtValue $pluginArgs
+
+    return @{
+        zone       = $Zone
+        recordName = $recordName
+        canWrite   = [bool]$result.wrote
+        cleanedUp  = [bool]$result.cleaned
+        error      = $result.error
+    }
+}
+
+# --------------------------------------------------------------------------- #
+# Zone cache
+# --------------------------------------------------------------------------- #
+# Hitting every provider on every page load would be slow and rude. Zones change
+# rarely, so cache them and refresh on demand from Settings.
+
+function Get-ZoneCache {
+    if (-not (Test-Path $script:ZonesFile)) { return @{ refreshed = $null; zones = @() } }
+    try {
+        $c = ConvertTo-HashtableDeep ((Get-Content $script:ZonesFile -Raw -Encoding UTF8) | ConvertFrom-Json)
+        if (-not $c.ContainsKey('zones') -or $null -eq $c.zones) { $c.zones = @() }
+        $c.zones = @($c.zones)
+        return $c
+    }
+    catch { return @{ refreshed = $null; zones = @() } }
+}
+
+function Update-ZoneCache {
+    <#
+      Refresh every configured provider. One bad profile must not wipe the zones
+      of the good ones, so failures are collected and returned alongside the
+      results rather than thrown.
+    #>
+    param([hashtable]$Settings)
+
+    $zones  = @()
+    $errors = @()
+
+    foreach ($p in @($Settings.providers)) {
+        try {
+            foreach ($z in (Get-ProviderZones -Provider $p)) {
+                $zones += @{
+                    zone          = $z.ToLowerInvariant()
+                    providerId    = $p.id
+                    providerLabel = $p.label
+                    plugin        = $p.plugin
+                }
+            }
+        }
+        catch {
+            $errors += @{ providerId = $p.id; providerLabel = $p.label; error = $_.Exception.Message }
+        }
+    }
+
+    $cache = @{
+        refreshed = (Get-Date).ToString('o')
+        zones     = @($zones)
+        errors    = @($errors)
+    }
+
+    Write-TextFileAtomic -Path $script:ZonesFile -Content ($cache | ConvertTo-Json -Depth 6)
+    return $cache
+}
+
+# --------------------------------------------------------------------------- #
+# Checker output
+# --------------------------------------------------------------------------- #
+
+function Get-CheckerResults {
+    <#
+      Read back what check-ssl.ps1 wrote. The file is JavaScript rather than
+      JSON on purpose (see the note at the bottom of check-ssl.ps1), so the
+      assignment wrapper is stripped before parsing.
+    #>
+    $file = Join-Path $script:Root 'ssl-data.js'
+    if (-not (Test-Path $file)) { return @{ generated = $null; results = @() } }
+
+    $raw = Get-Content $file -Raw -Encoding UTF8
+    $m = [regex]::Match($raw, 'window\.SSL_DATA\s*=\s*(?<j>\{.*\})\s*;', 'Singleline')
+    if (-not $m.Success) {
+        throw "ssl-data.js is not in the expected format. Run 'Check Now.bat' to regenerate it."
+    }
+
+    $d = $m.Groups['j'].Value | ConvertFrom-Json
+    $results = @()
+    if ($d.PSObject.Properties['results'] -and $d.results) { $results = @($d.results) }
+
+    return @{
+        generated = $(if ($d.PSObject.Properties['generated']) { $d.generated } else { $null })
+        results   = $results
+    }
+}
+
+# --------------------------------------------------------------------------- #
+# Certificate grouping
+# --------------------------------------------------------------------------- #
+
+# Longest managed zone that the hostname sits under. Longest wins so a
+# delegated sub-zone beats its parent when both are on the account.
+function Resolve-HostZone {
+    param([string]$HostName, $Zones)
+
+    $h = $HostName.ToLowerInvariant().TrimEnd('.')
+    $best = $null
+
+    foreach ($z in $Zones) {
+        $name = $z.zone
+        if ($h -eq $name -or $h.EndsWith(".$name")) {
+            if (-not $best -or $name.Length -gt $best.zone.Length) { $best = $z }
+        }
+    }
+
+    return $best
+}
+
+# Used only when no provider has been configured yet, purely so the UI can show
+# a plausible grouping before setup. Wrong for multi-part suffixes like co.uk,
+# which is exactly why the real answer comes from the provider.
+function Get-FallbackZone {
+    param([string]$HostName)
+
+    $parts = $HostName.ToLowerInvariant().TrimEnd('.').Split('.')
+    if ($parts.Count -le 2) { return ($parts -join '.') }
+    return ($parts[-2..-1] -join '.')
+}
+
+function Get-CertificateGroups {
+    <#
+      Turn the checker's results into one certificate per zone.
+
+      A group's name list is the tracked hosts plus any SANs observed on the
+      certificate currently being served, so renewing reproduces what is live
+      rather than quietly dropping a name that exists in production but was
+      never added to domains.txt. Names belonging to a zone we do not manage are
+      set aside instead of silently included - we could not validate them.
+    #>
+    param(
+        [array]$Results,
+        [hashtable]$Settings,
+        $ZoneCache
+    )
+
+    $zones     = @()
+    if ($ZoneCache -and $ZoneCache.zones) { $zones = @($ZoneCache.zones) }
+    $haveZones = $zones.Count -gt 0
+
+    $groups   = @{}
+    $order    = @()
+    $unmapped = @()
+
+    # Zones that asked for a wildcard, via a "*.example.com" line in domains.txt.
+    # A wildcard always becomes its own certificate and is never folded into the
+    # explicit-name one: some routers (OpenShift among them) refuse HTTP/2
+    # against a wildcard certificate, so contaminating the SAN cert would break
+    # exactly the hosts it exists to serve.
+    $wildcardZones = @{}
+
+    foreach ($r in $Results) {
+        $hostName = ([string]$r.host).ToLowerInvariant()
+
+        # A wildcard is matched against the zone it covers, not itself.
+        $lookupName = $hostName
+        $isWildcard = $hostName.StartsWith('*.')
+        if ($isWildcard) { $lookupName = $hostName.Substring(2) }
+
+        $match = $null
+        if ($haveZones) { $match = Resolve-HostZone -HostName $lookupName -Zones $zones }
+
+        if ($isWildcard) {
+            if ($match) { $wildcardZones[$match.zone] = $match }
+            else {
+                $unmapped += @{
+                    host     = $hostName
+                    category = $r.category
+                    guess    = Get-FallbackZone -HostName $lookupName
+                }
+            }
+            continue
+        }
+
+        if (-not $match) {
+            # No configured provider owns this name. Under this tool's premise -
+            # everything watched exists to be renewed - that is a gap worth
+            # showing, not a quiet skip.
+            $unmapped += @{
+                host     = $hostName
+                category = $r.category
+                guess    = Get-FallbackZone -HostName $hostName
+            }
+            continue
+        }
+
+        $zone = $match.zone
+        if (-not $groups.ContainsKey($zone)) {
+            $order += $zone
+            $groups[$zone] = @{
+                zone          = $zone
+                providerId    = $match.providerId
+                providerLabel = $match.providerLabel
+                plugin        = $match.plugin
+                hosts         = @()
+                names         = @()
+                deferredNames = @()
+                categories    = @()
+                notAfter      = $null
+            }
+        }
+        $g = $groups[$zone]
+
+        if ($g.hosts -notcontains $hostName) { $g.hosts += $hostName }
+        if ($r.category -and $g.categories -notcontains [string]$r.category) {
+            $g.categories += [string]$r.category
+        }
+        if ($g.names -notcontains $hostName) { $g.names += $hostName }
+
+        # Earliest expiry across the group drives its urgency: the cert is only
+        # as good as its soonest-expiring member.
+        if ($r.ok -and $r.notAfter) {
+            $na = [datetime]$r.notAfter
+            if (-not $g.notAfter -or $na -lt $g.notAfter) { $g.notAfter = $na }
+        }
+
+        if ($r.PSObject.Properties['sans'] -and $r.sans) {
+            foreach ($san in $r.sans) {
+                $s = ([string]$san).ToLowerInvariant().TrimEnd('.')
+                if (-not $s) { continue }
+
+                if ($s.StartsWith('*.')) {
+                    # Wildcards are opt-in: they are excluded by default (they
+                    # rule out HTTP/2 on some routers) but reported so the UI can
+                    # say the live cert has one.
+                    if ($g.deferredNames -notcontains $s) { $g.deferredNames += $s }
+                    continue
+                }
+
+                $sanZone = Resolve-HostZone -HostName $s -Zones $zones
+                if ($sanZone -and $sanZone.zone -eq $zone) {
+                    if ($g.names -notcontains $s) { $g.names += $s }
+                } elseif ($g.deferredNames -notcontains $s) {
+                    $g.deferredNames += $s
+                }
+            }
+        }
+    }
+
+    # Apply per-cert overrides and flatten to plain objects for JSON.
+    #
+    # A zone can yield two certificates: the explicit-name one, and - if
+    # domains.txt asked for it - a wildcard one. They are separate orders with
+    # separate files so either can be deployed without disturbing the other.
+    $out = @()
+
+    # Every zone that produces anything, including wildcard-only zones that have
+    # no explicit hosts listed at all.
+    $allZones = @($order)
+    foreach ($z in $wildcardZones.Keys) { if ($allZones -notcontains $z) { $allZones += $z } }
+
+    foreach ($zone in $allZones) {
+        $g = $null
+        if ($groups.ContainsKey($zone)) { $g = $groups[$zone] }
+        $wantsWildcard = $wildcardZones.ContainsKey($zone)
+
+        # Provider details come from whichever source knows the zone.
+        $zoneInfo = $(if ($g) { $g } else { $wildcardZones[$zone] })
+
+        # --- the certificate kinds this zone produces --------------------- #
+        $kinds = @()
+        if ($g -and @($g.names).Count) {
+            $kinds += @{ kind = 'san'; id = $zone; display = $zone; names = @($g.names) }
+        }
+        if ($wantsWildcard) {
+            # "*" is not legal in a Windows filename, so the identifier used for
+            # folders and URLs is "wildcard.<zone>" while the display name is the
+            # wildcard itself.
+            #
+            # The apex rides along because *.example.com does NOT match
+            # example.com - a wildcard-only certificate leaves the bare domain
+            # uncovered, which is a confusing outage to debug.
+            $kinds += @{
+                kind = 'wildcard'; id = "wildcard.$zone"; display = "*.$zone"
+                names = @("*.$zone", $zone)
+            }
+        }
+
+        foreach ($k in $kinds) {
+            $names    = @($k.names)
+            $external = $false
+            $caId     = $null
+            $override = $null
+
+            # Overrides are keyed by the certificate identifier, so the SAN and
+            # wildcard certificates for one zone are configured independently.
+            if ($Settings.certs -and $Settings.certs.ContainsKey($k.id)) {
+                $override = $Settings.certs[$k.id]
+                if ($override.ContainsKey('caId') -and $override.caId) { $caId = [string]$override.caId }
+                # "Managed elsewhere": still watched, never renewed from here. A
+                # domain someone else auto-renews is worth watching precisely so
+                # you find out when that automation stops - but issuing a second
+                # certificate for it from this tool would be a mistake.
+                if ($override.ContainsKey('external') -and $override.external) { $external = $true }
+                if ($override.ContainsKey('sans') -and $override.sans) {
+                    $names = @($override.sans)   # explicit list wins outright
+                }
+            }
+
+            $certDir = Join-Path $script:CertsDir $k.id
+            $pemPath = Join-Path $certDir "$($k.id)-full.pem"
+
+            # Resolved rather than passed through, so the page always shows the CA
+            # that would actually be used - including when a certificate inherits
+            # the default or points at a profile that has since been removed.
+            $ca = Get-CaProfile -Settings $Settings -CaId $caId
+
+            # A wildcard certificate has no live counterpart to measure - nothing
+            # serves "*.example.com" - so it borrows the zone's soonest expiry
+            # when there is one, purely so it sorts sensibly next to the others.
+            $notAfter = $null
+            if ($g -and $g.notAfter) { $notAfter = $g.notAfter.ToString('o') }
+
+            $out += [pscustomobject]@{
+                certId        = $k.id
+                displayName   = $k.display
+                kind          = $k.kind
+                zone          = $zone
+                providerId    = $zoneInfo.providerId
+                providerLabel = $zoneInfo.providerLabel
+                plugin        = $zoneInfo.plugin
+                hosts         = @($(if ($g) { $g.hosts } else { @() }))
+                names         = @($names)
+                deferredNames = @($(if ($g -and $k.kind -eq 'san') { $g.deferredNames } else { @() }))
+                categories    = @($(if ($g) { $g.categories } else { @() }))
+                wildcard      = ($k.kind -eq 'wildcard')
+                external      = $external
+                caId          = $ca.id
+                caLabel       = $ca.label
+                caStaging     = [bool]$ca.useStaging
+                caInherited   = [bool](-not $caId)
+                overridden    = [bool]($override -and $override.ContainsKey('sans') -and $override.sans)
+                notAfter      = $notAfter
+                hasLocalCert  = (Test-Path $pemPath)
+                issuedAt      = $(if (Test-Path $pemPath) { (Get-Item $pemPath).LastWriteTime.ToString('o') } else { $null })
+            }
+        }
+    }
+
+    return @{
+        certs    = @($out)
+        unmapped = @($unmapped)
+        haveZones = $haveZones
+    }
+}
+
+# --------------------------------------------------------------------------- #
+# PEM output
+# --------------------------------------------------------------------------- #
+
+function Save-CertificateHistory {
+    <#
+      Copy the certificate currently on disk aside before it gets overwritten.
+
+      Copied rather than moved: if writing the new certificate then fails, the
+      stable path still holds a working certificate instead of nothing.
+
+      The folder is stamped with when the OLD certificate was written, so the
+      archive reads as "this is the certificate that was live from this date"
+      rather than "this is when it happened to be superseded".
+
+      Returns the archive path, or $null when there was nothing worth keeping.
+    #>
+    param([string]$CertDir, [string]$CertId, [string]$NewPemContent)
+
+    $pem = Join-Path $CertDir "$CertId-full.pem"
+    if (-not (Test-Path $pem)) { return $null }
+
+    # Repeated runs against an order the CA considers current would otherwise
+    # archive an identical copy every time.
+    try {
+        if ((Get-Content $pem -Raw -Encoding UTF8).Trim() -eq $NewPemContent.Trim()) { return $null }
+    } catch { }
+
+    $stamp   = (Get-Item $pem).LastWriteTime.ToString('yyyy-MM-dd_HHmmss')
+    $archive = Join-Path (Join-Path $CertDir 'history') $stamp
+    if (-not (Test-Path $archive)) { New-Item -ItemType Directory -Path $archive -Force | Out-Null }
+
+    foreach ($f in @(Get-ChildItem -LiteralPath $CertDir -File)) {
+        Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $archive $f.Name) -Force
+    }
+
+    # A note about what this actually was, so the archive is browsable without
+    # having to open each certificate to find out.
+    $cer = Join-Path $archive 'cert.cer'
+    if (Test-Path $cer) {
+        try {
+            $c = New-Object Security.Cryptography.X509Certificates.X509Certificate2 (,[IO.File]::ReadAllBytes($cer))
+            $names = @()
+            $ext = $c.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }
+            if ($ext) {
+                foreach ($line in (($ext.Format($true)) -split "`r?`n")) {
+                    if ($line -match '=\s*(?<v>\S+)\s*$') { $names += $Matches.v.Trim() }
+                }
+            }
+            Write-TextFileAtomic -Path (Join-Path $archive 'about.json') -Content (
+                @{ certId = $CertId; subject = $c.Subject; issuer = $c.Issuer
+                   notBefore = $c.NotBefore.ToString('o'); notAfter = $c.NotAfter.ToString('o')
+                   names = @($names); archivedAt = (Get-Date).ToString('o')
+                } | ConvertTo-Json -Depth 4)
+        } catch { }
+    }
+
+    return $archive
+}
+
+function Remove-OldCertificateHistory {
+    <#
+      Keep only the most recent $Keep archived versions.
+
+      Bounded on purpose: every archived version contains a usable private key,
+      and one that stays usable until that certificate expires. An unlimited
+      archive quietly turns into a pile of live credentials.
+    #>
+    param([string]$CertDir, [int]$Keep = 5)
+
+    $historyDir = Join-Path $CertDir 'history'
+    if (-not (Test-Path $historyDir)) { return @() }
+
+    # Folder names sort chronologically by construction (yyyy-MM-dd_HHmmss).
+    $all     = @(Get-ChildItem -LiteralPath $historyDir -Directory | Sort-Object Name -Descending)
+    $dropped = @()
+
+    if ($Keep -lt 0) { $Keep = 0 }
+    if ($all.Count -gt $Keep) {
+        foreach ($d in $all[$Keep..($all.Count - 1)]) {
+            try { Remove-Item -LiteralPath $d.FullName -Recurse -Force; $dropped += $d.Name } catch { }
+        }
+    }
+
+    return $dropped
+}
+
+function New-CombinedPem {
+    <#
+      Posh-ACME writes cert.cer, chain.cer, fullchain.cer, cert.key and the two
+      .pfx files, but not the single "certificate + chain + key" file most
+      appliances want pasted in. Build it here: leaf, then intermediates, then
+      the private key. fullchain.cer is already leaf+chain in that order.
+    #>
+    param([string]$FullChainPath, [string]$KeyPath, [string]$Destination)
+
+    if (-not (Test-Path $FullChainPath)) { throw "Expected fullchain at $FullChainPath but it was not there." }
+    if (-not (Test-Path $KeyPath))       { throw "Expected private key at $KeyPath but it was not there." }
+
+    $chain = (Get-Content $FullChainPath -Raw -Encoding UTF8).Trim()
+    $key   = (Get-Content $KeyPath -Raw -Encoding UTF8).Trim()
+
+    Write-TextFileAtomic -Path $Destination -Content ($chain + "`n" + $key + "`n")
+    return $Destination
+}
+
+# A zone name becomes a folder name and a download filename, so it must not be
+# able to walk out of certs/. Reject anything that is not a plain DNS label set.
+function Test-SafeCertName {
+    param([string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    if ($Name.Length -gt 253)                { return $false }
+    if ($Name -match '\.\.')                 { return $false }
+    return ($Name -match '^[a-z0-9][a-z0-9.\-]*$')
+}

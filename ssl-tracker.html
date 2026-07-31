@@ -1,0 +1,1459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cert Camel</title>
+<!-- Drawn inline as a data URI: no second request, no /favicon.ico 404 against
+     the local server, and it still works opened straight from disk. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='%23d99b3f'%3E%3Crect x='6' y='14' width='16' height='8' rx='4'/%3E%3Ccircle cx='11' cy='13' r='4'/%3E%3Ccircle cx='17.5' cy='13' r='4'/%3E%3Cpath d='M19 18 L21.5 8 L24.5 8.5 L22.5 18 Z'/%3E%3Ccircle cx='24' cy='7.5' r='3.2'/%3E%3Crect x='25.5' y='6.4' width='4.5' height='2.6' rx='1.3'/%3E%3Crect x='8' y='21' width='2.6' height='7' rx='1.3'/%3E%3Crect x='12' y='21' width='2.6' height='7' rx='1.3'/%3E%3Crect x='16' y='21' width='2.6' height='7' rx='1.3'/%3E%3Crect x='19.4' y='21' width='2.6' height='7' rx='1.3'/%3E%3C/g%3E%3C/svg%3E">
+<script>
+// Applied before the stylesheet paints, so a saved dark choice does not flash
+// white on the way in. Kept deliberately tiny and dependency-free.
+(function(){
+  try {
+    var t = localStorage.getItem('certcamel-theme');
+    if (t === 'dark' || t === 'light') { document.documentElement.setAttribute('data-theme', t); }
+  } catch (e) { /* file:// with storage blocked - fall back to the OS setting */ }
+})();
+</script>
+<style>
+/* Light is the base. Dark arrives two ways - the OS preference, or an explicit
+   choice stored on the root element - so the dark block appears twice. An
+   explicit choice has to win in BOTH directions: data-theme="light" must beat a
+   dark OS setting, which is what the :not() below is for. */
+:root{
+  color-scheme:light;
+  --bg:#f5f6f9; --glow-1:rgba(99,102,241,.14); --glow-2:rgba(168,85,247,.12);
+  --surface:rgba(255,255,255,.72); --surface-solid:#fff;
+  --border:rgba(17,24,39,.09); --border-strong:rgba(17,24,39,.16);
+  --text:#0b0d12; --muted:#4d5666; --faint:#8a93a4;
+  --accent:#6366f1; --accent-2:#a855f7;
+  --amber:#b45309; --amber-bg:rgba(245,158,11,.10);
+  --green:#15803d; --green-bg:rgba(34,197,94,.10);
+  --blue:#1d4ed8; --blue-bg:rgba(59,130,246,.10);
+  --red:#b91c1c; --red-bg:rgba(239,68,68,.10);
+  --shadow:0 1px 2px rgba(17,24,39,.04), 0 10px 30px -14px rgba(17,24,39,.20);
+  --radius:16px; --radius-sm:11px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#6b7486;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#6b7486;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box;}
+body{margin:0; min-height:100vh; color:var(--text); background:var(--bg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background-image:radial-gradient(58rem 58rem at 6% -10%,var(--glow-1),transparent 60%),
+    radial-gradient(48rem 48rem at 104% 2%,var(--glow-2),transparent 55%);
+  background-attachment:fixed; -webkit-font-smoothing:antialiased; line-height:1.6;}
+/* This is an operations dashboard on a desktop, not an article: the useful
+   content is wide tables, so let them have the monitor. */
+.wrap{max-width:min(120rem,96vw); margin:0 auto; padding:clamp(1.25rem,3vw,2.25rem) clamp(1rem,3vw,2.5rem) 5rem;}
+/* Masthead: tag on the left, logo centred, controls on the right. The two side
+   zones share a flex-basis so the logo sits optically centred rather than being
+   pushed off-centre by whichever side happens to be wider. */
+.masthead{display:flex; align-items:center; gap:1.5rem; padding:.2rem 0 1.15rem;
+  border-bottom:1px solid var(--border); margin-bottom:1.9rem;}
+.masthead .side{flex:1 1 0; min-width:0;}
+.masthead .actions{display:flex; align-items:center; gap:.5rem; justify-content:flex-end;}
+.brand{display:flex; align-items:center; gap:.75rem; flex:none;}
+.brand .mark{display:grid; place-items:center; width:2.75rem; height:2.75rem; flex:none;
+  padding:.4rem; border-radius:13px; color:var(--accent-2);
+  border:1px solid var(--border-strong); background:var(--surface); backdrop-filter:blur(14px);
+  box-shadow:var(--shadow);}
+.brand .mark svg{width:100%; height:100%; display:block;}
+.brand h1{font-size:1.65rem; line-height:1.1; letter-spacing:-.025em; font-weight:850;
+  margin:0; padding-bottom:.06em; white-space:nowrap;
+  background:linear-gradient(135deg,var(--text) 38%,var(--accent) 145%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;}
+
+.back{display:inline-flex; align-items:center; gap:.45rem; text-decoration:none; color:var(--muted);
+  font-size:.85rem; font-weight:550; padding:.4rem .8rem; border:1px solid var(--border);
+  border-radius:999px; background:var(--surface); backdrop-filter:blur(14px); white-space:nowrap;}
+.back:hover{color:var(--text); border-color:var(--border-strong);}
+.theme-btn{font:inherit; font-size:.85rem; font-weight:550; cursor:pointer; min-width:6.4rem;}
+.tag{font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; font-weight:700; color:var(--faint);}
+
+/* Narrow windows: stack it rather than crushing the wordmark. */
+@media (max-width:56rem){
+  .masthead{flex-wrap:wrap; justify-content:space-between;}
+  .masthead .side{flex:0 0 auto;}
+  .brand{order:-1; flex-basis:100%; margin-bottom:.4rem;}
+}
+h2{font-size:1.15rem; font-weight:750; letter-spacing:-.01em; margin:2.2rem 0 .8rem; display:flex; align-items:center; gap:.7rem;}
+h2 .rule{flex:1; height:1px; background:linear-gradient(90deg,var(--border),transparent);}
+
+/* Stat tiles */
+.pills{display:flex; flex-wrap:wrap; gap:.6rem; margin:0 0 1.3rem;}
+.pill{flex:1 1 8rem; border:1px solid var(--border); border-radius:var(--radius); padding:.85rem 1rem;
+  background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);}
+.pill .k{font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); font-weight:700;}
+.pill .val{font-size:1.5rem; font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin:.15rem 0;}
+.pill .sub{font-size:.78rem; color:var(--muted);}
+/* A tile only takes on colour when its count is non-zero, so a healthy board
+   stays calm and the eye goes straight to whatever actually needs attention. */
+.pill.hot{border-color:var(--amber); background:var(--amber-bg);}
+.pill.hot .val{color:var(--amber);}
+.pill.bad{border-color:var(--red); background:var(--red-bg);}
+.pill.bad .val{color:var(--red);}
+
+/* Table */
+.tablewrap{overflow-x:auto; margin:0; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);}
+table{border-collapse:collapse; width:100%; min-width:34rem; font-size:.92rem;}
+th,td{text-align:left; padding:.7rem 1.1rem; border-bottom:1px solid var(--border); vertical-align:middle;}
+thead th{font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); font-weight:700;}
+tbody tr:last-child td{border-bottom:none;}
+td.n,th.n{text-align:right; font-variant-numeric:tabular-nums;}
+td.host{font-weight:650;}
+td.host .port{color:var(--faint); font-weight:500;}
+td.days{font-weight:750;}
+td.dim{color:var(--muted); font-variant-numeric:tabular-nums;}
+td.issuer{color:var(--muted); font-size:.85rem;}
+.err{color:var(--muted); font-size:.85rem; font-style:italic;}
+
+/* Category grouping */
+tr.grouphead td{background:var(--surface-solid); border-bottom:1px solid var(--border-strong);
+  padding-top:.75rem; padding-bottom:.55rem;}
+tr.grouphead .gname{font-size:.72rem; letter-spacing:.1em; text-transform:uppercase; font-weight:700;
+  color:var(--text);}
+tr.grouphead .gmeta{font-size:.75rem; color:var(--faint); font-weight:500; margin-left:.6rem;
+  letter-spacing:0; text-transform:none;}
+tr.grouphead .gmeta.warn{color:var(--amber); font-weight:700;}
+tr.grouphead .gmeta.crit{color:var(--red); font-weight:700;}
+/* First group header sits flush against the thead, so drop its extra top gap. */
+tbody tr.grouphead:first-child td{padding-top:.55rem;}
+
+/* Filter chips */
+.chips{display:flex; flex-wrap:wrap; gap:.45rem; margin:0 0 1rem;}
+.chip{font:inherit; font-size:.78rem; font-weight:600; color:var(--muted); cursor:pointer;
+  padding:.35rem .8rem; border:1px solid var(--border); border-radius:999px;
+  background:var(--surface); backdrop-filter:blur(14px); transition:color .15s, border-color .15s;}
+.chip:hover{color:var(--text); border-color:var(--border-strong);}
+.chip[aria-pressed="true"]{color:#fff; border-color:transparent;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));}
+.chip .n{opacity:.65; margin-left:.4rem; font-variant-numeric:tabular-nums;}
+
+/* Status chips */
+.st{display:inline-block; font-size:.66rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+  padding:.22rem .6rem; border-radius:999px; white-space:nowrap; border:1px solid transparent;}
+.st.ok{color:var(--green); background:var(--green-bg); border-color:var(--green);}
+.st.soon{color:var(--amber); background:var(--amber-bg); border-color:var(--amber);}
+.st.gone{color:var(--red); background:var(--red-bg); border-color:var(--red);}
+.st.unknown{color:var(--blue); background:var(--blue-bg); border-color:var(--blue);}
+tr.soon td.days{color:var(--amber);}
+tr.gone td.days{color:var(--red);}
+
+/* Callouts */
+.callout{border:1px solid var(--border); border-left-width:4px; border-radius:var(--radius-sm);
+  padding:.85rem 1.1rem; margin:1.3rem 0; background:var(--surface); backdrop-filter:blur(14px);}
+.callout .h{font-weight:700; font-size:.9rem; display:flex; align-items:center; gap:.5rem; margin-bottom:.15rem;}
+.callout p{margin:.3rem 0 0; font-size:.9rem;}
+.callout.warn{border-left-color:var(--amber); background:var(--amber-bg);} .callout.warn .h{color:var(--amber);}
+.callout.crit{border-left-color:var(--red); background:var(--red-bg);} .callout.crit .h{color:var(--red);}
+.callout.note{border-left-color:var(--blue); background:var(--blue-bg);} .callout.note .h{color:var(--blue);}
+.callout code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.85em;
+  background:var(--surface-solid); border:1px solid var(--border); border-radius:6px; padding:.1rem .35rem;}
+
+/* Buttons and the live-mode toolbar. Only rendered when the page is served by
+   serve.ps1 - opened straight from disk there is nothing for them to call. */
+.toolbar{display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:0 0 1.4rem;}
+.toolbar .spacer{flex:1 1 auto;}
+.btn{font:inherit; font-size:.82rem; font-weight:650; color:var(--text); cursor:pointer;
+  padding:.45rem .9rem; border:1px solid var(--border-strong); border-radius:999px;
+  background:var(--surface); backdrop-filter:blur(14px); text-decoration:none;
+  display:inline-block; transition:border-color .15s, opacity .15s;}
+.btn:hover:not(:disabled){border-color:var(--accent);}
+.btn:disabled{opacity:.45; cursor:default;}
+.btn.primary{color:#fff; border-color:transparent;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));}
+.btn.sm{font-size:.75rem; padding:.28rem .7rem;}
+.searchwrap{margin:0 0 1rem;}
+.search{font:inherit; font-size:.85rem; color:var(--text); width:100%; max-width:19rem;
+  padding:.45rem .9rem; border:1px solid var(--border); border-radius:999px;
+  background:var(--surface); backdrop-filter:blur(14px);}
+.search::placeholder{color:var(--faint);}
+
+/* Certificates table */
+td.acts{white-space:nowrap; text-align:right;}
+td.acts .btn{margin-left:.35rem;}
+td.names{color:var(--muted); font-size:.83rem;}
+.badge{display:inline-block; font-size:.62rem; font-weight:700; letter-spacing:.06em;
+  text-transform:uppercase; padding:.14rem .45rem; border-radius:999px; margin-left:.45rem;
+  color:var(--amber); background:var(--amber-bg); border:1px solid var(--amber);}
+/* Informational rather than a warning: managed-elsewhere is a valid steady
+   state, not something to act on. */
+.badge.cool{color:var(--blue); background:var(--blue-bg); border-color:var(--blue);}
+
+/* Job log. Pre-wrapped rather than scrolling sideways - these lines are long
+   and the interesting part is usually at the end of them. */
+.log{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.78rem;
+  line-height:1.55; white-space:pre-wrap; word-break:break-word; margin:0;
+  max-height:24rem; overflow-y:auto; padding:.9rem 1rem; color:var(--muted);
+  border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
+
+/* Settings */
+.modal{position:fixed; top:0; right:0; bottom:0; left:0; z-index:50; display:flex;
+  align-items:flex-start; justify-content:center; overflow-y:auto;
+  padding:clamp(1rem,5vh,3rem) 1rem; background:rgba(10,11,15,.55);}
+.modal-card{width:100%; max-width:min(66rem,94vw); padding:1.9rem 2.1rem;
+  border:1px solid var(--border-strong); border-radius:var(--radius);
+  background:var(--surface-solid); box-shadow:var(--shadow);}
+/* Credential forms are short label/value pairs. At this width they read far
+   better in columns than as one tall scroll, so each card lays its own fields
+   out on a grid and the header spans the full row. */
+.provider{display:grid; grid-template-columns:repeat(auto-fit,minmax(17rem,1fr));
+  gap:0 1.3rem; align-items:start;}
+.provider .phead,.provider .fields{grid-column:1 / -1;}
+.provider .fields{display:grid; grid-template-columns:repeat(auto-fit,minmax(17rem,1fr));
+  gap:0 1.3rem; align-items:start;}
+.modal-card > .hint{max-width:52rem;}
+.modal-card h3{margin:0 0 .2rem; font-size:1.15rem; letter-spacing:-.01em;}
+.modal-card h4{margin:1.6rem 0 .2rem; font-size:.72rem; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--faint);}
+.field{margin:.9rem 0;}
+.field label{display:block; font-size:.7rem; font-weight:700; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--faint); margin-bottom:.32rem;}
+.field input[type=text],.field input[type=password],.field input[type=email],.field select{
+  font:inherit; font-size:.88rem; width:100%; color:var(--text); padding:.5rem .75rem;
+  border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg);}
+.field .hint{font-size:.76rem; color:var(--faint); margin:.3rem 0 0;}
+.check{display:flex; align-items:flex-start; gap:.55rem; font-size:.88rem;
+  font-weight:500; letter-spacing:0; text-transform:none; color:var(--text);}
+.provider{border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:.4rem 1rem 1rem; margin:.7rem 0; background:var(--surface);}
+.provider .phead{display:flex; align-items:center; justify-content:space-between; gap:1rem;}
+details{margin:1.4rem 0 0; font-size:.88rem;}
+summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
+.modal-actions{display:flex; flex-wrap:wrap; gap:.5rem; justify-content:flex-end;
+  margin-top:1.5rem; padding-top:1.1rem; border-top:1px solid var(--border);}
+.status-line{font-size:.82rem; margin:1rem 0 0; min-height:1.2em;}
+.status-line.bad{color:var(--red);} .status-line.good{color:var(--green);}
+
+/* Wide-screen tuning. Tables want the room; prose and summary tiles do not -
+   a callout stretched across 120rem is a line nobody can track back to the
+   left edge. */
+.pills{max-width:76rem;}
+.pill{flex:1 1 12rem;}
+.callout{max-width:82rem;}
+.log{max-width:none;}
+#certsection table{min-width:62rem;}
+/* The zone name was being clipped once the issuer column arrived. */
+#certsection td.host{white-space:nowrap;}
+#certsection td.names{min-width:20rem;}
+#certsection select.ca-pick{font:inherit; font-size:.8rem; color:var(--text);
+  padding:.28rem .5rem; border:1px solid var(--border); border-radius:8px;
+  background:var(--bg); max-width:14rem;}
+
+.empty{border:1px dashed var(--border-strong); border-radius:var(--radius); padding:2.2rem 1.5rem;
+  text-align:center; color:var(--muted);}
+.empty h3{margin:0 0 .5rem; font-size:1.05rem; color:var(--text);}
+.empty code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.85em;
+  background:var(--surface-solid); border:1px solid var(--border); border-radius:6px; padding:.15rem .4rem;}
+.mini{font-size:.78rem; color:var(--faint); margin:.6rem 0 0;}
+.hidden{display:none !important;}
+footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); color:var(--faint); font-size:.82rem;}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<!-- One masthead row rather than a tag bar plus a hero: the name only needs to
+     appear once, and the logo fills what was dead space in the middle. -->
+<header class="masthead">
+  <span class="tag side">Certificate Watch &amp; Renewal</span>
+
+  <div class="brand">
+    <span class="mark">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><g fill="currentColor">
+        <rect x="6" y="14" width="16" height="8" rx="4"/><circle cx="11" cy="13" r="4"/>
+        <circle cx="17.5" cy="13" r="4"/><path d="M19 18 L21.5 8 L24.5 8.5 L22.5 18 Z"/>
+        <circle cx="24" cy="7.5" r="3.2"/><rect x="25.5" y="6.4" width="4.5" height="2.6" rx="1.3"/>
+        <rect x="8" y="21" width="2.6" height="7" rx="1.3"/><rect x="12" y="21" width="2.6" height="7" rx="1.3"/>
+        <rect x="16" y="21" width="2.6" height="7" rx="1.3"/><rect x="19.4" y="21" width="2.6" height="7" rx="1.3"/>
+      </g></svg>
+    </span>
+    <h1>Cert Camel</h1>
+  </div>
+
+  <div class="side actions">
+    <a class="back" href="readme.html" target="_blank" rel="noopener">Read me</a>
+    <button class="back theme-btn" type="button" id="btn-theme" aria-live="polite">
+      <span id="theme-label">Theme</span>
+    </button>
+  </div>
+</header>
+
+<!-- Only usable when serve.ps1 is hosting the page; a file:// page has nothing
+     it can call, so this stays hidden there and the page behaves as before. -->
+<div class="toolbar hidden" id="toolbar">
+  <button class="btn" type="button" id="btn-check">Check now</button>
+  <button class="btn" type="button" id="btn-settings">Settings</button>
+  <span class="spacer"></span>
+  <span class="mini" id="livehint"></span>
+</div>
+
+<section id="jobpanel" class="hidden">
+  <h2 id="jobtitle">Working<span class="rule"></span></h2>
+  <pre class="log" id="joblog"></pre>
+</section>
+
+<!-- Shown only when ssl-data.js is missing, i.e. the checker has never run. -->
+<div id="empty" class="empty hidden">
+  <h3>No certificate data yet</h3>
+  <p>Run <code>First Time Setup.bat</code> once, then <code>Check Now.bat</code> whenever you
+  want to refresh. Both live in this same folder.</p>
+</div>
+
+<div id="report" class="hidden">
+  <div class="pills" id="pills"></div>
+  <div id="alerts"></div>
+
+  <section id="certsection" class="hidden">
+    <h2>Certificates<span class="rule"></span></h2>
+    <p class="mini" id="certintro"></p>
+    <div class="toolbar">
+      <button class="btn primary" type="button" id="btn-renew-all">Renew all expiring</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>Certificate</th><th>Covers</th><th>Issuer</th><th>Expires</th><th class="n">Days left</th><th></th>
+        </tr></thead>
+        <tbody id="certrows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Tracked domains<span class="rule"></span></h2>
+    <div class="chips" id="chips" role="group" aria-label="Filter by category"></div>
+    <div class="searchwrap hidden" id="searchwrap">
+      <input class="search" type="search" id="search" placeholder="Search domains" autocomplete="off"
+             aria-label="Search domains">
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>Domain</th><th>Status</th><th>Expires</th><th class="n">Days left</th><th>Issuer</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="mini" id="stamp"></p>
+  </section>
+</div>
+
+<div class="modal hidden" id="settings">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settitle">
+    <h3 id="settitle">Renewal settings</h3>
+    <p class="mini">Credentials are encrypted with Windows DPAPI and stored in
+    <code>secrets.xml</code> beside this page. They never leave this PC, and they do not
+    travel if you copy this folder to another machine.</p>
+
+    <div class="field">
+      <label for="set-contact">Contact email</label>
+      <input type="email" id="set-contact" autocomplete="off">
+      <p class="hint">The certificate authority sends expiry warnings here. Required.</p>
+    </div>
+
+    <h4>Certificate authorities</h4>
+    <p class="hint">Each certificate picks an issuer on its own row in the Certificates table.
+    Anything not pinned uses the default below. Staging is per authority — staging
+    certificates are not trusted by browsers, but they do not count against rate limits,
+    so leave it on until a renewal completes cleanly.</p>
+    <div id="cas"></div>
+    <button class="btn sm" type="button" id="btn-add-ca">Add a certificate authority</button>
+    <div class="field">
+      <label for="set-default-ca">Default for new certificates</label>
+      <select id="set-default-ca"></select>
+    </div>
+
+    <h4>DNS providers</h4>
+    <p class="hint">Renewal proves you control a domain by writing a DNS record. Each profile
+    below is one DNS account; every zone it manages becomes renewable automatically.</p>
+    <div id="providers"></div>
+    <button class="btn sm" type="button" id="btn-add-provider">Add a DNS profile</button>
+
+    <p class="status-line" id="set-status"></p>
+
+    <div class="modal-actions">
+      <button class="btn" type="button" id="btn-test">Test connection</button>
+      <button class="btn" type="button" id="btn-cancel">Cancel</button>
+      <button class="btn primary" type="button" id="btn-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Add or remove domains by editing <strong>domains.txt</strong> in this folder, then press
+  <strong>Check now</strong>. Certificates are grouped by DNS zone, so a new hostname joins the
+  right certificate on its own. See the <a href="readme.html" target="_blank" rel="noopener">read
+  me</a> for how renewal works and what the buttons do.
+</footer>
+</div>
+
+<script src="ssl-data.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  var RENEW_DAYS = 30;   // flag for renewal at or under this many days left
+  var STALE_DAYS = 2;    // nag to re-run the checker after this long
+
+  // Live mode means serve.ps1 is hosting this page and handed it a session
+  // token, so there is an API behind the buttons. Opened straight from disk
+  // there is neither, and the page stays the read-only report it has always
+  // been - no renewal controls are rendered at all.
+  var TOKEN = (function(){
+    var m = /(?:^|[?&])t=([a-f0-9]+)/.exec(location.search);
+    return m ? m[1] : null;
+  })();
+  var LIVE = (location.protocol === 'http:' || location.protocol === 'https:') && !!TOKEN;
+
+  // Live-mode state, declared up here rather than beside the live code at the
+  // bottom. startLive() is called before that point, and against a loopback
+  // server the first API response can land before execution reaches a `var`
+  // initialiser further down - which would then wipe what the response stored.
+  var state = null;
+  var jobTimer = null;
+
+  // --- Theme ------------------------------------------------------------- //
+  // Cycles Auto -> Light -> Dark. "Auto" means follow the OS, which is the only
+  // honest default; the other two are an explicit override that has to win even
+  // when it disagrees with the OS. Set up before anything else renders, and
+  // outside the live-mode block so it works from disk too.
+  (function(){
+    var root  = document.documentElement;
+    var btn   = document.getElementById('btn-theme');
+    var label = document.getElementById('theme-label');
+    if (!btn) { return; }
+
+    var KEY = 'certcamel-theme';
+    var order = ['auto', 'light', 'dark'];
+    var names = {auto:'Theme: Auto', light:'Theme: Light', dark:'Theme: Dark'};
+
+    function read(){
+      try {
+        var v = localStorage.getItem(KEY);
+        return (v === 'light' || v === 'dark') ? v : 'auto';
+      } catch (e) { return 'auto'; }
+    }
+
+    function apply(mode){
+      if (mode === 'auto') { root.removeAttribute('data-theme'); }
+      else { root.setAttribute('data-theme', mode); }
+      label.textContent = names[mode];
+      btn.title = 'Colour theme: ' + mode + '. Click to change.';
+      try {
+        if (mode === 'auto') { localStorage.removeItem(KEY); }
+        else { localStorage.setItem(KEY, mode); }
+      } catch (e) { /* storage unavailable; the choice just won't persist */ }
+    }
+
+    apply(read());
+
+    btn.addEventListener('click', function(){
+      apply(order[(order.indexOf(read()) + 1) % order.length]);
+    });
+  })();
+
+  var data = window.SSL_DATA;
+  var hasData = !!(data && data.results && data.results.length);
+
+  if (!hasData) {
+    document.getElementById('empty').classList.remove('hidden');
+    // Still worth wiring up: from here you can open Settings and run the first
+    // check without leaving the page.
+    if (LIVE) { startLive(); }
+    return;
+  }
+  document.getElementById('report').classList.remove('hidden');
+
+  var now = new Date();
+
+  function el(tag, cls, text){
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    // textContent throughout: issuer strings and error messages come from
+    // remote servers, so they never get treated as markup.
+    if (text !== undefined && text !== null) n.textContent = text;
+    return n;
+  }
+
+  function daysUntil(iso){
+    return Math.floor((new Date(iso) - now) / 86400000);
+  }
+
+  function fmtDate(iso){
+    var d = new Date(iso);
+    return d.toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+  }
+
+  function ago(iso){
+    var mins = Math.floor((now - new Date(iso)) / 60000);
+    if (mins < 1)    return 'just now';
+    if (mins < 60)   return mins + (mins === 1 ? ' minute ago' : ' minutes ago');
+    var hrs = Math.floor(mins / 60);
+    if (hrs < 24)    return hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
+    var days = Math.floor(hrs / 24);
+    return days + (days === 1 ? ' day ago' : ' days ago');
+  }
+
+  // --- Classify -------------------------------------------------------- //
+  // Days remaining is recomputed here from notAfter rather than read from the
+  // data file, so the countdown stays correct even if the checker hasn't run
+  // for a while.
+
+  // Wildcard entries from domains.txt are renewal instructions, not hosts: there
+  // is nothing listening at "*.example.com" to read a certificate from. They are
+  // kept out of the expiry table entirely and surface only as their own
+  // certificate below, rather than sitting there permanently as an error.
+  var watched = data.results.filter(function(r){ return !r.renewOnly; });
+
+  var rows = watched.map(function(r){
+    var days = r.ok && r.notAfter ? daysUntil(r.notAfter) : null;
+    var state;
+    if (!r.ok)                  state = 'unknown';
+    else if (days < 0)          state = 'gone';
+    else if (days <= RENEW_DAYS) state = 'soon';
+    else                        state = 'ok';
+    return {raw:r, days:days, state:state};
+  });
+
+  // Soonest first; unreachable hosts sink to the bottom where they can't
+  // crowd out a real expiry.
+  function byUrgency(a, b){
+    if (a.days === null && b.days === null) return a.raw.host.localeCompare(b.raw.host);
+    if (a.days === null) return 1;
+    if (b.days === null) return -1;
+    return a.days - b.days;
+  }
+  rows.sort(byUrgency);
+
+  var expiring = rows.filter(function(r){ return r.state === 'soon'; });
+  var expired  = rows.filter(function(r){ return r.state === 'gone'; });
+  var errored  = rows.filter(function(r){ return r.state === 'unknown'; });
+
+  // --- Stat tiles ------------------------------------------------------ //
+
+  function tile(label, value, sub, cls){
+    var p = el('div', 'pill' + (cls ? ' ' + cls : ''));
+    p.appendChild(el('div', 'k', label));
+    p.appendChild(el('div', 'val', String(value)));
+    p.appendChild(el('div', 'sub', sub));
+    return p;
+  }
+
+  var pills = document.getElementById('pills');
+  pills.appendChild(tile('Tracked', rows.length, rows.length === 1 ? 'domain' : 'domains'));
+  pills.appendChild(tile('Renew soon', expiring.length, 'within ' + RENEW_DAYS + ' days',
+                         expiring.length ? 'hot' : ''));
+  pills.appendChild(tile('Expired', expired.length, 'past due',
+                         expired.length ? 'bad' : ''));
+  if (errored.length) {
+    pills.appendChild(tile('Unreachable', errored.length, 'check failed', 'hot'));
+  }
+
+  // --- Alerts ---------------------------------------------------------- //
+
+  var alerts = document.getElementById('alerts');
+
+  function names(list){
+    return list.map(function(r){ return r.raw.host; }).join(', ');
+  }
+
+  function callout(cls, heading, body){
+    var c = el('div', 'callout ' + cls);
+    c.appendChild(el('div', 'h', heading));
+    c.appendChild(el('p', null, body));
+    return c;
+  }
+
+  if (expired.length) {
+    alerts.appendChild(callout('crit',
+      expired.length === 1 ? 'Certificate expired' : 'Certificates expired',
+      names(expired) + ' — visitors are seeing a browser security warning right now.'));
+  }
+  if (expiring.length) {
+    alerts.appendChild(callout('warn',
+      'Renewal needed within ' + RENEW_DAYS + ' days',
+      names(expiring) + '.'));
+  }
+  if (errored.length) {
+    alerts.appendChild(callout('note',
+      errored.length === 1 ? 'One domain could not be checked' : errored.length + ' domains could not be checked',
+      names(errored) + ' — see the reason in the table below. A typo in domains.txt is the usual cause.'));
+  }
+
+  var staleFor = (now - new Date(data.generated)) / 86400000;
+  if (staleFor > STALE_DAYS) {
+    var c = el('div', 'callout note');
+    c.appendChild(el('div', 'h', 'This data is getting old'));
+    var p = el('p', null, 'Last checked ' + ago(data.generated) + '. Run ');
+    p.appendChild(el('code', null, 'Check Now.bat'));
+    p.appendChild(document.createTextNode(' to refresh.'));
+    c.appendChild(p);
+    alerts.appendChild(c);
+  }
+
+  // --- Group by category ----------------------------------------------- //
+  // Categories come from [Header] lines in domains.txt. A list with no headers
+  // yields one group, and the group headings and filter chips are suppressed
+  // entirely so a small flat list stays as simple as it was.
+
+  var UNCATEGORIZED = 'Uncategorized';
+
+  var groups = [];
+  var byName = {};
+  rows.forEach(function(r){
+    var name = r.raw.category || UNCATEGORIZED;
+    // Guard against a category literally named e.g. "toString".
+    if (!Object.prototype.hasOwnProperty.call(byName, name)) {
+      byName[name] = {name:name, items:[]};
+      groups.push(byName[name]);
+    }
+    byName[name].items.push(r);
+  });
+
+  var grouped = groups.length > 1 || (groups.length === 1 && groups[0].name !== UNCATEGORIZED);
+
+  // Each group inherits the urgency of its most urgent member, so the team
+  // with something expiring tomorrow floats to the top of the page.
+  groups.forEach(function(g){
+    g.items.sort(byUrgency);
+    g.expiring = g.items.filter(function(r){ return r.state === 'soon'; }).length;
+    g.expired  = g.items.filter(function(r){ return r.state === 'gone'; }).length;
+    g.errored  = g.items.filter(function(r){ return r.state === 'unknown'; }).length;
+    g.worst    = g.items.length ? g.items[0] : null;
+  });
+  groups.sort(function(a, b){
+    return byUrgency(a.worst, b.worst) || a.name.localeCompare(b.name);
+  });
+
+  // --- Table ----------------------------------------------------------- //
+
+  var LABEL = {ok:'OK', soon:'Renew soon', gone:'Expired', unknown:'Error'};
+  var body  = document.getElementById('rows');
+
+  function groupHeadRow(g){
+    var tr = el('tr', 'grouphead');
+    tr.setAttribute('data-cat', g.name);
+
+    var td = el('td');
+    td.colSpan = 5;
+    td.appendChild(el('span', 'gname', g.name));
+
+    // Lead with the worst news; fall back to a plain count when all is well.
+    var meta, cls = '';
+    if (g.expired)       { meta = g.expired + ' expired';        cls = 'crit'; }
+    else if (g.expiring) { meta = g.expiring + ' need renewal';  cls = 'warn'; }
+    else if (g.errored)  { meta = g.errored + ' unreachable';    cls = 'warn'; }
+    else                 { meta = 'all healthy'; }
+
+    td.appendChild(el('span', 'gmeta' + (cls ? ' ' + cls : ''),
+      g.items.length + (g.items.length === 1 ? ' domain · ' : ' domains · ') + meta));
+
+    tr.appendChild(td);
+    return tr;
+  }
+
+  // Host -> its <tr>, so live mode can pin an "unrenewable" badge onto the
+  // exact rows the server reports as having no DNS provider.
+  var rowsByHost = {};
+
+  function renderRows(list, catName){
+    list.forEach(function(r){
+      var tr = el('tr', r.state);
+      tr.setAttribute('data-cat', catName);
+      tr.setAttribute('data-host', r.raw.host);
+      rowsByHost[String(r.raw.host).toLowerCase()] = tr;
+
+      var host = el('td', 'host');
+      host.appendChild(document.createTextNode(r.raw.host));
+      if (r.raw.port && r.raw.port !== 443) {
+        host.appendChild(el('span', 'port', ':' + r.raw.port));
+      }
+      tr.appendChild(host);
+
+      var status = el('td');
+      status.appendChild(el('span', 'st ' + r.state, LABEL[r.state]));
+      tr.appendChild(status);
+
+      if (r.raw.ok) {
+        tr.appendChild(el('td', 'dim', fmtDate(r.raw.notAfter)));
+        tr.appendChild(el('td', 'n days', r.days + ' d'));
+        tr.appendChild(el('td', 'issuer', r.raw.issuer || '—'));
+      } else {
+        var reason = el('td', 'err', r.raw.error || 'Unreachable');
+        reason.colSpan = 3;
+        reason.title = r.raw.error || '';
+        tr.appendChild(reason);
+      }
+
+      body.appendChild(tr);
+    });
+  }
+
+  if (grouped) {
+    groups.forEach(function(g){
+      body.appendChild(groupHeadRow(g));
+      renderRows(g.items, g.name);
+    });
+  } else {
+    renderRows(rows, UNCATEGORIZED);
+  }
+
+  // --- Filtering ---------------------------------------------------------- //
+  // Category chips and the search box are two filters over the same rows, so
+  // they share one pass rather than each toggling .hidden on their own - two
+  // independent togglers would fight over rows the other wanted hidden.
+  // Class-toggling rather than style mutation, matching the hub's search filter.
+
+  var activeCat = null;   // null means "All"
+  var searchTerm = '';
+
+  function applyFilters(){
+    var visibleByCat = {};
+
+    body.querySelectorAll('tr[data-host]').forEach(function(tr){
+      var cat = tr.getAttribute('data-cat');
+      var show = (!activeCat || cat === activeCat) &&
+                 (!searchTerm || tr.getAttribute('data-host').toLowerCase().indexOf(searchTerm) !== -1);
+      tr.classList.toggle('hidden', !show);
+      if (show) { visibleByCat[cat] = (visibleByCat[cat] || 0) + 1; }
+    });
+
+    // A group heading with nothing left under it is just noise.
+    body.querySelectorAll('tr.grouphead').forEach(function(tr){
+      tr.classList.toggle('hidden', !visibleByCat[tr.getAttribute('data-cat')]);
+    });
+  }
+
+  if (grouped && groups.length > 1) {
+    var chips = document.getElementById('chips');
+    var all   = [{name:null, label:'All', count:rows.length}].concat(groups.map(function(g){
+      return {name:g.name, label:g.name, count:g.items.length};
+    }));
+
+    all.forEach(function(c, i){
+      var b = el('button', 'chip');
+      b.type = 'button';
+      b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+      b.appendChild(document.createTextNode(c.label));
+      b.appendChild(el('span', 'n', c.count));
+
+      b.addEventListener('click', function(){
+        chips.querySelectorAll('.chip').forEach(function(other){
+          other.setAttribute('aria-pressed', other === b ? 'true' : 'false');
+        });
+        activeCat = c.name;
+        applyFilters();
+      });
+
+      chips.appendChild(b);
+    });
+  }
+
+  // A list long enough to scroll is a list you cannot scan, so offer search
+  // once there are enough rows for it to earn its space.
+  if (rows.length > 12) {
+    document.getElementById('searchwrap').classList.remove('hidden');
+    document.getElementById('search').addEventListener('input', function(){
+      searchTerm = this.value.trim().toLowerCase();
+      applyFilters();
+    });
+  }
+
+  document.getElementById('stamp').textContent =
+    'Last checked ' + ago(data.generated) + ' (' +
+    new Date(data.generated).toLocaleString() + ').';
+
+  if (LIVE) { startLive(); }
+
+  // ====================================================================== //
+  // Live mode
+  // ====================================================================== //
+  // Everything below only runs when serve.ps1 is hosting the page. It is
+  // hoisted rather than inlined above so the read-only path above reads
+  // exactly as it did before renewal existed.
+
+  function api(method, path, body, cb){
+    var x = new XMLHttpRequest();
+    x.open(method, path, true);
+    x.setRequestHeader('X-Tracker-Token', TOKEN);
+    if (body) { x.setRequestHeader('Content-Type', 'application/json'); }
+    x.onreadystatechange = function(){
+      if (x.readyState !== 4) { return; }
+      var parsed = null;
+      try { parsed = JSON.parse(x.responseText); } catch (e) { /* not JSON */ }
+      if (x.status >= 200 && x.status < 300) { cb(null, parsed); }
+      else { cb((parsed && parsed.error) || ('The local server returned ' + (x.status || 'no response')), parsed); }
+    };
+    x.send(body ? JSON.stringify(body) : null);
+  }
+
+  function startLive(){
+    document.getElementById('toolbar').classList.remove('hidden');
+
+    document.getElementById('btn-check').addEventListener('click', function(){
+      runJob('Checking certificates', 'POST', '/api/check', null);
+    });
+    document.getElementById('btn-settings').addEventListener('click', openSettings);
+    document.getElementById('btn-cancel').addEventListener('click', closeSettings);
+    document.getElementById('btn-save').addEventListener('click', saveSettings);
+    document.getElementById('btn-test').addEventListener('click', testConnection);
+    document.getElementById('btn-add-provider').addEventListener('click', function(){
+      addProviderCard(null);
+    });
+    document.getElementById('btn-add-ca').addEventListener('click', function(){
+      addCaCard(null);
+    });
+    document.getElementById('btn-renew-all').addEventListener('click', renewAllExpiring);
+
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape') { closeSettings(); }
+    });
+
+    loadState();
+  }
+
+  function loadState(){
+    api('GET', '/api/state', null, function(err, s){
+      if (err) {
+        document.getElementById('livehint').textContent = err;
+        return;
+      }
+      state = s;
+      var staging = ((s.settings && s.settings.cas) || []).filter(function(ca){ return ca.useStaging; });
+      document.getElementById('livehint').textContent = staging.length
+        ? 'Staging: ' + staging.map(function(ca){ return ca.label; }).join(', ')
+        : '';
+      renderCerts();
+      markUnmapped();
+    });
+  }
+
+  // --- Certificates ------------------------------------------------------ //
+
+  function certDays(c){
+    return c.notAfter ? daysUntil(c.notAfter) : null;
+  }
+
+  // Anything another system renews is deliberately excluded from bulk renewal,
+  // so "Renew all expiring" can never quietly issue a second certificate for
+  // something that is already being looked after somewhere else.
+  function isExpiring(c){
+    if (c.external) { return false; }
+    var d = certDays(c);
+    return d === null || d <= RENEW_DAYS;
+  }
+
+  function renderCerts(){
+    var section = document.getElementById('certsection');
+    var tbody   = document.getElementById('certrows');
+    var certs   = (state && state.certs) || [];
+
+    tbody.textContent = '';
+
+    if (!certs.length) {
+      section.classList.add('hidden');
+      return;
+    }
+    section.classList.remove('hidden');
+
+    // Most urgent first, same rule the domain table uses.
+    certs = certs.slice().sort(function(a, b){
+      var da = certDays(a), db = certDays(b);
+      if (da === null && db === null) { return String(a.displayName || a.zone).localeCompare(String(b.displayName || b.zone)); }
+      if (da === null) { return 1; }
+      if (db === null) { return -1; }
+      return da - db;
+    });
+
+    document.getElementById('certintro').textContent =
+      certs.length + (certs.length === 1 ? ' certificate' : ' certificates') +
+      ', one per DNS zone. Renewing one renews every name on it.';
+
+    certs.forEach(function(c){
+      var days = certDays(c);
+      var tr = el('tr');
+
+      var name = el('td', 'host');
+      name.appendChild(document.createTextNode(c.displayName || c.zone));
+      // A wildcard certificate is its own row, deliberately separate from the
+      // zone's explicit-name certificate.
+      if (c.wildcard)   { name.appendChild(el('span', 'badge cool', 'wildcard')); }
+      if (c.overridden) { name.appendChild(el('span', 'badge', 'custom')); }
+      if (c.external)   {
+        var eb = el('span', 'badge cool', 'managed elsewhere');
+        eb.title = 'Renewed by another system. Watched here, never issued from here.';
+        name.appendChild(eb);
+      }
+      tr.appendChild(name);
+
+      var covers = el('td', 'names', (c.names || []).join(', '));
+      if (c.deferredNames && c.deferredNames.length) {
+        // The live certificate carries names this renewal would not reproduce.
+        // Silently dropping them is how you accidentally break a subdomain.
+        covers.appendChild(el('div', 'mini',
+          'Not included: ' + c.deferredNames.join(', ')));
+      }
+      tr.appendChild(covers);
+
+      // Issuer is a picker, not a label: which CA signs a certificate is a
+      // per-certificate decision, so it belongs on the certificate's own row
+      // rather than buried in a settings dialog.
+      var caCell = el('td');
+      var caSel = document.createElement('select');
+      caSel.className = 'ca-pick';
+      ((state.settings && state.settings.cas) || []).forEach(function(ca){
+        var o = document.createElement('option');
+        o.value = ca.id;
+        o.textContent = ca.label + (ca.useStaging ? ' (staging)' : '');
+        if (ca.id === c.caId) { o.selected = true; }
+        caSel.appendChild(o);
+      });
+      caSel.disabled = !!c.external;
+      caSel.title = c.caInherited ? 'Following the default certificate authority' : 'Pinned to this certificate authority';
+      caSel.addEventListener('change', function(){
+        api('POST', '/api/cert/' + encodeURIComponent(c.certId) + '/ca', { caId: caSel.value },
+          function(err){ if (err) { window.alert(err); } loadState(); });
+      });
+      caCell.appendChild(caSel);
+      if (c.caInherited) { caCell.appendChild(el('div', 'mini', 'default')); }
+      tr.appendChild(caCell);
+
+      tr.appendChild(el('td', 'dim', c.notAfter ? fmtDate(c.notAfter) : '—'));
+
+      var d = el('td', 'n days', days === null ? '—' : days + ' d');
+      if (days !== null && days < 0)             { tr.className = 'gone'; }
+      else if (days !== null && days <= RENEW_DAYS) { tr.className = 'soon'; }
+      tr.appendChild(d);
+
+      var acts = el('td', 'acts');
+
+      if (c.hasLocalCert) {
+        var dl = el('a', 'btn sm', '.pem');
+        dl.href = '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(TOKEN);
+        dl.title = 'Download the certificate, chain and private key as one PEM file';
+        acts.appendChild(dl);
+      }
+
+      var flip = el('button', 'btn sm', c.external ? 'Renew here' : 'Managed elsewhere');
+      flip.type = 'button';
+      flip.title = c.external
+        ? 'Bring this certificate back under this tool'
+        : 'Mark this as renewed by another system: keep watching it, but never issue it from here';
+      flip.addEventListener('click', function(){
+        setExternal(c.certId, !c.external);
+      });
+      acts.appendChild(flip);
+
+      if (!c.external) {
+        var btn = el('button', 'btn sm primary', 'Renew');
+        btn.type = 'button';
+        btn.addEventListener('click', function(){
+          confirmAndRenew([c.certId]);
+        });
+        acts.appendChild(btn);
+      }
+
+      tr.appendChild(acts);
+      tbody.appendChild(tr);
+    });
+
+    var expiring = certs.filter(isExpiring);
+    var skipped  = certs.filter(function(c){ return c.external; }).length;
+
+    var all = document.getElementById('btn-renew-all');
+    all.disabled = !expiring.length;
+    all.textContent = expiring.length
+      ? 'Renew ' + expiring.length + ' expiring'
+      : 'Nothing expiring';
+    all.title = skipped
+      ? skipped + ' certificate(s) marked "managed elsewhere" are never included'
+      : '';
+  }
+
+  function setExternal(zone, external){
+    api('POST', '/api/cert/' + encodeURIComponent(zone) + '/external', { external: external },
+      function(err){
+        if (err) { window.alert(err); return; }
+        loadState();
+      });
+  }
+
+  function renewAllExpiring(){
+    var expiring = ((state && state.certs) || []).filter(isExpiring);
+    if (!expiring.length) { return; }
+    confirmAndRenew(expiring.map(function(c){ return c.certId; }));
+  }
+
+  function confirmAndRenew(zones){
+    // Spell out the issuer per certificate. With several authorities in play,
+    // "are these production or staging?" is no longer one answer for the batch.
+    var byZone = {};
+    ((state && state.certs) || []).forEach(function(c){ byZone[c.certId] = c; });
+
+    var lines = zones.map(function(z){
+      var c = byZone[z];
+      if (!c) { return z; }
+      return (c.displayName || z) + '  ->  ' + c.caLabel + (c.caStaging ? '  (staging)' : '  (PRODUCTION)');
+    });
+
+    var anyProd = zones.some(function(z){ return byZone[z] && !byZone[z].caStaging; });
+
+    var msg = 'Order ' + zones.length + (zones.length === 1 ? ' certificate' : ' certificates') +
+              ':\n\n' + lines.join('\n') + '\n\n' +
+              (anyProd
+                ? 'This includes PRODUCTION orders, which count against the authority\'s rate limits.'
+                : 'All staging, so none of these will be trusted by browsers.') +
+              '\n\nContinue?';
+    if (!window.confirm(msg)) { return; }
+    runJob('Renewing ' + zones.join(', '), 'POST', '/api/renew', { zones: zones });
+  }
+
+  // --- Jobs -------------------------------------------------------------- //
+
+  function setBusy(busy){
+    ['btn-check', 'btn-renew-all'].forEach(function(id){
+      document.getElementById(id).disabled = busy;
+    });
+    document.querySelectorAll('#certrows button').forEach(function(b){ b.disabled = busy; });
+  }
+
+  function runJob(title, method, path, body){
+    if (jobTimer) { return; }
+
+    var panel = document.getElementById('jobpanel');
+    var log   = document.getElementById('joblog');
+    document.getElementById('jobtitle').firstChild.nodeValue = title;
+    log.textContent = 'Starting...';
+    panel.classList.remove('hidden');
+    setBusy(true);
+
+    api(method, path, body, function(err, res){
+      if (err || !res || !res.jobId) {
+        log.textContent = err || 'The server did not start the job.';
+        setBusy(false);
+        return;
+      }
+      pollJob(res.jobId, log);
+    });
+  }
+
+  function pollJob(id, log){
+    var atBottom = true;
+
+    jobTimer = window.setInterval(function(){
+      api('GET', '/api/job/' + id, null, function(err, j){
+        if (err) {
+          log.textContent += '\n' + err;
+          window.clearInterval(jobTimer); jobTimer = null; setBusy(false);
+          return;
+        }
+
+        // Only auto-scroll while the person is already following the tail;
+        // yanking the view back down while they read older lines is hostile.
+        atBottom = (log.scrollTop + log.clientHeight >= log.scrollHeight - 4);
+        if (j.log && j.log !== log.textContent) { log.textContent = j.log; }
+        if (atBottom) { log.scrollTop = log.scrollHeight; }
+
+        if (!j.running) {
+          window.clearInterval(jobTimer); jobTimer = null; setBusy(false);
+          // The run changed both the data file and the certificate folder, so
+          // pull fresh state. A full reload is the honest way to pick up a new
+          // ssl-data.js, since it arrives as a <script> tag.
+          if (j.kind === 'check') { window.setTimeout(function(){ location.reload(); }, 900); }
+          else { loadState(); }
+        }
+      });
+    }, 1500);
+  }
+
+  // --- Unmapped domains -------------------------------------------------- //
+
+  function markUnmapped(){
+    if (!rowsByHost || !state) { return; }
+
+    // Rebuilt from scratch on every refresh: configuring a provider is exactly
+    // the thing that clears these, so leaving the previous badges in place
+    // would tell you the setup is still broken after you have just fixed it.
+    document.querySelectorAll('#rows .badge').forEach(function(b){
+      b.parentNode.removeChild(b);
+    });
+    var old = document.getElementById('unmapped-callout');
+    if (old) { old.parentNode.removeChild(old); }
+
+    var unmapped = state.unmapped || [];
+    unmapped.forEach(function(u){
+      var tr = rowsByHost[String(u.host).toLowerCase()];
+      if (!tr) { return; }
+      var cell = tr.querySelector('td.host');
+      if (cell) {
+        var b = el('span', 'badge', 'no DNS');
+        b.title = 'No configured DNS provider manages this domain, so it cannot be renewed here.';
+        cell.appendChild(b);
+      }
+    });
+
+    if (!unmapped.length) { return; }
+
+    // Under this tool's premise - anything worth watching is worth renewing -
+    // a domain nothing can renew is a gap in the setup, not a quiet skip.
+    var alerts = document.getElementById('alerts');
+
+    var c = el('div', 'callout warn');
+    c.id = 'unmapped-callout';
+    c.appendChild(el('div', 'h', unmapped.length === 1
+      ? 'One domain cannot be renewed'
+      : unmapped.length + ' domains cannot be renewed'));
+
+    var p = el('p', null, unmapped.map(function(u){ return u.host; }).join(', ') + ' — ');
+    p.appendChild(document.createTextNode(state.haveZones
+      ? 'no configured DNS provider manages these zones. '
+      : 'no DNS provider is configured yet. '));
+
+    var link = el('button', 'btn sm', 'Open settings');
+    link.type = 'button';
+    link.addEventListener('click', openSettings);
+    p.appendChild(link);
+
+    c.appendChild(p);
+    alerts.appendChild(c);
+  }
+
+  // --- Settings ---------------------------------------------------------- //
+
+  function setStatus(text, cls){
+    var s = document.getElementById('set-status');
+    s.className = 'status-line' + (cls ? ' ' + cls : '');
+    s.textContent = text || '';
+  }
+
+  function openSettings(){
+    if (!state) { return; }
+    var s = state.settings;
+
+    document.getElementById('set-contact').value = s.contact || '';
+
+    var caHost = document.getElementById('cas');
+    caHost.textContent = '';
+    (s.cas || []).forEach(addCaCard);
+    refreshDefaultCaOptions(s.defaultCaId);
+
+    var host = document.getElementById('providers');
+    host.textContent = '';
+    (s.providers || []).forEach(addProviderCard);
+
+    setStatus('');
+    document.getElementById('settings').classList.remove('hidden');
+    document.getElementById('set-contact').focus();
+  }
+
+  function closeSettings(){
+    document.getElementById('settings').classList.add('hidden');
+  }
+
+  // Keeps the "default for new certificates" list in step with whatever CA
+  // cards currently exist, including ones added but not yet saved.
+  function refreshDefaultCaOptions(selectedId){
+    var sel = document.getElementById('set-default-ca');
+    var want = selectedId || sel.value;
+    sel.textContent = '';
+    document.querySelectorAll('#cas .ca').forEach(function(card){
+      var o = document.createElement('option');
+      o.value = card.getAttribute('data-cid');
+      o.textContent = card.querySelector('.ca-label').value || '(unnamed)';
+      if (o.value === want) { o.selected = true; }
+      sel.appendChild(o);
+    });
+  }
+
+  function addCaCard(c){
+    var card = el('div', 'provider ca');
+    card.setAttribute('data-cid',
+      (c && c.id) || ('ca' + Date.now().toString(36) + Math.floor(Math.random() * 1000)));
+
+    var head = el('div', 'phead');
+    head.appendChild(el('strong', null, (c && c.label) || 'New authority'));
+    var rm = el('button', 'btn sm', 'Remove');
+    rm.type = 'button';
+    rm.addEventListener('click', function(){
+      card.parentNode.removeChild(card);
+      refreshDefaultCaOptions();
+    });
+    head.appendChild(rm);
+    card.appendChild(head);
+
+    function field(cls, label, value, type, hint, placeholder){
+      var f = el('div', 'field');
+      f.appendChild(el('label', null, label));
+      var i = document.createElement('input');
+      i.type = type || 'text';
+      i.className = cls;
+      i.autocomplete = 'off';
+      i.value = value || '';
+      if (placeholder) { i.placeholder = placeholder; }
+      f.appendChild(i);
+      if (hint) { f.appendChild(el('p', 'hint', hint)); }
+      card.appendChild(f);
+      return i;
+    }
+
+    var lab = field('ca-label', 'Name', c && c.label, 'text', null, 'e.g. DigiCert CertCentral');
+    lab.addEventListener('input', function(){
+      head.firstChild.textContent = lab.value || 'New authority';
+      refreshDefaultCaOptions();
+    });
+
+    field('ca-directory', 'Production directory URL', c && c.directoryUrl, 'text',
+      'DigiCert: CertCentral > Automation > ACME Directory URLs.');
+    field('ca-staging-url', 'Staging directory URL', c && c.stagingUrl, 'text',
+      'Leave blank if this authority has no test environment.');
+
+    var stagingField = el('div', 'field');
+    var stagingLabel = el('label', 'check');
+    var stagingBox = document.createElement('input');
+    stagingBox.type = 'checkbox';
+    stagingBox.className = 'ca-staging';
+    stagingBox.checked = !!(c && c.useStaging);
+    stagingLabel.appendChild(stagingBox);
+    stagingLabel.appendChild(el('span', null, 'Use staging for this authority'));
+    stagingField.appendChild(stagingLabel);
+    card.appendChild(stagingField);
+
+    field('ca-eab-kid', 'External account key ID', c && c.eabKid, 'text',
+      'Only for authorities that require external account binding: DigiCert, ZeroSSL, Sectigo. Let’s Encrypt does not use it.');
+    field('ca-eab-hmac', 'External account HMAC key', '', 'password', null,
+      (c && c.eabHmacSet) ? 'Saved — leave blank to keep' : '');
+
+    document.getElementById('cas').appendChild(card);
+    refreshDefaultCaOptions();
+  }
+
+  function addProviderCard(p){
+    var catalog = (state && state.catalog) || {};
+    var plugins = Object.keys(catalog).sort();
+    if (!plugins.length) { return; }
+
+    var plugin = (p && p.plugin) || plugins[0];
+    if (!catalog[plugin]) { plugin = plugins[0]; }
+
+    var card = el('div', 'provider');
+    var pid = (p && p.id) || ('p' + Date.now().toString(36) + Math.floor(Math.random() * 1000));
+    card.setAttribute('data-pid', pid);
+    card.setAttribute('data-plugin', plugin);
+
+    var head = el('div', 'phead');
+    var title = el('strong', null, catalog[plugin].label);
+    head.appendChild(title);
+    var rm = el('button', 'btn sm', 'Remove');
+    rm.type = 'button';
+    rm.addEventListener('click', function(){ card.parentNode.removeChild(card); });
+    head.appendChild(rm);
+    card.appendChild(head);
+
+    var nameField = el('div', 'field');
+    nameField.appendChild(el('label', null, 'Profile name'));
+    var nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'p-label';
+    nameInput.value = (p && p.label) || '';
+    nameInput.placeholder = 'e.g. Work DNS Made Easy';
+    nameField.appendChild(nameInput);
+    card.appendChild(nameField);
+
+    var pluginField = el('div', 'field');
+    pluginField.appendChild(el('label', null, 'Provider'));
+    var sel = document.createElement('select');
+    sel.className = 'p-plugin';
+    plugins.forEach(function(k){
+      var o = document.createElement('option');
+      o.value = k;
+      o.textContent = catalog[k].label;
+      if (k === plugin) { o.selected = true; }
+      sel.appendChild(o);
+    });
+    pluginField.appendChild(sel);
+    card.appendChild(pluginField);
+
+    // Each provider takes different credentials, so switching rebuilds the
+    // fields below. Anything typed for the old provider is discarded, which is
+    // correct - it would not mean anything to the new one.
+    var argHost = el('div', 'fields');
+    card.appendChild(argHost);
+
+    function renderArgs(){
+      var current = sel.value;
+      card.setAttribute('data-plugin', current);
+      title.textContent = catalog[current].label;
+      argHost.textContent = '';
+
+      catalog[current].args.forEach(function(a){
+        var existing = (p && p.args && p.plugin === current) ? p.args[a.Name] : null;
+        var f = el('div', 'field');
+
+        if (a.Type === 'bool') {
+          var lab = el('label', 'check');
+          var box = document.createElement('input');
+          box.type = 'checkbox';
+          box.setAttribute('data-arg', a.Name);
+          box.checked = !!existing;
+          lab.appendChild(box);
+          lab.appendChild(el('span', null, a.Label));
+          f.appendChild(lab);
+        } else {
+          f.appendChild(el('label', null, a.Label));
+          var input = document.createElement('input');
+          input.type = a.Secret ? 'password' : 'text';
+          input.setAttribute('data-arg', a.Name);
+          input.autocomplete = 'off';
+          if (a.Secret) {
+            // Never round-trip a stored secret into the page; the server only
+            // tells us whether one exists.
+            input.value = '';
+            input.placeholder = existing === true ? 'Saved — leave blank to keep' : '';
+          } else {
+            input.value = existing || '';
+          }
+          f.appendChild(input);
+        }
+
+        if (a.Hint) { f.appendChild(el('p', 'hint', a.Hint)); }
+        argHost.appendChild(f);
+      });
+    }
+
+    sel.addEventListener('change', renderArgs);
+    renderArgs();
+
+    document.getElementById('providers').appendChild(card);
+  }
+
+  function collectSettings(){
+    var providers = [];
+    var bad = null;
+
+    document.querySelectorAll('#providers .provider').forEach(function(card){
+      var args = {};
+      card.querySelectorAll('input[data-arg]').forEach(function(i){
+        args[i.getAttribute('data-arg')] =
+          (i.type === 'checkbox') ? i.checked : i.value.trim();
+      });
+      var label = card.querySelector('.p-label').value.trim();
+      if (!label) { bad = 'Every DNS profile needs a name.'; }
+      providers.push({
+        id: card.getAttribute('data-pid'),
+        label: label,
+        plugin: card.querySelector('.p-plugin').value,
+        args: args
+      });
+    });
+
+    var cas = [];
+    document.querySelectorAll('#cas .ca').forEach(function(card){
+      function v(cls){ return card.querySelector(cls).value.trim(); }
+      var label = v('.ca-label');
+      if (!label) { bad = 'Every certificate authority needs a name.'; }
+      if (!v('.ca-directory')) { bad = '"' + (label || 'A certificate authority') + '" needs a production directory URL.'; }
+      cas.push({
+        id:           card.getAttribute('data-cid'),
+        label:        label,
+        directoryUrl: v('.ca-directory'),
+        stagingUrl:   v('.ca-staging-url'),
+        useStaging:   card.querySelector('.ca-staging').checked,
+        eabKid:       v('.ca-eab-kid'),
+        eabHmacKey:   card.querySelector('.ca-eab-hmac').value
+      });
+    });
+    if (!cas.length) { bad = 'At least one certificate authority is required.'; }
+
+    if (bad) { return { error: bad }; }
+
+    return {
+      payload: {
+        contact:     document.getElementById('set-contact').value.trim(),
+        cas:         cas,
+        defaultCaId: document.getElementById('set-default-ca').value,
+        providers:   providers
+      }
+    };
+  }
+
+  function saveSettings(){
+    var c = collectSettings();
+    if (c.error) { setStatus(c.error, 'bad'); return; }
+    if (!c.payload.contact) { setStatus('A contact email is required.', 'bad'); return; }
+
+    setStatus('Saving...');
+    api('POST', '/api/settings', c.payload, function(err){
+      if (err) { setStatus(err, 'bad'); return; }
+      // Saving credentials is only half the job - the zone list is what makes
+      // domains renewable, so refresh it in the same gesture.
+      setStatus('Saved. Reading DNS zones...');
+      api('POST', '/api/settings/test', {}, function(err2, res){
+        if (err2) { setStatus('Saved, but the DNS check failed: ' + err2, 'bad'); loadState(); return; }
+        if (res && res.errors && res.errors.length) {
+          setStatus(res.errors.map(function(e){ return e.providerLabel + ': ' + e.error; }).join('  |  '), 'bad');
+          loadState();
+          return;
+        }
+        setStatus('Saved. ' + ((res && res.zoneCount) || 0) + ' DNS zones found.', 'good');
+        loadState();
+        window.setTimeout(closeSettings, 1200);
+      });
+    });
+  }
+
+  function testConnection(){
+    var c = collectSettings();
+    if (c.error) { setStatus(c.error, 'bad'); return; }
+
+    // Test what is on screen, which means saving it first - otherwise you would
+    // be testing whatever was stored before you started typing.
+    setStatus('Saving and testing...');
+    api('POST', '/api/settings', c.payload, function(err){
+      if (err) { setStatus(err, 'bad'); return; }
+      api('POST', '/api/settings/test', {}, function(err2, res){
+        if (err2) { setStatus(err2, 'bad'); return; }
+        if (res && res.errors && res.errors.length) {
+          setStatus(res.errors.map(function(e){ return e.providerLabel + ': ' + e.error; }).join('  |  '), 'bad');
+          return;
+        }
+        var zones = (res && res.zones) || [];
+        // Say explicitly that writing was verified. "Connected" on its own is
+        // what let a read-only credential look fine until a renewal failed.
+        var wrote = ((res && res.writes) || []).filter(function(w){ return w.canWrite; }).length;
+        setStatus('Connected. ' + zones.length + ' zones (' +
+                  zones.slice(0, 6).join(', ') + (zones.length > 6 ? '...' : '') + '). ' +
+                  (wrote ? 'Record write verified on ' + wrote + ' provider(s).' : 'No zones to write-test.'), 'good');
+        loadState();
+      });
+    });
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# Domains to watch for SSL certificate expiry.
+#
+#   - One domain per line.
+#   - Blank lines and lines starting with # are ignored.
+#   - Add ":port" to check something other than https, e.g. mail.example.com:993
+#
+#   - A line in [Brackets] starts a category. Every domain below it belongs to
+#     that category until the next [Header]. Categories are optional - a plain
+#     list with no headers works fine.
+#
+#       [Example Product]
+#       example.com
+#       www.example.com
+#       test.example.com
+#       qa.example.com
+#
+# Renewal groups these by DNS zone, not by category: every name under a zone
+# your DNS provider manages ends up on one certificate together. You do not
+# have to configure that - add the domain here and it follows.
+#
+# This file is the shipped example. "First Time Setup.bat" copies it to
+# domains.txt, which is yours and is never committed or overwritten.
+
+[Example]
+example.com
+www.example.com

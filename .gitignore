@@ -1,0 +1,34 @@
+# Everything here is either regenerated or belongs to whoever is running the
+# tool. Nothing about your setup - domains, credentials, certificates - should
+# ever reach the repository, so the folder can be cloned or handed on clean.
+
+# Your domain list. domains.example.txt is the shipped sample that setup copies
+# from on a first run.
+domains.txt
+
+# Checker output, read by ssl-tracker.html as a .js global (see the note at the
+# bottom of check-ssl.ps1 for why it is not .json).
+ssl-data.js
+*.tmp
+
+# Configuration and credentials. secrets.xml is DPAPI-encrypted and bound to one
+# Windows user on one machine, but it has no business being committed regardless.
+settings.json
+secrets.xml
+zones.json
+
+# Issued certificates, archived versions, ACME account state. These contain
+# UNENCRYPTED PRIVATE KEYS - that is how PEM works, and every ACME client is the
+# same. Keep them out of git, and out of any folder that syncs to the cloud.
+certs/
+acme-state/
+
+# Renewal logs. Useful locally, noise in a repository.
+jobs/
+
+# Posh-ACME, fetched by First Time Setup rather than vendored into the repo.
+lib/
+
+# Windows junk
+desktop.ini
+Thumbs.db
