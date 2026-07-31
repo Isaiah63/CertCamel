@@ -205,6 +205,17 @@ td.names{color:var(--muted); font-size:.83rem;}
    state, not something to act on. */
 .badge.cool{color:var(--blue); background:var(--blue-bg); border-color:var(--blue);}
 
+/* Deployment: one pip per load-balancer node. Per node rather than a single
+   tick on purpose - a floating VIP will happily serve you the healthy node
+   while its partner sits on a stale certificate until failover. */
+td.deploy{white-space:nowrap;}
+.pips{display:flex; flex-wrap:wrap; gap:.25rem;}
+.pip{font-size:.62rem; font-weight:700; letter-spacing:.03em; padding:.14rem .45rem;
+  border-radius:999px; border:1px solid transparent; cursor:help;}
+.pip.good{color:var(--green); background:var(--green-bg); border-color:var(--green);}
+.pip.warn{color:var(--amber); background:var(--amber-bg); border-color:var(--amber);}
+.pip.bad{color:var(--red);   background:var(--red-bg);   border-color:var(--red);}
+
 /* Job log. Pre-wrapped rather than scrolling sideways - these lines are long
    and the interesting part is usually at the end of them. */
 .log{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.78rem;
@@ -234,6 +245,9 @@ td.names{color:var(--muted); font-size:.83rem;}
 .field{margin:.9rem 0;}
 .field label{display:block; font-size:.7rem; font-weight:700; letter-spacing:.06em;
   text-transform:uppercase; color:var(--faint); margin-bottom:.32rem;}
+.field textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.82rem;
+  width:100%; color:var(--text); padding:.5rem .75rem; resize:vertical;
+  border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg);}
 .field input[type=text],.field input[type=password],.field input[type=email],.field select{
   font:inherit; font-size:.88rem; width:100%; color:var(--text); padding:.5rem .75rem;
   border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg);}
@@ -338,7 +352,7 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     <div class="tablewrap">
       <table>
         <thead><tr>
-          <th>Certificate</th><th>Covers</th><th>Issuer</th><th>Expires</th><th class="n">Days left</th><th></th>
+          <th>Certificate</th><th>Covers</th><th>Issuer</th><th>Expires</th><th class="n">Days left</th><th>Deployed</th><th></th>
         </tr></thead>
         <tbody id="certrows"></tbody>
       </table>
@@ -394,6 +408,14 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     below is one DNS account; every zone it manages becomes renewable automatically.</p>
     <div id="providers"></div>
     <button class="btn sm" type="button" id="btn-add-provider">Add a DNS profile</button>
+
+    <h4>Load balancers</h4>
+    <p class="hint">Where issued certificates get pushed. One entry per group of load
+    balancers that share credentials — each node is still pushed to, and verified,
+    individually. Certificates are assigned to a group on their row in the Certificates
+    table.</p>
+    <div id="targets"></div>
+    <button class="btn sm" type="button" id="btn-add-target">Add a load balancer group</button>
 
     <p class="status-line" id="set-status"></p>
 
@@ -829,6 +851,9 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     document.getElementById('btn-add-ca').addEventListener('click', function(){
       addCaCard(null);
     });
+    document.getElementById('btn-add-target').addEventListener('click', function(){
+      addTargetCard(null);
+    });
     document.getElementById('btn-renew-all').addEventListener('click', renewAllExpiring);
 
     document.addEventListener('keydown', function(e){
@@ -951,6 +976,8 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
       else if (days !== null && days <= RENEW_DAYS) { tr.className = 'soon'; }
       tr.appendChild(d);
 
+      tr.appendChild(deploymentCell(c));
+
       var acts = el('td', 'acts');
 
       if (c.hasLocalCert) {
@@ -958,6 +985,16 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
         dl.href = '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(TOKEN);
         dl.title = 'Download the certificate, chain and private key as one PEM file';
         acts.appendChild(dl);
+      }
+
+      // Deploy is only meaningful once there is something to send and somewhere
+      // to send it, and never for a certificate another system owns.
+      if (!c.external && c.hasLocalCert && (c.targets || []).length) {
+        var dep = el('button', 'btn sm', 'Deploy');
+        dep.type = 'button';
+        dep.title = 'Push this certificate to its load balancers and verify each one is serving it';
+        dep.addEventListener('click', function(){ confirmAndDeploy([c.certId]); });
+        acts.appendChild(dep);
       }
 
       var flip = el('button', 'btn sm', c.external ? 'Renew here' : 'Managed elsewhere');
@@ -1002,6 +1039,74 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
         if (err) { window.alert(err); return; }
         loadState();
       });
+  }
+
+  // --- Deployment -------------------------------------------------------- //
+
+  function deploymentCell(c){
+    var td = el('td', 'deploy');
+    var dep = (state.deployment || {})[c.certId] || {};
+    var assigned = c.targets || dep.targets || [];
+
+    if (!assigned.length) {
+      // Issued but going nowhere. Said outright rather than left blank, because
+      // a certificate nobody deploys is a certificate that silently expires in
+      // production while this page shows it as freshly renewed.
+      var none = el('span', 'mini', 'not deployed');
+      none.title = 'No load balancer is assigned. Assign one in Settings.';
+      td.appendChild(none);
+      return td;
+    }
+
+    if (!dep.last) {
+      td.appendChild(el('span', 'mini', 'never pushed'));
+      return td;
+    }
+
+    // One pip per node. The whole reason this is per node rather than a single
+    // tick is that a floating VIP hides a stale standby until failover.
+    var wrap = el('div', 'pips');
+    (dep.last.targets || []).forEach(function(t){
+      (t.nodes || []).forEach(function(n){
+        var pushed = n.push && n.push.ok;
+        var served = (n.verify || []).length ? (n.verify || []).every(function(v){ return v.ok; }) : null;
+        var cls = (pushed && served === true) ? 'good'
+                : (pushed && served === null) ? 'warn'
+                : 'bad';
+
+        var pip = el('span', 'pip ' + cls, n.name);
+        var why = [];
+        why.push(pushed ? 'push ok' : 'push failed' + (n.push && n.push.error ? ': ' + n.push.error : ''));
+        (n.verify || []).forEach(function(v){
+          why.push(v.sni + ': ' + (v.ok ? 'serving it, ' + v.daysRemaining + ' days left' : (v.error || 'not serving it')));
+        });
+        pip.title = why.join('\n');
+        wrap.appendChild(pip);
+      });
+    });
+    td.appendChild(wrap);
+
+    var when = el('div', 'mini', ago(dep.last.at));
+    when.title = new Date(dep.last.at).toLocaleString();
+    td.appendChild(when);
+    return td;
+  }
+
+  function confirmAndDeploy(certIds){
+    var byId = {};
+    ((state && state.certs) || []).forEach(function(c){ byId[c.certId] = c; });
+
+    var lines = certIds.map(function(id){
+      var c = byId[id];
+      var names = c ? (c.targets || []).join(', ') : '';
+      return '  ' + (c ? c.displayName : id) + '  ->  ' + (names || 'no target');
+    });
+
+    if (!window.confirm('Push and verify:\n\n' + lines.join('\n') +
+        '\n\nEach load balancer is checked individually afterwards to confirm it is ' +
+        'actually serving the certificate.\n\nContinue?')) { return; }
+
+    runJob('Deploying ' + certIds.join(', '), 'POST', '/api/deploy', { certs: certIds });
   }
 
   function renewAllExpiring(){
@@ -1166,6 +1271,10 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     var host = document.getElementById('providers');
     host.textContent = '';
     (s.providers || []).forEach(addProviderCard);
+
+    var tHost = document.getElementById('targets');
+    tHost.textContent = '';
+    (s.targets || []).forEach(addTargetCard);
 
     setStatus('');
     document.getElementById('settings').classList.remove('hidden');
@@ -1352,6 +1461,101 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     document.getElementById('providers').appendChild(card);
   }
 
+  function addTargetCard(t){
+    var catalog = (state && state.targetCatalog) || {};
+    var types = Object.keys(catalog).sort();
+    if (!types.length) { return; }
+
+    var type = (t && t.type) || types[0];
+    if (!catalog[type]) { type = types[0]; }
+
+    var card = el('div', 'provider target');
+    card.setAttribute('data-tid',
+      (t && t.id) || ('t' + Date.now().toString(36) + Math.floor(Math.random() * 1000)));
+    card.setAttribute('data-type', type);
+
+    var head = el('div', 'phead');
+    head.appendChild(el('strong', null, catalog[type].label));
+    var rm = el('button', 'btn sm', 'Remove');
+    rm.type = 'button';
+    rm.addEventListener('click', function(){ card.parentNode.removeChild(card); });
+    head.appendChild(rm);
+    card.appendChild(head);
+
+    function field(cls, label, value, inputType, hint, placeholder){
+      var f = el('div', 'field');
+      f.appendChild(el('label', null, label));
+      var i = document.createElement('input');
+      i.type = inputType || 'text';
+      i.className = cls;
+      i.autocomplete = 'off';
+      i.value = value || '';
+      if (placeholder) { i.placeholder = placeholder; }
+      f.appendChild(i);
+      if (hint) { f.appendChild(el('p', 'hint', hint)); }
+      card.appendChild(f);
+      return i;
+    }
+
+    var lab = field('t-label', 'Group name', t && t.label, 'text', null, 'e.g. Office prod');
+    lab.addEventListener('input', function(){ head.firstChild.textContent = lab.value || catalog[type].label; });
+
+    // Nodes are one-per-line rather than a repeating widget: an HA pair is two
+    // lines, and pasting six of them beats clicking "add" six times.
+    var nodesField = el('div', 'field');
+    nodesField.appendChild(el('label', null, 'Nodes — one per line'));
+    var nodesBox = document.createElement('textarea');
+    nodesBox.className = 't-nodes';
+    nodesBox.rows = 4;
+    nodesBox.spellcheck = false;
+    nodesBox.value = ((t && t.nodes) || []).map(function(n){
+      return n.name + ' ' + n.url + (n.verifyHost ? ' ' + n.verifyHost : '');
+    }).join('\n');
+    nodesBox.placeholder = 'lb1 https://10.0.0.11:5555\nlb2 https://10.0.0.12:5555';
+    nodesField.appendChild(nodesBox);
+    nodesField.appendChild(el('p', 'hint',
+      'name, then the Data Plane API URL. Optionally a third value: the address to ' +
+      'verify against, if the site is not served from the same host as the API. ' +
+      'Verification always connects to each node directly, never through a VIP.'));
+    card.appendChild(nodesField);
+
+    var argHost = el('div', 'fields');
+    card.appendChild(argHost);
+
+    catalog[type].args.forEach(function(a){
+      var existing = (t && t.args) ? t.args[a.Name] : null;
+      var f = el('div', 'field');
+
+      if (a.Type === 'bool') {
+        var lb = el('label', 'check');
+        var box = document.createElement('input');
+        box.type = 'checkbox';
+        box.setAttribute('data-arg', a.Name);
+        box.checked = !!existing;
+        lb.appendChild(box);
+        lb.appendChild(el('span', null, a.Label));
+        f.appendChild(lb);
+      } else {
+        f.appendChild(el('label', null, a.Label));
+        var input = document.createElement('input');
+        input.type = a.Secret ? 'password' : 'text';
+        input.setAttribute('data-arg', a.Name);
+        input.autocomplete = 'off';
+        if (a.Secret) {
+          input.value = '';
+          input.placeholder = existing === true ? 'Saved — leave blank to keep' : '';
+        } else {
+          input.value = existing || '';
+        }
+        f.appendChild(input);
+      }
+      if (a.Hint) { f.appendChild(el('p', 'hint', a.Hint)); }
+      argHost.appendChild(f);
+    });
+
+    document.getElementById('targets').appendChild(card);
+  }
+
   function collectSettings(){
     var providers = [];
     var bad = null;
@@ -1390,6 +1594,44 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     });
     if (!cas.length) { bad = 'At least one certificate authority is required.'; }
 
+    var targets = [];
+    document.querySelectorAll('#targets .target').forEach(function(card){
+      var args = {};
+      card.querySelectorAll('input[data-arg]').forEach(function(i){
+        args[i.getAttribute('data-arg')] = (i.type === 'checkbox') ? i.checked : i.value.trim();
+      });
+
+      var label = card.querySelector('.t-label').value.trim();
+      if (!label) { bad = 'Every load balancer group needs a name.'; }
+
+      // "name url [verifyHost]" per line. Anything malformed is reported rather
+      // than quietly dropped - a node silently missing from the list would not
+      // be pushed to, and nothing downstream would notice.
+      var nodes = [];
+      var lineError = null;
+      card.querySelector('.t-nodes').value.split('\n').forEach(function(line){
+        var s = line.trim();
+        if (!s) { return; }
+        var parts = s.split(/\s+/);
+        if (parts.length < 2) { lineError = lineError || 'Node line needs a name and a URL: "' + s + '"'; return; }
+        if (!/^https?:\/\//i.test(parts[1])) { lineError = lineError || 'Node URL must start with http:// or https://: "' + s + '"'; return; }
+        nodes.push({ name: parts[0], url: parts[1], verifyHost: parts[2] || '' });
+      });
+
+      // A malformed line is the more useful complaint. Falling back to "no
+      // nodes" would describe the symptom and hide the typo that caused it.
+      if (lineError)          { bad = lineError; }
+      else if (!nodes.length) { bad = '"' + (label || 'A load balancer group') + '" has no nodes.'; }
+
+      targets.push({
+        id: card.getAttribute('data-tid'),
+        label: label,
+        type: card.getAttribute('data-type'),
+        nodes: nodes,
+        args: args
+      });
+    });
+
     if (bad) { return { error: bad }; }
 
     return {
@@ -1397,7 +1639,8 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
         contact:     document.getElementById('set-contact').value.trim(),
         cas:         cas,
         defaultCaId: document.getElementById('set-default-ca').value,
-        providers:   providers
+        providers:   providers,
+        targets:     targets
       }
     };
   }
