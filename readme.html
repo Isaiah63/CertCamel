@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cert Camel &mdash; Read me</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='%23d99b3f'%3E%3Crect x='6' y='14' width='16' height='8' rx='4'/%3E%3Ccircle cx='11' cy='13' r='4'/%3E%3Ccircle cx='17.5' cy='13' r='4'/%3E%3Cpath d='M19 18 L21.5 8 L24.5 8.5 L22.5 18 Z'/%3E%3Ccircle cx='24' cy='7.5' r='3.2'/%3E%3Crect x='25.5' y='6.4' width='4.5' height='2.6' rx='1.3'/%3E%3Crect x='8' y='21' width='2.6' height='7' rx='1.3'/%3E%3Crect x='12' y='21' width='2.6' height='7' rx='1.3'/%3E%3Crect x='16' y='21' width='2.6' height='7' rx='1.3'/%3E%3Crect x='19.4' y='21' width='2.6' height='7' rx='1.3'/%3E%3C/g%3E%3C/svg%3E">
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('certcamel-theme');
+    if (t === 'dark' || t === 'light') { document.documentElement.setAttribute('data-theme', t); }
+  } catch (e) { }
+})();
+</script>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f5f6f9; --glow-1:rgba(99,102,241,.14); --glow-2:rgba(168,85,247,.12);
+  --surface:rgba(255,255,255,.72); --surface-solid:#fff;
+  --border:rgba(17,24,39,.09); --border-strong:rgba(17,24,39,.16);
+  --text:#0b0d12; --muted:#4d5666; --faint:#8a93a4;
+  --accent:#6366f1; --accent-2:#a855f7;
+  --amber:#b45309; --amber-bg:rgba(245,158,11,.10);
+  --green:#15803d; --green-bg:rgba(34,197,94,.10);
+  --blue:#1d4ed8; --blue-bg:rgba(59,130,246,.10);
+  --red:#b91c1c; --red-bg:rgba(239,68,68,.10);
+  --shadow:0 1px 2px rgba(17,24,39,.04), 0 10px 30px -14px rgba(17,24,39,.20);
+  --radius:16px; --radius-sm:11px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#6b7486;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#6b7486;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box;}
+body{margin:0; min-height:100vh; color:var(--text); background:var(--bg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background-image:radial-gradient(58rem 58rem at 6% -10%,var(--glow-1),transparent 60%),
+    radial-gradient(48rem 48rem at 104% 2%,var(--glow-2),transparent 55%);
+  background-attachment:fixed; -webkit-font-smoothing:antialiased; line-height:1.65;}
+
+.shell{max-width:min(96rem,96vw); margin:0 auto; padding:clamp(1.25rem,3vw,2.25rem) clamp(1rem,3vw,2.5rem) 5rem;}
+
+/* Masthead, matching the tracker: tag left, logo centred, controls right. The
+   side zones share a flex basis so the logo is optically centred. */
+.masthead{display:flex; align-items:center; gap:1.5rem; padding:.2rem 0 1.15rem;
+  border-bottom:1px solid var(--border); margin-bottom:1.6rem;}
+.masthead .side{flex:1 1 0; min-width:0;}
+.masthead .actions{display:flex; align-items:center; gap:.5rem; justify-content:flex-end;}
+.brand{display:flex; align-items:center; gap:.75rem; flex:none;}
+.brand .mark{display:grid; place-items:center; width:2.75rem; height:2.75rem; flex:none;
+  padding:.4rem; border-radius:13px; color:var(--accent-2);
+  border:1px solid var(--border-strong); background:var(--surface); backdrop-filter:blur(14px);
+  box-shadow:var(--shadow);}
+.brand .mark svg{width:100%; height:100%; display:block;}
+.brand h1{font-size:1.65rem; line-height:1.1; letter-spacing:-.025em; font-weight:850;
+  margin:0; padding-bottom:.06em; white-space:nowrap;
+  background:linear-gradient(135deg,var(--text) 38%,var(--accent) 145%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;}
+
+.back{display:inline-flex; align-items:center; gap:.45rem; text-decoration:none; color:var(--muted);
+  font-size:.85rem; font-weight:550; padding:.4rem .8rem; border:1px solid var(--border);
+  border-radius:999px; background:var(--surface); backdrop-filter:blur(14px); white-space:nowrap;}
+.back:hover{color:var(--text); border-color:var(--border-strong);}
+.tag{font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; font-weight:700; color:var(--faint);}
+.lede{font-size:clamp(1rem,2vw,1.12rem); color:var(--muted); max-width:52rem; margin:0 0 2rem;}
+
+@media (max-width:56rem){
+  .masthead{flex-wrap:wrap; justify-content:space-between;}
+  .masthead .side{flex:0 0 auto;}
+  .brand{order:-1; flex-basis:100%; margin-bottom:.4rem;}
+}
+
+.cols{display:grid; grid-template-columns:14rem 1fr; gap:2.5rem; align-items:start;}
+@media (max-width:60rem){.cols{grid-template-columns:1fr;}}
+nav.toc{position:sticky; top:1.5rem; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); padding:1rem 1.1rem; box-shadow:var(--shadow);}
+nav.toc h2{font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);
+  margin:0 0 .6rem; font-weight:800;}
+nav.toc ol{list-style:none; margin:0; padding:0; counter-reset:t;}
+nav.toc li{counter-increment:t; margin:.25rem 0;}
+nav.toc a{display:block; text-decoration:none; color:var(--muted); font-size:.84rem; padding:.15rem 0;}
+nav.toc a::before{content:counter(t) ". "; color:var(--faint);}
+nav.toc a:hover{color:var(--accent);}
+
+article h2{font-size:1.3rem; font-weight:750; letter-spacing:-.015em; margin:2.6rem 0 .7rem;
+  scroll-margin-top:1.5rem;}
+article h2:first-child{margin-top:0;}
+article h3{font-size:1rem; font-weight:700; margin:1.6rem 0 .4rem;}
+article p{margin:.7rem 0; max-width:62rem;}
+article ul,article ol{margin:.7rem 0; padding-left:1.3rem; max-width:62rem;}
+article li{margin:.3rem 0;}
+strong{font-weight:700;}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.87em;
+  background:var(--surface-solid); border:1px solid var(--border); border-radius:6px; padding:.1rem .35rem;}
+pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.82rem; line-height:1.55;
+  overflow-x:auto; margin:.9rem 0; padding:.9rem 1.1rem; color:var(--muted);
+  border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
+pre code{background:none; border:none; padding:0; font-size:1em;}
+
+.tablewrap{overflow-x:auto; margin:1rem 0; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);}
+table{border-collapse:collapse; width:100%; font-size:.9rem;}
+th,td{text-align:left; padding:.65rem 1rem; border-bottom:1px solid var(--border); vertical-align:top;}
+thead th{font-size:.68rem; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); font-weight:800;}
+tbody tr:last-child td{border-bottom:none;}
+
+.callout{border:1px solid var(--border); border-left-width:4px; border-radius:var(--radius-sm);
+  padding:.85rem 1.1rem; margin:1.2rem 0; background:var(--surface); max-width:62rem;}
+.callout .h{font-weight:700; font-size:.92rem; margin-bottom:.15rem;}
+.callout p{margin:.3rem 0 0; font-size:.92rem;}
+.callout.warn{border-left-color:var(--amber); background:var(--amber-bg);} .callout.warn .h{color:var(--amber);}
+.callout.crit{border-left-color:var(--red); background:var(--red-bg);} .callout.crit .h{color:var(--red);}
+.callout.note{border-left-color:var(--blue); background:var(--blue-bg);} .callout.note .h{color:var(--blue);}
+.callout.good{border-left-color:var(--green); background:var(--green-bg);} .callout.good .h{color:var(--green);}
+
+footer{margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border);
+  color:var(--faint); font-size:.82rem;}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- Same masthead shape as the tracker: tag left, logo centred, controls right. -->
+<header class="masthead">
+  <span class="tag side">How it works</span>
+
+  <div class="brand">
+    <span class="mark">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><g fill="currentColor">
+        <rect x="6" y="14" width="16" height="8" rx="4"/><circle cx="11" cy="13" r="4"/>
+        <circle cx="17.5" cy="13" r="4"/><path d="M19 18 L21.5 8 L24.5 8.5 L22.5 18 Z"/>
+        <circle cx="24" cy="7.5" r="3.2"/><rect x="25.5" y="6.4" width="4.5" height="2.6" rx="1.3"/>
+        <rect x="8" y="21" width="2.6" height="7" rx="1.3"/><rect x="12" y="21" width="2.6" height="7" rx="1.3"/>
+        <rect x="16" y="21" width="2.6" height="7" rx="1.3"/><rect x="19.4" y="21" width="2.6" height="7" rx="1.3"/>
+      </g></svg>
+    </span>
+    <h1>Cert Camel</h1>
+  </div>
+
+  <div class="side actions">
+    <a class="back" href="ssl-tracker.html">&larr; Back to the tracker</a>
+  </div>
+</header>
+
+<p class="lede">Watches when your TLS certificates expire, and renews them. Anything you track
+here is presumably something you intend to renew, so the two halves are one tool.</p>
+
+<div class="cols">
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#open">Opening it</a></li>
+    <li><a href="#domains">Adding domains</a></li>
+    <li><a href="#grouping">How certs are grouped</a></li>
+    <li><a href="#wildcards">Wildcards &amp; challenges</a></li>
+    <li><a href="#dns">DNS providers</a></li>
+    <li><a href="#cas">Certificate authorities</a></li>
+    <li><a href="#staging">Staging first</a></li>
+    <li><a href="#elsewhere">Managed elsewhere</a></li>
+    <li><a href="#output">What you get</a></li>
+    <li><a href="#security">Security</a></li>
+    <li><a href="#trouble">When it breaks</a></li>
+    <li><a href="#clock">The 47-day future</a></li>
+    <li><a href="#files">Files</a></li>
+  </ol>
+</nav>
+
+<article>
+
+<h2 id="open">1. Opening it</h2>
+<p>There are two ways in, and they are not equivalent.</p>
+<div class="tablewrap"><table>
+  <thead><tr><th></th><th><code>Open Tracker.bat</code></th><th><code>ssl-tracker.html</code></th></tr></thead>
+  <tbody>
+    <tr><td>Expiry table, categories, filters</td><td>yes</td><td>yes</td></tr>
+    <tr><td>Renew, download, settings</td><td>yes</td><td><strong>no</strong></td></tr>
+    <tr><td>Needs something running</td><td>a local server, while open</td><td>no</td></tr>
+  </tbody>
+</table></div>
+<p>A page opened straight from disk (<code>file://</code>) genuinely cannot run PowerShell, call a
+DNS API, or write to its own folder &mdash; so buttons there would be decoration. <strong>Open
+Tracker.bat</strong> starts a small server on <code>127.0.0.1</code> and opens the same page against
+it. Close that console window and the server stops.</p>
+<p>Nothing is exposed to your network: it binds to loopback only, and every request must carry a
+random token generated fresh each launch. Loopback alone is not access control &mdash; anything
+else running on the machine can reach it, which is why the token exists.</p>
+
+<h2 id="domains">2. Adding domains</h2>
+<p>Edit <code>domains.txt</code>. One host per line; blank lines and <code>#</code> comments are
+ignored. Add <code>:port</code> to watch something other than HTTPS.</p>
+<pre><code>[Example Product]
+example.com
+www.example.com
+mail.example.com:993</code></pre>
+<p>A line in <code>[Brackets]</code> starts a category, which affects only how the page is
+organised &mdash; groups are ordered by urgency rather than alphabetically, so whatever expires
+soonest floats to the top. Past a dozen rows a search box appears.</p>
+<p><code>domains.txt</code> is yours: gitignored, never overwritten. <code>domains.example.txt</code>
+is the shipped sample that setup copies from on a first run.</p>
+
+<h2 id="grouping">3. How certificates are grouped</h2>
+<p>You never configure this per domain. Certificates are grouped by <strong>DNS zone</strong>, and
+the zone list comes from your DNS provider &mdash; the tool asks which zones the account manages,
+then puts every tracked hostname under the longest zone that covers it.</p>
+<pre><code>example.com          ─┐
+www.example.com      ─┼─  one certificate, three names
+shop.example.com     ─┘</code></pre>
+<p>Add a fourth hostname to <code>domains.txt</code> and it joins that certificate automatically.</p>
+<p>The zone list is read from the provider rather than guessed from the name because guessing is
+wrong in two common cases: <code>example.co.uk</code> is not a two-label domain, and a delegated
+sub-zone like <code>dev.example.com</code> sitting under <code>example.com</code> needs to win.</p>
+<h3>Which names end up on a certificate</h3>
+<p>Your tracked hostnames, <strong>plus any extra names found on the certificate currently being
+served</strong>. That matters: if production has a <code>legacy.example.com</code> nobody added to
+<code>domains.txt</code>, renewing without it would quietly break that host.</p>
+<p>Two kinds of name are left off, and shown as <em>Not included</em> so the omission is visible:</p>
+<ul>
+  <li><strong>Wildcards.</strong> <code>*.example.com</code> is excluded by default &mdash; among
+  other things it rules out HTTP/2 on some routers. Opt in per certificate if you want it.</li>
+  <li><strong>Names in zones you do not manage.</strong> The DNS challenge could not be completed
+  for them, so asking would fail the whole order.</li>
+</ul>
+<div class="callout warn">
+  <div class="h">Domains with no DNS provider are flagged, not hidden</div>
+  <p>Anything that maps to no configured zone gets a <code>no DNS</code> badge and a callout,
+  because a domain you cannot renew is usually a gap in the setup rather than a domain that does
+  not matter.</p>
+</div>
+
+<h2 id="wildcards">4. Wildcards and challenge types</h2>
+<p>There is a widespread belief that wildcard certificates need an HTTP challenge. It is exactly
+backwards, and the difference decides whether wildcards are available to you at all.</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Challenge</th><th>Proves control by</th><th>Wildcards</th><th>Needs</th></tr></thead>
+  <tbody>
+    <tr><td><strong>DNS-01</strong><br>(what this tool uses)</td>
+        <td>Writing a TXT record at <code>_acme-challenge.&lt;zone&gt;</code></td>
+        <td><strong>Yes &mdash; the only option</strong></td>
+        <td>An API token for your DNS</td></tr>
+    <tr><td>HTTP-01</td>
+        <td>Serving a file at <code>/.well-known/acme-challenge/</code></td>
+        <td><strong>No &mdash; cannot issue them</strong></td>
+        <td>A public IP and a reachable web server on port 80</td></tr>
+    <tr><td>TLS-ALPN-01</td><td>A special TLS handshake on port 443</td><td>No</td>
+        <td>A public IP and control of port 443</td></tr>
+  </tbody>
+</table></div>
+<p>The reason is structural. HTTP-01 proves control of one specific hostname by fetching a file from
+it. <code>*.example.com</code> stands for infinitely many hostnames, so there is no single file to
+place. DNS-01 proves control of the <em>zone</em> with one TXT record, which covers every possible
+subdomain at once.</p>
+<div class="callout good">
+  <div class="h">This is good news for locked-down environments</div>
+  <p>HTTP-01 is the challenge that needs a public IP and an inbound web server &mdash; and it cannot
+  issue wildcards anyway. DNS-01 needs neither: just outbound HTTPS to your DNS provider's API. A
+  workstation with no public address and no web server can issue wildcard certificates perfectly
+  well, which is precisely what this tool does.</p>
+</div>
+<h3>Two things about wildcards themselves</h3>
+<ul>
+  <li><strong><code>*.example.com</code> does not match <code>example.com</code>.</strong> A
+  wildcard-only certificate leaves the bare domain uncovered, which is a common and confusing
+  outage. A wildcard certificate normally carries the apex as a second name.</li>
+  <li>A wildcard matches <strong>one label only</strong>. <code>*.example.com</code> covers
+  <code>www.example.com</code> but not <code>a.b.example.com</code>.</li>
+</ul>
+<h3>Asking for a wildcard</h3>
+<p>Put the wildcard in <code>domains.txt</code> as its own line:</p>
+<pre><code>[Example Product]
+example.com          &lt;- these three go on one certificate
+www.example.com
+shop.example.com
+
+*.example.com        &lt;- a SEPARATE wildcard certificate</code></pre>
+<p>That line produces a second, independent certificate for the zone containing
+<code>*.example.com</code> <strong>and</strong> <code>example.com</code>. It gets its own row in the
+Certificates table, its own Renew button, and its own <code>.pem</code>.</p>
+<p>The wildcard is <strong>never</strong> folded into the certificate covering your explicit names.
+That is deliberate rather than incidental: some routers &mdash; OpenShift among them &mdash; will not
+negotiate HTTP/2 against a wildcard certificate, so contaminating the explicit-name certificate would
+break exactly the hosts it exists to serve. There is no setting to merge them, because there is no
+safe version of that.</p>
+<div class="callout note">
+  <div class="h">A wildcard line is not watched</div>
+  <p>Nothing answers at <code>*.example.com</code>, so there is no certificate to read and no expiry
+  to measure. Wildcard lines are kept out of the expiry table entirely rather than sitting there
+  permanently as an error, and the checker prints them as <code>WILDCARD &mdash; renewal only</code>.</p>
+</div>
+<p>Separately, if the certificate a host <em>currently serves</em> contains a wildcard you have not
+asked for, that name is reported under <em>Not included</em> on the certificate row &mdash; so you
+can see what the live certificate has that yours would not, and add the line if you want it.</p>
+
+<h2 id="dns">5. DNS providers</h2>
+<p>Renewal proves you control a domain by writing a <code>_acme-challenge</code> TXT record
+(DNS-01), so it needs API access to your DNS. Open <strong>Settings</strong> and add a profile.</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Provider</th><th>What you need</th><th>Where</th></tr></thead>
+  <tbody>
+    <tr><td>Cloudflare</td><td>API Token with <code>Zone:Read</code> + <code>DNS:Edit</code></td>
+        <td>My Profile &rarr; API Tokens &rarr; <em>Edit zone DNS</em> template</td></tr>
+    <tr><td>DNS Made Easy</td><td>API Key + Secret Key</td><td>Console &rarr; Account Information</td></tr>
+    <tr><td>NS1</td><td>API Key with DNS read + record write</td><td>Account Settings &rarr; API Keys</td></tr>
+  </tbody>
+</table></div>
+<p>Domains are many; DNS accounts are few. A handful of profiles usually covers everything you
+track. Adding another provider is a catalog entry in <code>acme-lib.ps1</code>, not new code
+&mdash; the underlying ACME client ships 88 DNS plugins.</p>
+<p><strong>Test connection</strong> does two things: lists the zones it can see, and writes a real
+challenge record then deletes it. The second part matters, because listing zones only proves
+<em>read</em> access &mdash; and a read-only credential would otherwise pass the check and then
+fail partway through an order.</p>
+<div class="callout note">
+  <div class="h">Do not use Cloudflare&rsquo;s Global API Key</div>
+  <p>It can do anything to your entire account. A scoped API token can be limited to DNS edit on
+  specific zones, which is the whole point.</p>
+</div>
+
+<h2 id="cas">6. Certificate authorities</h2>
+<p>Different certificates can come from different authorities &mdash; a common pattern is moving
+most of an estate to Let&rsquo;s Encrypt while keeping payment-related certificates with a paid CA.
+Add authorities under <em>Settings &rarr; Certificate authorities</em>, then pick one per
+certificate from the <strong>Issuer</strong> dropdown on its row. Anything not pinned follows the
+default and shows <code>default</code> beneath the dropdown.</p>
+<p>Accounts are kept separate per authority, so mixing costs nothing. The renewal log names the
+issuer for every order, and the confirmation prompt spells out which CA each certificate goes to
+and whether it is production or staging.</p>
+<h3>DV, OV and EV</h3>
+<div class="tablewrap"><table>
+  <thead><tr><th></th><th>Proves</th><th>Issued by</th></tr></thead>
+  <tbody>
+    <tr><td><strong>DV</strong></td><td>You control the domain</td><td>Anyone, including Let&rsquo;s Encrypt</td></tr>
+    <tr><td><strong>OV</strong></td><td>Above, plus your organization legally exists</td><td>Paid CAs only</td></tr>
+    <tr><td><strong>EV</strong></td><td>Above, with stricter vetting</td><td>Paid CAs only</td></tr>
+  </tbody>
+</table></div>
+<p>Browsers treat all three identically &mdash; same padlock, same encryption. <strong>Let&rsquo;s
+Encrypt issues DV only.</strong> If your paid certificates are DV, keeping them with a paid CA is a
+policy, procurement or audit decision rather than a technical requirement. That can be a perfectly
+good reason; it just is not a constraint. You can tell them apart in the certificate details: OV and
+EV name your organization in the Subject, DV carries only the domain.</p>
+<h3>DigiCert CertCentral</h3>
+<p>Get the ACME directory URL and External Account Binding credentials (key ID + HMAC key) from
+<em>Automation &rarr; ACME Directory URLs</em>. Two notes: DigiCert retired its legacy ACME endpoint
+on 24 February 2026, so use the current service; and for OV/EV the organization must be prevalidated
+in CertCentral first, after which DigiCert validates domains out of band and those orders may not
+use a DNS challenge at all.</p>
+
+<h2 id="staging">7. Staging first</h2>
+<p>New setups start against Let&rsquo;s Encrypt&rsquo;s staging environment. Staging certificates
+are <strong>not trusted by browsers</strong>, but they do not consume rate limits &mdash; and the
+limits are real: 50 certificates per registered domain per week, 5 identical certificates per week.</p>
+<p>Run one renewal in staging, confirm it completes, then turn staging off for that authority in
+Settings and do it for real.</p>
+
+<h2 id="elsewhere">8. Certificates someone else renews</h2>
+<p>Some domains are worth watching precisely <em>because</em> something else renews them &mdash; a
+hosting provider, a platform, another team. You want to know when that automation quietly stops.
+What you do not want is this tool issuing a second certificate alongside it.</p>
+<p>Press <strong>Managed elsewhere</strong> on a certificate to mark it. It then keeps being watched
+with all the same warnings, shows a badge, loses its Renew button, is <strong>excluded from
+&ldquo;Renew all expiring&rdquo;</strong>, and is refused by the server even if something asks for it
+directly. Press <strong>Renew here</strong> to undo.</p>
+
+<h2 id="output">9. What you get</h2>
+<p>A renewal writes into <code>certs\&lt;zone&gt;\</code>:</p>
+<pre><code>&lt;zone&gt;-full.pem    certificate + chain + private key   &lt;- the .pem button
+fullchain.cer      certificate + chain
+cert.cer           certificate only
+chain.cer          intermediates only
+cert.key           private key (PEM, unencrypted)
+cert.pfx           certificate + key (PKCS#12)</code></pre>
+<p>The combined <code>-full.pem</code> is what most appliances and load balancers want pasted in.
+The rest are there when something wants them separately.</p>
+<h3>Previous versions are kept</h3>
+<p>The current certificate always stays at that stable path, so download links and anything you
+point at the folder keep working. Each renewal copies the outgoing certificate into
+<code>history\</code> first, stamped with the date it was written:</p>
+<pre><code>certs\example.com\
+  example.com-full.pem          &lt;- current, always here
+  cert.cer  cert.key  chain.cer  fullchain.cer  cert.pfx  fullchain.pfx
+  history\
+    2026-07-29_210335\          &lt;- the certificate that was live from that date
+      about.json                   names, issuer and validity, so you can read
+      ...the full file set         the folder without opening a certificate
+    2026-10-20_084512\</code></pre>
+<p>Copied rather than moved, so a failed write leaves a working certificate at the stable path
+instead of nothing. Re-running against an order the CA considers current does not archive a
+duplicate.</p>
+<div class="callout warn">
+  <div class="h">History is capped, and that is deliberate</div>
+  <p>Five versions by default. <strong>Every archived version contains a usable private key</strong>,
+  and one that stays usable until that certificate expires &mdash; so an unlimited archive quietly
+  becomes a pile of live credentials. Set <code>keepHistory</code> in <code>settings.json</code> to
+  change it; <code>0</code> keeps none.</p>
+</div>
+<p><strong>Deploying the certificate is still yours to do.</strong> This tool issues and hands over;
+it never installs. That means the expiry date in the table will not change after you renew &mdash;
+what the table shows is whatever the live host is currently serving.</p>
+<h3>Renewing several at once</h3>
+<p><strong>Renew all expiring</strong> orders every certificate inside the 30-day window, one after
+another. Sequential on purpose: concurrent orders against one DNS account collide on the
+<code>_acme-challenge</code> record, and serialising keeps you away from the rate limits. One
+failure does not abandon the rest. Expect a few minutes per certificate, mostly waiting for DNS.</p>
+
+<h2 id="security">10. Security</h2>
+<ul>
+  <li>The server listens on <code>127.0.0.1</code> only and requires a per-launch random token.</li>
+  <li>DNS credentials are encrypted with <strong>Windows DPAPI</strong> in <code>secrets.xml</code>,
+  scoped to your Windows account on this machine. They are never written to
+  <code>settings.json</code> and never sent back to the browser &mdash; the page is told only
+  whether a secret exists.</li>
+  <li>A blank credential field means &ldquo;keep what is stored&rdquo;, so an unchanged form cannot
+  wipe a credential nobody retyped.</li>
+  <li>Nothing here &mdash; domains, credentials, certificates &mdash; is committed to git, so the
+  folder can be handed to someone else clean.</li>
+</ul>
+<div class="callout crit">
+  <div class="h">Private keys are the real exposure, not the API keys</div>
+  <p><code>certs\</code> and <code>acme-state\</code> hold <strong>unencrypted</strong> private keys
+  &mdash; that is how PEM works, and every ACME client is the same. They are gitignored, but
+  gitignore does not stop file sync. <strong>If this folder is inside OneDrive, Dropbox or similar,
+  exclude those two folders from syncing.</strong> Clicking <strong>.pem</strong> also puts a private
+  key in your Downloads folder in the clear; delete it once deployed.</p>
+</div>
+<p>DPAPI protects the file, not the session: copy <code>secrets.xml</code> elsewhere and it is
+useless, but anything already running as you can decrypt it. That is the normal bar for a local
+tool &mdash; it is not a vault. It also means credentials do not travel when you copy the folder,
+which is the right behaviour for something meant to be shared.</p>
+
+<h2 id="trouble">11. When it breaks</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Renewal fails with <code>403 Forbidden</code> right after &ldquo;Adding
+      _acme-challenge&hellip;&rdquo;</td>
+      <td>The DNS credential can read zones but not write records. On Cloudflare, tick <strong>Edit</strong>
+      on the DNS permission, not just Read. <strong>Test connection</strong> now catches this before
+      a renewal does.</td>
+    </tr>
+    <tr>
+      <td>DNS Made Easy returns a bare <code>403</code></td>
+      <td>Usually clock drift &mdash; it rejects any request whose timestamp is more than 30 seconds
+      off from theirs. The tool detects this case and says so explicitly.</td>
+    </tr>
+    <tr>
+      <td><em>&ldquo;Already current &mdash; nothing was re-issued&rdquo;</em></td>
+      <td>Not an error. The CA still considers the existing certificate fresh, so it declined to
+      issue a duplicate. Wait for the renewal window, or force a re-issue.</td>
+    </tr>
+    <tr>
+      <td>A domain shows <code>no DNS</code></td>
+      <td>No configured provider manages its zone. Either add the provider, or mark the certificate
+      as <em>managed elsewhere</em> if something else renews it.</td>
+    </tr>
+    <tr>
+      <td>Page shows data but no buttons</td>
+      <td>It was opened from disk rather than through <code>Open Tracker.bat</code>.</td>
+    </tr>
+    <tr>
+      <td>Every check reports <code>Error</code></td>
+      <td>Nothing is listening on those hosts. Renewal still works &mdash; a DNS-01 challenge does
+      not need a running website.</td>
+    </tr>
+  </tbody>
+</table></div>
+<p>Renewal logs live in <code>jobs\</code> and include the script line number on failure, which is
+usually most of the diagnosis.</p>
+
+<h2 id="clock">12. The 47-day future</h2>
+<p>Under CA/Browser Forum ballot SC-081v3, the maximum certificate lifetime dropped to
+<strong>200 days on 15 March 2026</strong>, falls to <strong>100 days in March 2027</strong>, and to
+<strong>47 days in 2029</strong>. This applies to every public CA, paid ones included, and domain
+validation reuse periods shrink alongside it.</p>
+<p>Whatever you renew by hand today needs doing roughly twice as often next year, and about eight
+times as often by 2029. That is the actual argument for automating this.</p>
+
+<h2 id="files">13. Files</h2>
+<pre><code>Open Tracker.bat      start the server and open the page  &lt;- use this
+ssl-tracker.html      the dashboard (read-only on its own)
+readme.html           this page
+domains.txt           the list you edit                   (yours, gitignored)
+domains.example.txt   the shipped sample
+Check Now.bat         refresh the data
+First Time Setup.bat  one-time setup
+
+check-ssl.ps1         the checker (parallel, records SANs)
+serve.ps1             the local server
+renew.ps1             performs one renewal (also runnable standalone)
+acme-lib.ps1          shared settings, secrets and grouping logic
+setup.ps1             what setup runs
+
+generated, none committed:
+  ssl-data.js         checker output
+  settings.json       your configuration
+  secrets.xml         DNS credentials, DPAPI-encrypted
+  zones.json          cached zone list from your DNS provider
+  certs\              issued certificates and private keys
+  acme-state\         ACME account and order state
+  jobs\               renewal logs
+  lib\                Posh-ACME</code></pre>
+<p>Requires Windows PowerShell 5.1, which ships with Windows. Monitoring needs nothing installed.
+Renewal adds <a href="https://poshac.me" target="_blank" rel="noopener">Posh-ACME</a>, downloaded
+into <code>lib\</code> inside this folder rather than installed system-wide &mdash; no admin rights
+at any point.</p>
+
+</article>
+</div>
+
+<footer>
+  Cert Camel &mdash; a local certificate watcher and ACME renewal console.
+  Everything runs on this machine; nothing is sent anywhere except to your DNS provider and your
+  certificate authority.
+</footer>
+
+</div>
+</body>
+</html>
