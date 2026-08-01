@@ -243,9 +243,39 @@ configuration. Generate a hash first:</p>
 <pre><code>mkpasswd -m sha-512          <span class="c"># from the "whois" package on Debian/Ubuntu</span>
 <span class="c"># or, with no extra packages:</span>
 openssl passwd -6</code></pre>
-<p>Then add the userlist:</p>
-<pre><code>userlist dataplaneapi
-    user certcamel password $6$mZ8k...<span class="c">&lt;the hash you just generated&gt;</span></code></pre>
+<p>Then add the userlist. <strong><code>userlist</code> is a top-level section</strong> &mdash; it sits
+alongside <code>global</code>, <code>defaults</code>, <code>frontend</code> and <code>backend</code>,
+<em>not</em> inside any of them. Anywhere at that level works; near the top keeps it findable.</p>
+<pre><code><span class="c"># /etc/haproxy/haproxy.cfg</span>
+
+global
+    stats socket /var/run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    <span class="c"># ... rest of your global section ...</span>
+
+<span class="c"># &lt;- top level, a sibling of global. NOT indented inside it.</span>
+userlist dataplaneapi
+    user certcamel password $6$mZ8k...<span class="c">&lt;the hash you generated above&gt;</span>
+
+defaults
+    mode http
+    <span class="c"># ... etc ...</span>
+
+frontend fe_https
+    bind *:443 ssl crt /etc/haproxy/ssl/example.com.pem
+    default_backend be_app</code></pre>
+<div class="callout warn">
+  <div class="h">Putting it inside <code>global</code> will not work</div>
+  <p>HAProxy rejects <code>userlist</code> as an unknown keyword there, and the error names the line
+  rather than explaining the nesting, so it is easy to misread as a typo in the hash. Check the file
+  parses before reloading anything:</p>
+  <p><code>haproxy -c -f /etc/haproxy/haproxy.cfg</code></p>
+  <p>That validates the configuration without touching the running process. <code>Configuration file
+  is valid</code> means you are clear to reload.</p>
+</div>
+<p>The name after <code>userlist</code> &mdash; <code>dataplaneapi</code> here &mdash; is arbitrary,
+but it must match the <code>userlist:</code> value in the YAML in step 6. A mismatch there is the
+single most common cause of a 401.</p>
 <div class="callout crit">
   <div class="h">Use <code>password</code>, never <code>insecure-password</code></div>
   <p><code>insecure-password</code> stores the password in clear text in the configuration file
