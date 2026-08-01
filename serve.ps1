@@ -644,6 +644,14 @@ function Invoke-Route {
         return
     }
 
+    if ($path -eq '/haproxy-setup.html') {
+        $file = Join-Path $PSScriptRoot 'haproxy-setup.html'
+        if (-not (Test-Path $file)) { Send-Error $Stream 404 'haproxy-setup.html is missing.'; return }
+        $html = Get-Content $file -Raw -Encoding UTF8
+        Send-Response -Stream $Stream -ContentType $script:Mime['.html'] -Body ([Text.Encoding]::UTF8.GetBytes($html))
+        return
+    }
+
     if ($path -eq '/readme.html') {
         $file = Join-Path $PSScriptRoot 'readme.html'
         if (-not (Test-Path $file)) { Send-Error $Stream 404 'readme.html is missing.'; return }

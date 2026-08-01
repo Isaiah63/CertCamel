@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cert Camel &mdash; Setting up the HAProxy Data Plane API</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='%23d99b3f'%3E%3Crect x='6' y='14' width='16' height='8' rx='4'/%3E%3Ccircle cx='11' cy='13' r='4'/%3E%3Ccircle cx='17.5' cy='13' r='4'/%3E%3Cpath d='M19 18 L21.5 8 L24.5 8.5 L22.5 18 Z'/%3E%3Ccircle cx='24' cy='7.5' r='3.2'/%3E%3Crect x='25.5' y='6.4' width='4.5' height='2.6' rx='1.3'/%3E%3Crect x='8' y='21' width='2.6' height='7' rx='1.3'/%3E%3Crect x='12' y='21' width='2.6' height='7' rx='1.3'/%3E%3Crect x='16' y='21' width='2.6' height='7' rx='1.3'/%3E%3Crect x='19.4' y='21' width='2.6' height='7' rx='1.3'/%3E%3C/g%3E%3C/svg%3E">
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('certcamel-theme');
+    if (t === 'dark' || t === 'light') { document.documentElement.setAttribute('data-theme', t); }
+  } catch (e) { }
+})();
+</script>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f5f6f9; --glow-1:rgba(99,102,241,.14); --glow-2:rgba(168,85,247,.12);
+  --surface:rgba(255,255,255,.72); --surface-solid:#fff;
+  --border:rgba(17,24,39,.09); --border-strong:rgba(17,24,39,.16);
+  --text:#0b0d12; --muted:#4d5666; --faint:#8a93a4;
+  --accent:#6366f1; --accent-2:#a855f7;
+  --amber:#b45309; --amber-bg:rgba(245,158,11,.10);
+  --green:#15803d; --green-bg:rgba(34,197,94,.10);
+  --blue:#1d4ed8; --blue-bg:rgba(59,130,246,.10);
+  --red:#b91c1c; --red-bg:rgba(239,68,68,.10);
+  --shadow:0 1px 2px rgba(17,24,39,.04), 0 10px 30px -14px rgba(17,24,39,.20);
+  --radius:16px; --radius-sm:11px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#6b7486;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#6b7486;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box;}
+body{margin:0; min-height:100vh; color:var(--text); background:var(--bg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background-image:radial-gradient(58rem 58rem at 6% -10%,var(--glow-1),transparent 60%),
+    radial-gradient(48rem 48rem at 104% 2%,var(--glow-2),transparent 55%);
+  background-attachment:fixed; -webkit-font-smoothing:antialiased; line-height:1.65;}
+
+.shell{max-width:min(96rem,96vw); margin:0 auto; padding:clamp(1.25rem,3vw,2.25rem) clamp(1rem,3vw,2.5rem) 5rem;}
+.masthead{display:flex; align-items:center; gap:1.5rem; padding:.2rem 0 1.15rem;
+  border-bottom:1px solid var(--border); margin-bottom:1.6rem;}
+.masthead .side{flex:1 1 0; min-width:0;}
+.masthead .actions{display:flex; align-items:center; gap:.5rem; justify-content:flex-end;}
+.brand{display:flex; align-items:center; gap:.75rem; flex:none;}
+.brand .mark{display:grid; place-items:center; width:2.75rem; height:2.75rem; flex:none;
+  padding:.4rem; border-radius:13px; color:var(--accent-2);
+  border:1px solid var(--border-strong); background:var(--surface); backdrop-filter:blur(14px);
+  box-shadow:var(--shadow);}
+.brand .mark svg{width:100%; height:100%; display:block;}
+.brand h1{font-size:1.65rem; line-height:1.1; letter-spacing:-.025em; font-weight:850;
+  margin:0; padding-bottom:.06em; white-space:nowrap;
+  background:linear-gradient(135deg,var(--text) 38%,var(--accent) 145%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;}
+.back{display:inline-flex; align-items:center; gap:.45rem; text-decoration:none; color:var(--muted);
+  font-size:.85rem; font-weight:550; padding:.4rem .8rem; border:1px solid var(--border);
+  border-radius:999px; background:var(--surface); backdrop-filter:blur(14px); white-space:nowrap;}
+.back:hover{color:var(--text); border-color:var(--border-strong);}
+.tag{font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; font-weight:700; color:var(--faint);}
+.lede{font-size:clamp(1rem,2vw,1.12rem); color:var(--muted); max-width:56rem; margin:0 0 2rem;}
+@media (max-width:56rem){
+  .masthead{flex-wrap:wrap; justify-content:space-between;}
+  .masthead .side{flex:0 0 auto;}
+  .brand{order:-1; flex-basis:100%; margin-bottom:.4rem;}
+}
+
+.cols{display:grid; grid-template-columns:15rem 1fr; gap:2.5rem; align-items:start;}
+@media (max-width:60rem){.cols{grid-template-columns:1fr;}}
+nav.toc{position:sticky; top:1.5rem; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); padding:1rem 1.1rem; box-shadow:var(--shadow);}
+nav.toc h2{font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);
+  margin:0 0 .6rem; font-weight:800;}
+nav.toc ol{list-style:none; margin:0; padding:0; counter-reset:t;}
+nav.toc li{counter-increment:t; margin:.25rem 0;}
+nav.toc a{display:block; text-decoration:none; color:var(--muted); font-size:.84rem; padding:.15rem 0;}
+nav.toc a::before{content:counter(t) ". "; color:var(--faint);}
+nav.toc a:hover{color:var(--accent);}
+
+article h2{font-size:1.3rem; font-weight:750; letter-spacing:-.015em; margin:2.8rem 0 .7rem;
+  scroll-margin-top:1.5rem;}
+article h2:first-child{margin-top:0;}
+article h3{font-size:1rem; font-weight:700; margin:1.6rem 0 .4rem;}
+article p{margin:.7rem 0; max-width:62rem;}
+article ul,article ol{margin:.7rem 0; padding-left:1.3rem; max-width:62rem;}
+article li{margin:.35rem 0;}
+strong{font-weight:700;}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.87em;
+  background:var(--surface-solid); border:1px solid var(--border); border-radius:6px; padding:.1rem .35rem;}
+pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.82rem; line-height:1.55;
+  overflow-x:auto; margin:.9rem 0; padding:.9rem 1.1rem; color:var(--muted);
+  border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
+pre code{background:none; border:none; padding:0; font-size:1em;}
+pre .c{color:var(--faint);}
+
+.tablewrap{overflow-x:auto; margin:1rem 0; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);}
+table{border-collapse:collapse; width:100%; font-size:.9rem;}
+th,td{text-align:left; padding:.65rem 1rem; border-bottom:1px solid var(--border); vertical-align:top;}
+thead th{font-size:.68rem; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); font-weight:800;}
+tbody tr:last-child td{border-bottom:none;}
+
+.callout{border:1px solid var(--border); border-left-width:4px; border-radius:var(--radius-sm);
+  padding:.85rem 1.1rem; margin:1.2rem 0; background:var(--surface); max-width:62rem;}
+.callout .h{font-weight:700; font-size:.92rem; margin-bottom:.15rem;}
+.callout p{margin:.3rem 0 0; font-size:.92rem;}
+.callout.warn{border-left-color:var(--amber); background:var(--amber-bg);} .callout.warn .h{color:var(--amber);}
+.callout.crit{border-left-color:var(--red); background:var(--red-bg);} .callout.crit .h{color:var(--red);}
+.callout.note{border-left-color:var(--blue); background:var(--blue-bg);} .callout.note .h{color:var(--blue);}
+.callout.good{border-left-color:var(--green); background:var(--green-bg);} .callout.good .h{color:var(--green);}
+
+.step{display:inline-block; font-size:.7rem; font-weight:800; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--accent); margin-bottom:.2rem;}
+footer{margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border);
+  color:var(--faint); font-size:.82rem;}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header class="masthead">
+  <span class="tag side">HAProxy setup</span>
+  <div class="brand">
+    <span class="mark">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><g fill="currentColor">
+        <rect x="6" y="14" width="16" height="8" rx="4"/><circle cx="11" cy="13" r="4"/>
+        <circle cx="17.5" cy="13" r="4"/><path d="M19 18 L21.5 8 L24.5 8.5 L22.5 18 Z"/>
+        <circle cx="24" cy="7.5" r="3.2"/><rect x="25.5" y="6.4" width="4.5" height="2.6" rx="1.3"/>
+        <rect x="8" y="21" width="2.6" height="7" rx="1.3"/><rect x="12" y="21" width="2.6" height="7" rx="1.3"/>
+        <rect x="16" y="21" width="2.6" height="7" rx="1.3"/><rect x="19.4" y="21" width="2.6" height="7" rx="1.3"/>
+      </g></svg>
+    </span>
+    <h1>Cert Camel</h1>
+  </div>
+  <div class="side actions">
+    <a class="back" href="readme.html">Read me</a>
+    <a class="back" href="ssl-tracker.html">&larr; Tracker</a>
+  </div>
+</header>
+
+<p class="lede">Setting up the HAProxy Data Plane API so certificates can be replaced without a
+reload &mdash; and locking it down properly, because the thing you are about to switch on can
+rewrite your load balancer's configuration.</p>
+
+<div class="cols">
+
+<nav class="toc">
+  <h2>Steps</h2>
+  <ol>
+    <li><a href="#what">What this is</a></li>
+    <li><a href="#check">Check your version</a></li>
+    <li><a href="#install">Install the API</a></li>
+    <li><a href="#socket">The admin socket</a></li>
+    <li><a href="#user">Create the API user</a></li>
+    <li><a href="#config">Configure the API</a></li>
+    <li><a href="#service">Run it as a service</a></li>
+    <li><a href="#secure">Lock it down</a></li>
+    <li><a href="#prove">Prove it works</a></li>
+    <li><a href="#certs">Prepare certificate paths</a></li>
+    <li><a href="#connect">Point Cert Camel at it</a></li>
+    <li><a href="#pairs">Pairs and clusters</a></li>
+    <li><a href="#trouble">When it breaks</a></li>
+  </ol>
+</nav>
+
+<article>
+
+<h2 id="what">1. What this is, and why not the Runtime API</h2>
+<p>HAProxy has two ways to change a certificate without restarting:</p>
+<div class="tablewrap"><table>
+  <thead><tr><th></th><th>Runtime API</th><th>Data Plane API</th></tr></thead>
+  <tbody>
+    <tr><td>Talks over</td><td>A unix socket (or a TCP socket you expose)</td><td>HTTP with authentication</td></tr>
+    <tr><td>Certificate lands</td><td><strong>In memory only</strong></td><td>On disk <em>and</em> in memory</td></tr>
+    <tr><td>Survives a reload</td><td><strong>No</strong></td><td>Yes</td></tr>
+    <tr><td>Reachable from another machine</td><td>Not without exposing a raw socket</td><td>Yes, by design</td></tr>
+  </tbody>
+</table></div>
+<div class="callout crit">
+  <div class="h">The Runtime API on its own is a trap</div>
+  <p>A certificate pushed over the Runtime API is live immediately and gone at the next reload
+  &mdash; a config change, a package update, a logrotate hook. HAProxy silently goes back to
+  whatever is on disk, and nobody finds out until it expires. The Data Plane API writes the file
+  <em>and</em> pushes it to the runtime socket, falling back to a reload only if the push fails.
+  That is the combination worth having.</p>
+</div>
+
+<h2 id="check">2. Check your version</h2>
+<pre><code>haproxy -v</code></pre>
+<p>You need <strong>2.2 or newer</strong>. 2.1 can replace a certificate HAProxy already knows
+about but cannot add a new one; below 2.1 there is no runtime certificate update at all.</p>
+
+<h2 id="install">3. Install the Data Plane API</h2>
+<h3>HAProxy Enterprise (HAPEE)</h3>
+<p>It ships with the product. Install the package and skip to step 4.</p>
+<pre><code>sudo apt-get install hapee-<span class="c">&lt;version&gt;</span>-lb-dataplaneapi   <span class="c"># Debian/Ubuntu</span>
+sudo yum install hapee-<span class="c">&lt;version&gt;</span>-lb-dataplaneapi       <span class="c"># RHEL/Rocky</span></code></pre>
+
+<h3>Community HAProxy</h3>
+<p>It is a separate binary from
+<a href="https://github.com/haproxytech/dataplaneapi/releases" target="_blank" rel="noopener">haproxytech/dataplaneapi</a>.
+Pick the release matching your HAProxy minor version where possible.</p>
+<pre><code><span class="c"># adjust the version and architecture to suit</span>
+curl -fsSLO https://github.com/haproxytech/dataplaneapi/releases/download/v3.1.4/dataplaneapi_3.1.4_linux_x86_64.tar.gz
+tar xzf dataplaneapi_3.1.4_linux_x86_64.tar.gz
+sudo install -m 0755 build/dataplaneapi /usr/local/bin/dataplaneapi
+dataplaneapi --version</code></pre>
+
+<h2 id="socket">4. Give HAProxy an admin-level stats socket</h2>
+<p>The Data Plane API drives HAProxy through this socket. Without <code>level admin</code> it can
+read but not change anything.</p>
+<pre><code>global
+    stats socket /var/run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s</code></pre>
+<p>Note the mode: <code>660</code>, not <code>666</code>. Anyone who can write to this socket can
+reconfigure your load balancer, so it should be owned by a group only HAProxy and the Data Plane
+API belong to.</p>
+
+<h2 id="user">5. Create the API user &mdash; with a hashed password</h2>
+<p>The Data Plane API reads its credentials from a <code>userlist</code> in the HAProxy
+configuration. Generate a hash first:</p>
+<pre><code>mkpasswd -m sha-512          <span class="c"># from the "whois" package on Debian/Ubuntu</span>
+<span class="c"># or, with no extra packages:</span>
+openssl passwd -6</code></pre>
+<p>Then add the userlist:</p>
+<pre><code>userlist dataplaneapi
+    user certcamel password $6$mZ8k...<span class="c">&lt;the hash you just generated&gt;</span></code></pre>
+<div class="callout crit">
+  <div class="h">Use <code>password</code>, never <code>insecure-password</code></div>
+  <p><code>insecure-password</code> stores the password in clear text in the configuration file
+  &mdash; a file that is usually world-readable, often in version control, and frequently pasted
+  into tickets. It is named the way it is for a reason. <code>password</code> takes a crypt hash
+  and is the only form that belongs in a real deployment.</p>
+</div>
+<p>Give the API its <strong>own user</strong>. Do not reuse the stats page login: those credentials
+tend to be shared around a team and pasted into chat, and this one can rewrite your configuration.</p>
+
+<h2 id="config">6. Configure the Data Plane API</h2>
+<p>Create <code>/etc/haproxy/dataplaneapi.yaml</code> (HAPEE uses
+<code>/etc/hapee-extras/dataplaneapi.yml</code>):</p>
+<pre><code>dataplaneapi:
+  <span class="c"># Bind to one address, not everything. See step 8.</span>
+  host: 127.0.0.1
+  port: 5555
+
+  user:
+    - name: certcamel
+      insecure: false
+
+  transaction:
+    transaction_dir: /tmp/haproxy
+
+  resources:
+    <span class="c"># Certificates uploaded through the API land HERE and nowhere else.</span>
+    ssl_certs_dir: /etc/haproxy/ssl
+    maps_dir: /etc/haproxy/maps
+
+haproxy:
+  config_file: /etc/haproxy/haproxy.cfg
+  haproxy_bin: /usr/sbin/haproxy
+
+  reload:
+    reload_cmd: systemctl reload haproxy
+    restart_cmd: systemctl restart haproxy
+    reload_delay: 5
+
+  <span class="c"># Must match the userlist name from step 5.</span>
+  userlist:
+    userlist: dataplaneapi</code></pre>
+<p>Make the certificate directory, and keep it tight &mdash; it will hold private keys:</p>
+<pre><code>sudo mkdir -p /etc/haproxy/ssl
+sudo chown haproxy:haproxy /etc/haproxy/ssl
+sudo chmod 700 /etc/haproxy/ssl</code></pre>
+
+<h2 id="service">7. Run it as a service</h2>
+<p>HAPEE ships a unit already. For the community build, create
+<code>/etc/systemd/system/dataplaneapi.service</code>:</p>
+<pre><code>[Unit]
+Description=HAProxy Data Plane API
+After=network.target haproxy.service
+Requires=haproxy.service
+
+[Service]
+<span class="c"># Not root. It needs the config file, the certificate directory and the socket.</span>
+User=haproxy
+Group=haproxy
+ExecStart=/usr/local/bin/dataplaneapi -f /etc/haproxy/dataplaneapi.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+<pre><code>sudo systemctl daemon-reload
+sudo systemctl enable --now dataplaneapi
+sudo systemctl status dataplaneapi</code></pre>
+<p>Reloading HAProxy usually needs privileges the <code>haproxy</code> user does not have. Either
+grant exactly that one command through sudoers, or let systemd do it with a polkit rule &mdash;
+whichever your organisation already does for service reloads.</p>
+
+<h2 id="secure">8. Lock it down</h2>
+<div class="callout crit">
+  <div class="h">Treat this like SSH access, because that is roughly what it is</div>
+  <p>The Data Plane API has <strong>no granular permissions</strong>. A user who can upload a
+  certificate can also rewrite backends, change ACLs and read the certificates already on disk.
+  There is no read-only mode and no per-endpoint scoping. Everything below is therefore about
+  reducing who can reach it, not about limiting what they could do once there.</p>
+</div>
+<h3>Bind to one address</h3>
+<p>The default listens on every interface. On a load balancer, "every interface" includes the
+public one. Bind it to the management address, or to <code>127.0.0.1</code> with an SSH tunnel if
+Cert Camel runs elsewhere.</p>
+<h3>Put TLS on it</h3>
+<p>Basic authentication over plain HTTP sends the password, base64-encoded, on <em>every single
+request</em>. Base64 is not encryption. Either terminate TLS on the API:</p>
+<pre><code>dataplaneapi:
+  tls:
+    host: 10.0.0.11
+    port: 5555
+    tls_certificate: /etc/haproxy/ssl/dataplaneapi.crt
+    tls_key: /etc/haproxy/ssl/dataplaneapi.key</code></pre>
+<p>&hellip;or bind it to localhost and reach it through a tunnel. A self-signed certificate is fine
+here &mdash; tick <em>Skip TLS verification</em> on the target in Cert Camel. That setting affects
+only the connection to the API; certificate verification never trusts anything regardless.</p>
+<h3>Firewall it</h3>
+<pre><code>sudo ufw allow from 10.0.0.50 to any port 5555 proto tcp   <span class="c"># the management host only</span>
+sudo ufw deny 5555</code></pre>
+<h3>The rest</h3>
+<ul>
+  <li><strong>A dedicated user</strong> for the API, not the stats login.</li>
+  <li><strong>A long random password.</strong> Nobody types it &mdash; Cert Camel stores it
+  DPAPI-encrypted &mdash; so there is no reason for it to be memorable.</li>
+  <li><strong>Not root.</strong> Run as the HAProxy user with just enough rights to reload.</li>
+  <li><strong>Rotate it</strong> like any other credential, and immediately if the config file
+  containing the hash leaks.</li>
+  <li><strong>Watch the logs.</strong> Every configuration change goes through this API, so its log
+  is an audit trail worth keeping.</li>
+</ul>
+
+<h2 id="prove">9. Prove it works</h2>
+<p>From the machine that will run Cert Camel, not from the load balancer itself &mdash; the point
+is to test the path that will actually be used:</p>
+<pre><code><span class="c"># should return a number, the current config version</span>
+curl -su certcamel:PASSWORD http://10.0.0.11:5555/v3/services/haproxy/configuration/version
+
+<span class="c"># should return a JSON array, possibly empty</span>
+curl -su certcamel:PASSWORD http://10.0.0.11:5555/v3/services/haproxy/storage/ssl_certificates</code></pre>
+<p>If <code>/v3</code> gives a 404, try <code>/v2</code> &mdash; older builds serve that. Cert Camel
+probes both, so either is fine.</p>
+<div class="callout note">
+  <div class="h">What the responses mean</div>
+  <p><strong>A number</strong> &mdash; working. <strong>401</strong> &mdash; the userlist name in
+  the YAML does not match the one in <code>haproxy.cfg</code>, or the hash is wrong.
+  <strong>Connection refused</strong> &mdash; not running, or bound to an address you are not
+  reaching it on. <strong>Timeout</strong> &mdash; a firewall between you and it.</p>
+</div>
+
+<h2 id="certs">10. Prepare your certificate paths</h2>
+<p><strong>HAProxy identifies a certificate by its file path.</strong> That single fact decides
+whether hitless replacement is possible at all. A path containing a date or a version cannot be
+updated in place, because next time it is a <em>different path</em> &mdash; which means editing the
+config, which means a reload.</p>
+<pre><code>Before                                     After
+/certs/2026.example.com/fullchain.pem  -&gt;  /etc/haproxy/ssl/example.com.pem
+/certs/2027.example.com/fullchain.pem      (path never changes; contents replaced)</code></pre>
+<p>Two things to do:</p>
+<ol>
+  <li><strong>Move the certificates into <code>ssl_certs_dir</code></strong> &mdash; the API only
+  manages files there. This is usually more work than the config lines.</li>
+  <li><strong>Give each certificate a stable filename</strong> with no date in it, and point the
+  bind line at it.</li>
+</ol>
+<pre><code>frontend fe_https
+    bind *:443 ssl crt /etc/haproxy/ssl/example.com.pem alpn h2,http/1.1</code></pre>
+<p>Or, better, a crt-list &mdash; which additionally lets you add a <em>new</em> certificate at
+runtime, not just replace an existing one:</p>
+<pre><code>frontend fe_https
+    bind *:443 ssl crt-list /etc/haproxy/ssl/crt-list.txt alpn h2,http/1.1</code></pre>
+<pre><code><span class="c"># /etc/haproxy/ssl/crt-list.txt</span>
+/etc/haproxy/ssl/example.com.pem
+/etc/haproxy/ssl/other.com.pem</code></pre>
+<div class="callout good">
+  <div class="h">One reload to migrate. Zero reloads afterwards.</div>
+  <p>The move to stable paths costs exactly one restart. Every renewal after that is hitless. If
+  you version certificates by keeping old copies, Cert Camel already archives every previous
+  version under <code>certs\&lt;id&gt;\history\</code> with the issuer, validity and names recorded
+  &mdash; finer-grained than a folder per year.</p>
+</div>
+<p>A PEM for HAProxy is <strong>leaf, then intermediates, then the private key, in one file</strong>.
+That is exactly what Cert Camel's <code>&lt;name&gt;-full.pem</code> already is.</p>
+
+<h2 id="connect">11. Point Cert Camel at it</h2>
+<p><em>Settings &rarr; Load balancers &rarr; Add a load balancer group.</em> One group per set of
+nodes sharing credentials. Nodes go one per line:</p>
+<pre><code>lb1 https://10.0.0.11:5555
+lb2 https://10.0.0.12:5555</code></pre>
+<p>Fill in the username and password from step 5, set <em>Certificate filename on HAProxy</em> to
+match the name in your bind line or crt-list, then save. Assign the group to a certificate on its
+row in the Certificates table and press <strong>Deploy</strong>.</p>
+
+<h2 id="pairs">12. Pairs and clusters</h2>
+<p>Every node needs the Data Plane API installed and configured. They can share a username and
+password &mdash; that is what a group is &mdash; but each is pushed to and verified individually.</p>
+<div class="callout warn">
+  <div class="h">Never verify through the VIP</div>
+  <p>With a floating VIP &mdash; keepalived, VRRP, anything &mdash; connecting to the VIP only ever
+  reaches whichever node currently holds it. Push to two nodes, verify through the VIP, get a green
+  tick, and a stale certificate can sit on the standby for months until a failover puts it in front
+  of traffic. Cert Camel connects to <strong>each node's own address</strong> for exactly this
+  reason, which is why the Deployed column shows one pip per node rather than one tick per group.</p>
+  <p>If your nodes serve on an address different from their API address, put it as a third value on
+  the node line: <code>lb1 https://10.0.0.11:5555 10.0.0.11</code>.</p>
+</div>
+
+<h2 id="trouble">13. When it breaks</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>Symptom</th><th>Usually</th></tr></thead>
+  <tbody>
+    <tr><td><code>401 Unauthorized</code></td>
+        <td>The <code>userlist</code> name in the YAML does not match <code>haproxy.cfg</code>, or
+        the hash was pasted with a line break. Confirm with <code>haproxy -c -f</code>.</td></tr>
+    <tr><td><code>403 Forbidden</code></td>
+        <td>Authenticated but not allowed to write &mdash; usually the stats socket is missing
+        <code>level admin</code>.</td></tr>
+    <tr><td><code>409 Conflict</code></td>
+        <td>The configuration version moved between reading it and writing. Something else changed
+        HAProxy mid-flight; retry.</td></tr>
+    <tr><td>Upload succeeds, nothing changes</td>
+        <td>The certificate went into <code>ssl_certs_dir</code>, but nothing references that path.
+        Check the bind line or crt-list actually points at the filename you uploaded.</td></tr>
+    <tr><td>Works, then reverts later</td>
+        <td>Something is pushing over the Runtime API instead, or a config-management tool is
+        rewriting the directory. Memory-only changes do not survive a reload.</td></tr>
+    <tr><td>One node green, one red</td>
+        <td>Working as intended &mdash; that is the check earning its keep. Look at the failing
+        node's API and its own logs.</td></tr>
+  </tbody>
+</table></div>
+<p>The Data Plane API's own log is the first place to look; it records every request including the
+ones it rejected.</p>
+
+</article>
+</div>
+
+<footer>
+  Cert Camel &mdash; this page is generic HAProxy setup and applies whether or not you use Cert
+  Camel to drive it. Certificate deployment and verification are covered in the
+  <a href="readme.html">Read me</a>.
+</footer>
+
+</div>
+</body>
+</html>
