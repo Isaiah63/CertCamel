@@ -218,14 +218,20 @@ about but cannot add a new one; below 2.1 there is no runtime certificate update
 sudo yum install hapee-<span class="c">&lt;version&gt;</span>-lb-dataplaneapi       <span class="c"># RHEL/Rocky</span></code></pre>
 
 <h3>Community HAProxy</h3>
-<p>It is a separate binary from
+<p>It is a separate download from
 <a href="https://github.com/haproxytech/dataplaneapi/releases" target="_blank" rel="noopener">haproxytech/dataplaneapi</a>.
 Pick the release matching your HAProxy minor version where possible.</p>
-<pre><code><span class="c"># adjust the version and architecture to suit</span>
-curl -fsSLO https://github.com/haproxytech/dataplaneapi/releases/download/v3.1.4/dataplaneapi_3.1.4_linux_x86_64.tar.gz
-tar xzf dataplaneapi_3.1.4_linux_x86_64.tar.gz
-sudo install -m 0755 build/dataplaneapi /usr/local/bin/dataplaneapi
+<p>There are <code>.deb</code>, <code>.rpm</code> and <code>.apk</code> packages as well as a
+tarball. Prefer the package &mdash; it handles the paths and gives you something to uninstall:</p>
+<pre><code><span class="c"># Debian/Ubuntu - note "amd64" for packages</span>
+curl -fsSLO https://github.com/haproxytech/dataplaneapi/releases/download/v3.3.5/dataplaneapi_3.3.5_linux_amd64.deb
+sudo apt install ./dataplaneapi_3.3.5_linux_amd64.deb
 dataplaneapi --version</code></pre>
+<p>If you would rather drop in a binary, the tarball uses <code>x86_64</code> where the packages
+use <code>amd64</code> &mdash; an easy five minutes to lose:</p>
+<pre><code>curl -fsSLO https://github.com/haproxytech/dataplaneapi/releases/download/v3.3.5/dataplaneapi_3.3.5_linux_x86_64.tar.gz
+tar xzf dataplaneapi_3.3.5_linux_x86_64.tar.gz
+sudo install -m 0755 build/dataplaneapi /usr/local/bin/dataplaneapi</code></pre>
 
 <h2 id="socket">4. Give HAProxy an admin-level stats socket</h2>
 <p>The Data Plane API drives HAProxy through this socket. Without <code>level admin</code> it can
@@ -294,12 +300,10 @@ tend to be shared around a team and pasted into chat, and this one can rewrite y
   host: 127.0.0.1
   port: 5555
 
-  user:
-    - name: certcamel
-      insecure: false
-
   transaction:
-    transaction_dir: /tmp/haproxy
+    <span class="c"># Not under /tmp: transaction directories hold copies of your</span>
+    <span class="c"># configuration, and /tmp is world-writable.</span>
+    transaction_dir: /var/lib/dataplaneapi/transactions
 
   resources:
     <span class="c"># Certificates uploaded through the API land HERE and nowhere else.</span>
@@ -315,12 +319,14 @@ haproxy:
     restart_cmd: systemctl restart haproxy
     reload_delay: 5
 
-  <span class="c"># Must match the userlist name from step 5.</span>
+  <span class="c"># Must match the userlist name from step 5. This is the only auth</span>
+  <span class="c"># mechanism you want - do NOT also add a "user:" list under</span>
+  <span class="c"># dataplaneapi:, which is a second, separate mechanism.</span>
   userlist:
     userlist: dataplaneapi</code></pre>
-<p>Make the certificate directory, and keep it tight &mdash; it will hold private keys:</p>
-<pre><code>sudo mkdir -p /etc/haproxy/ssl
-sudo chown haproxy:haproxy /etc/haproxy/ssl
+<p>Make the directories, and keep the certificate one tight &mdash; it will hold private keys:</p>
+<pre><code>sudo mkdir -p /etc/haproxy/ssl /var/lib/dataplaneapi/transactions
+sudo chown -R haproxy:haproxy /etc/haproxy/ssl /var/lib/dataplaneapi
 sudo chmod 700 /etc/haproxy/ssl</code></pre>
 
 <h2 id="service">7. Run it as a service</h2>
@@ -344,9 +350,15 @@ WantedBy=multi-user.target</code></pre>
 <pre><code>sudo systemctl daemon-reload
 sudo systemctl enable --now dataplaneapi
 sudo systemctl status dataplaneapi</code></pre>
-<p>Reloading HAProxy usually needs privileges the <code>haproxy</code> user does not have. Either
-grant exactly that one command through sudoers, or let systemd do it with a polkit rule &mdash;
-whichever your organisation already does for service reloads.</p>
+<div class="callout warn">
+  <div class="h">Two things the <code>haproxy</code> user needs, and does not have by default</div>
+  <p><strong>Write access to the configuration.</strong> The Data Plane API does not only read
+  <code>haproxy.cfg</code>, it rewrites it &mdash; and that file is usually root-owned. Without
+  write access the first change fails with a 500 that does not obviously say why:</p>
+  <p><code>sudo chown root:haproxy /etc/haproxy/haproxy.cfg &amp;&amp; sudo chmod 640 /etc/haproxy/haproxy.cfg</code></p>
+  <p><strong>Permission to reload HAProxy.</strong> Grant exactly that one command through sudoers,
+  or use a polkit rule &mdash; whichever your organisation already does for service reloads.</p>
+</div>
 
 <h2 id="secure">8. Lock it down</h2>
 <div class="callout crit">
@@ -362,16 +374,45 @@ public one. Bind it to the management address, or to <code>127.0.0.1</code> with
 Cert Camel runs elsewhere.</p>
 <h3>Put TLS on it</h3>
 <p>Basic authentication over plain HTTP sends the password, base64-encoded, on <em>every single
-request</em>. Base64 is not encryption. Either terminate TLS on the API:</p>
+request</em>. Base64 is not encryption. Terminate TLS on the API:</p>
 <pre><code>dataplaneapi:
+  <span class="c"># Both of these are required. Without "scheme", no TLS listener starts</span>
+  <span class="c"># at all - see the warning below.</span>
+  scheme:
+    - https
   tls:
-    host: 10.0.0.11
-    port: 5555
+    tls_host: 10.0.0.11
+    tls_port: 5555
     tls_certificate: /etc/haproxy/ssl/dataplaneapi.crt
     tls_key: /etc/haproxy/ssl/dataplaneapi.key</code></pre>
-<p>&hellip;or bind it to localhost and reach it through a tunnel. A self-signed certificate is fine
-here &mdash; tick <em>Skip TLS verification</em> on the target in Cert Camel. That setting affects
-only the connection to the API; certificate verification never trusts anything regardless.</p>
+<div class="callout crit">
+  <div class="h">Get these key names exactly right &mdash; wrong ones fail silently</div>
+  <p>The keys are <code>tls_host</code> and <code>tls_port</code>, not <code>host</code> and
+  <code>port</code> (they mirror the <code>--tls-host</code> / <code>--tls-port</code> flags). And
+  <code>scheme</code> is mandatory: without it no TLS listener starts, whatever is in the
+  <code>tls</code> block. <code>scheme</code> must also be nested under <code>dataplaneapi:</code>
+  &mdash; at the top level of the file it is ignored.</p>
+  <p>Get any of that wrong and there is <strong>no error and no warning</strong>. The API starts,
+  answers on plain HTTP, and looks healthy. Listing only <code>https</code> and not
+  <code>http</code> drops the plaintext listener entirely, which is the point.</p>
+  <p>Verify rather than assume: <code>curl -sk https://HOST:5555/v3/services/haproxy/configuration/version</code>
+  should answer, and the same URL on <code>http://</code> should refuse the connection.</p>
+</div>
+<p>Alternatively bind to localhost and reach it through an SSH tunnel, which needs no certificate
+at all.</p>
+<h3>If the API uses a private or self-signed certificate</h3>
+<p>Tick <em>Skip TLS verification</em> on the target in Cert Camel. That affects only the connection
+to the API &mdash; certificate <em>verification</em> never trusts anything regardless, because it is
+reading what a node serves rather than trusting it.</p>
+<div class="callout note">
+  <div class="h">A Windows-specific trap worth knowing</div>
+  <p>Windows validates certificates through Schannel, which insists on a revocation check. A private
+  CA does not publish a CRL, so a chain that verifies perfectly on Linux is rejected on Windows with
+  <code>CERT_TRUST_REVOCATION_STATUS_UNKNOWN</code> &mdash; <code>curl.exe</code> reports exit 60.
+  With <code>curl.exe</code>, <code>--ssl-no-revoke</code> skips only the revocation check while
+  still verifying the chain. Worth recognising, because it looks exactly like a broken certificate
+  and is not one.</p>
+</div>
 <h3>Firewall it</h3>
 <pre><code>sudo ufw allow from 10.0.0.50 to any port 5555 proto tcp   <span class="c"># the management host only</span>
 sudo ufw deny 5555</code></pre>
