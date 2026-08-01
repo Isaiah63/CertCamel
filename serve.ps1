@@ -755,9 +755,26 @@ function Invoke-Route {
             if ($certIds.Count -gt 50) { Send-Error $Stream 400 'Too many certificates in one run.'; return }
 
             $settings = Get-TrackerSettings
+
+            # An explicit selection from the deployment dialog overrides whatever
+            # each certificate is assigned to, so a group can be deployed to
+            # before anyone has assigned it.
+            $chosen = @()
+            if ($payload -and $payload.PSObject.Properties['targets']) { $chosen = @($payload.targets) }
+
+            $known = @(@($settings.targets) | ForEach-Object { $_.id })
+            foreach ($t in $chosen) {
+                if ($known -notcontains [string]$t) {
+                    Send-Error $Stream 400 "Unknown deployment target '$t'."
+                    return
+                }
+            }
+
             foreach ($c in $certIds) {
                 $cl = ([string]$c).ToLowerInvariant()
                 if (-not (Test-SafeCertName $cl)) { Send-Error $Stream 400 "'$c' is not a valid certificate name."; return }
+
+                if ($chosen.Count) { continue }   # the dialog already said where
 
                 # Refuse early rather than spawning a job that will only fail.
                 $assigned = @()
@@ -774,6 +791,7 @@ function Invoke-Route {
             $id = [Guid]::NewGuid().ToString('n').Substring(0, 12)
             $resultPath = Join-Path $script:JobsDir "$id.result.json"
             $scriptArgs = @((Join-Path $PSScriptRoot 'deploy.ps1'), '-ResultPath', $resultPath, '-Cert') + $certIds
+            if ($chosen.Count) { $scriptArgs += @('-TargetList') + $chosen }
 
             $jobId = Start-ChildJob -Kind 'deploy' -ScriptArgs $scriptArgs
             $script:Jobs[$jobId].result = $resultPath
@@ -959,10 +977,32 @@ function Invoke-Route {
                 }
             }
 
+            # Where to push afterwards. The renewal dialog always sends this key,
+            # so an EMPTY array is a deliberate "renew only, push nothing" and is
+            # not the same as the key being absent - which means "use whatever
+            # each certificate is assigned to", the path the scheduled task uses.
+            $deployTargets = $null
+            if ($payload -and $payload.PSObject.Properties['targets']) {
+                $deployTargets = @($payload.targets)
+
+                $known = @(@((Get-TrackerSettings).targets) | ForEach-Object { $_.id })
+                foreach ($t in $deployTargets) {
+                    if ($known -notcontains [string]$t) {
+                        Send-Error $Stream 400 "Unknown deployment target '$t'."
+                        return
+                    }
+                }
+            }
+
             $id = [Guid]::NewGuid().ToString('n').Substring(0, 12)
             $resultPath = Join-Path $script:JobsDir "$id.result.json"
 
             $scriptArgs = @((Join-Path $PSScriptRoot 'renew.ps1'), '-ResultPath', $resultPath, '-Zone') + $zones
+            if ($null -ne $deployTargets) {
+                if ($deployTargets.Count) { $scriptArgs += @('-TargetList') + $deployTargets }
+                else                      { $scriptArgs += '-NoDeploy' }
+            }
+
             $jobId = Start-ChildJob -Kind 'renew' -ScriptArgs $scriptArgs
             # Point the job at the result file we already named.
             $script:Jobs[$jobId].result = $resultPath

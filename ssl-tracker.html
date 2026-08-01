@@ -227,6 +227,7 @@ td.deploy{white-space:nowrap;}
 .modal{position:fixed; top:0; right:0; bottom:0; left:0; z-index:50; display:flex;
   align-items:flex-start; justify-content:center; overflow-y:auto;
   padding:clamp(1rem,5vh,3rem) 1rem; background:rgba(10,11,15,.55);}
+.modal-card.narrow{max-width:min(34rem,94vw);}
 .modal-card{width:100%; max-width:min(66rem,94vw); padding:1.9rem 2.1rem;
   border:1px solid var(--border-strong); border-radius:var(--radius);
   background:var(--surface-solid); box-shadow:var(--shadow);}
@@ -242,6 +243,30 @@ td.deploy{white-space:nowrap;}
 .modal-card h3{margin:0 0 .2rem; font-size:1.15rem; letter-spacing:-.01em;}
 .modal-card h4{margin:1.6rem 0 .2rem; font-size:.72rem; letter-spacing:.1em;
   text-transform:uppercase; color:var(--faint);}
+
+/* Settings tabs. One modal held contact details, authorities, DNS accounts and
+   load balancers; four unrelated jobs stacked vertically. */
+.tabs{display:flex; flex-wrap:wrap; gap:.35rem; margin:1.1rem 0 1.3rem;
+  border-bottom:1px solid var(--border); padding-bottom:.7rem;}
+.tab{font:inherit; font-size:.82rem; font-weight:650; color:var(--muted); cursor:pointer;
+  padding:.4rem .85rem; border:1px solid var(--border); border-radius:999px;
+  background:var(--surface); transition:color .15s, border-color .15s;}
+.tab:hover{color:var(--text); border-color:var(--border-strong);}
+.tab[aria-selected="true"]{color:#fff; border-color:transparent;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));}
+
+/* Per-node results from a load balancer test. */
+.testrows{margin:.7rem 0 0; border:1px solid var(--border); border-radius:var(--radius-sm);
+  background:var(--bg); overflow:hidden;}
+.testrow{display:flex; gap:.6rem; align-items:baseline; padding:.4rem .75rem;
+  border-bottom:1px solid var(--border); font-size:.8rem;}
+.testrow:last-child{border-bottom:none;}
+.testrow .n{font-weight:700; min-width:4.5rem;}
+.testrow .v{font-size:.68rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+  padding:.1rem .4rem; border-radius:999px; border:1px solid transparent;}
+.testrow .v.ok{color:var(--green); background:var(--green-bg); border-color:var(--green);}
+.testrow .v.bad{color:var(--red); background:var(--red-bg); border-color:var(--red);}
+.testrow .d{color:var(--muted); word-break:break-word;}
 .field{margin:.9rem 0;}
 .field label{display:block; font-size:.7rem; font-weight:700; letter-spacing:.06em;
   text-transform:uppercase; color:var(--faint); margin-bottom:.32rem;}
@@ -379,49 +404,81 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
   </section>
 </div>
 
+<!-- One dialog, three jobs: assign a certificate's load balancers, choose where a
+     renewal pushes, or choose where a deployment goes. Separate dialogs for
+     these would drift apart. window.confirm cannot hold checkboxes. -->
+<div class="modal hidden" id="picker">
+  <div class="modal-card narrow" role="dialog" aria-modal="true" aria-labelledby="picktitle">
+    <h3 id="picktitle">Deploy to</h3>
+    <p class="mini" id="pick-sub"></p>
+    <div id="pick-certs"></div>
+    <div id="pick-targets"></div>
+    <p class="status-line" id="pick-status"></p>
+    <div class="modal-actions">
+      <button class="btn" type="button" id="pick-cancel">Cancel</button>
+      <button class="btn primary" type="button" id="pick-ok">Continue</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal hidden" id="settings">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settitle">
-    <h3 id="settitle">Renewal settings</h3>
-    <p class="mini">Credentials are encrypted with Windows DPAPI and stored in
-    <code>secrets.xml</code> beside this page. They never leave this PC, and they do not
-    travel if you copy this folder to another machine.</p>
+    <h3 id="settitle">Settings</h3>
 
-    <div class="field">
-      <label for="set-contact">Contact email</label>
-      <input type="email" id="set-contact" autocomplete="off">
-      <p class="hint">The certificate authority sends expiry warnings here. Required.</p>
+    <!-- Save always writes every tab, not just the visible one, so switching
+         tabs mid-edit never silently discards anything. -->
+    <div class="tabs" role="tablist">
+      <button class="tab" type="button" role="tab" data-tab="general" aria-selected="true">General</button>
+      <button class="tab" type="button" role="tab" data-tab="cas" aria-selected="false">Authorities</button>
+      <button class="tab" type="button" role="tab" data-tab="dns" aria-selected="false">DNS</button>
+      <button class="tab" type="button" role="tab" data-tab="lb" aria-selected="false">Load balancers</button>
     </div>
 
-    <h4>Certificate authorities</h4>
-    <p class="hint">Each certificate picks an issuer on its own row in the Certificates table.
-    Anything not pinned uses the default below. Staging is per authority — staging
-    certificates are not trusted by browsers, but they do not count against rate limits,
-    so leave it on until a renewal completes cleanly.</p>
-    <div id="cas"></div>
-    <button class="btn sm" type="button" id="btn-add-ca">Add a certificate authority</button>
-    <div class="field">
-      <label for="set-default-ca">Default for new certificates</label>
-      <select id="set-default-ca"></select>
+    <div class="tabpanel" data-panel="general">
+      <div class="field">
+        <label for="set-contact">Contact email</label>
+        <input type="email" id="set-contact" autocomplete="off">
+        <p class="hint">The certificate authority sends expiry warnings here. Required.</p>
+      </div>
+      <p class="hint">Credentials on the other tabs are encrypted with Windows DPAPI and stored
+      in <code>secrets.xml</code> beside this page. They never leave this PC, and they do not
+      travel if you copy this folder to another machine.</p>
     </div>
 
-    <h4>DNS providers</h4>
-    <p class="hint">Renewal proves you control a domain by writing a DNS record. Each profile
-    below is one DNS account; every zone it manages becomes renewable automatically.</p>
-    <div id="providers"></div>
-    <button class="btn sm" type="button" id="btn-add-provider">Add a DNS profile</button>
+    <div class="tabpanel hidden" data-panel="cas">
+      <p class="hint">Each certificate picks an issuer on its own row in the Certificates table.
+      Anything not pinned uses the default below. Staging is per authority — staging
+      certificates are not trusted by browsers, but they do not count against rate limits,
+      so leave it on until a renewal completes cleanly.</p>
+      <div id="cas"></div>
+      <button class="btn sm" type="button" id="btn-add-ca">Add a certificate authority</button>
+      <div class="field">
+        <label for="set-default-ca">Default for new certificates</label>
+        <select id="set-default-ca"></select>
+      </div>
+    </div>
 
-    <h4>Load balancers</h4>
-    <p class="hint">Where issued certificates get pushed. One entry per group of load
-    balancers that share credentials — each node is still pushed to, and verified,
-    individually. Certificates are assigned to a group on their row in the Certificates
-    table.</p>
-    <div id="targets"></div>
-    <button class="btn sm" type="button" id="btn-add-target">Add a load balancer group</button>
+    <div class="tabpanel hidden" data-panel="dns">
+      <p class="hint">Renewal proves you control a domain by writing a DNS record. Each profile
+      below is one DNS account; every zone it manages becomes renewable automatically.</p>
+      <div id="providers"></div>
+      <button class="btn sm" type="button" id="btn-add-provider">Add a DNS profile</button>
+      <button class="btn sm" type="button" id="btn-test-dns">Test DNS providers</button>
+    </div>
+
+    <div class="tabpanel hidden" data-panel="lb">
+      <p class="hint">Where issued certificates get pushed. One entry per group of load
+      balancers that share credentials — each node is still pushed to, and verified,
+      individually. Assign a group to a certificate on its row in the Certificates table.</p>
+      <p class="hint">Never set one of these up before? See the
+      <a href="haproxy-setup.html" target="_blank" rel="noopener">HAProxy setup guide</a>.</p>
+      <div id="targets"></div>
+      <button class="btn sm" type="button" id="btn-add-target">Add a load balancer group</button>
+    </div>
 
     <p class="status-line" id="set-status"></p>
 
     <div class="modal-actions">
-      <button class="btn" type="button" id="btn-test">Test connection</button>
       <button class="btn" type="button" id="btn-cancel">Cancel</button>
       <button class="btn primary" type="button" id="btn-save">Save</button>
     </div>
@@ -845,7 +902,14 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     document.getElementById('btn-settings').addEventListener('click', openSettings);
     document.getElementById('btn-cancel').addEventListener('click', closeSettings);
     document.getElementById('btn-save').addEventListener('click', saveSettings);
-    document.getElementById('btn-test').addEventListener('click', testConnection);
+    document.getElementById('btn-test-dns').addEventListener('click', testConnection);
+
+    document.querySelectorAll('#settings .tab').forEach(function(b){
+      b.addEventListener('click', function(){ showTab(b.getAttribute('data-tab')); });
+    });
+
+    document.getElementById('pick-cancel').addEventListener('click', closePicker);
+    document.getElementById('pick-ok').addEventListener('click', confirmPicker);
     document.getElementById('btn-add-provider').addEventListener('click', function(){
       addProviderCard(null);
     });
@@ -858,7 +922,10 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     document.getElementById('btn-renew-all').addEventListener('click', renewAllExpiring);
 
     document.addEventListener('keydown', function(e){
-      if (e.key === 'Escape') { closeSettings(); }
+      if (e.key !== 'Escape') { return; }
+      // The picker can open on top of Settings, so close the topmost one only.
+      if (!document.getElementById('picker').classList.contains('hidden')) { closePicker(); }
+      else { closeSettings(); }
     });
 
     loadState();
@@ -1049,18 +1116,26 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     var dep = (state.deployment || {})[c.certId] || {};
     var assigned = c.targets || dep.targets || [];
 
+    // The empty state has to be the way out of itself. Previously this said
+    // "not deployed" and stopped there, while the only way to assign anything
+    // was an API call - so the Deploy button never appeared for anyone.
+    function assignButton(label, title){
+      var b = el('button', 'btn sm', label);
+      b.type = 'button';
+      b.title = title;
+      b.addEventListener('click', function(){ openPicker('assign', [c.certId]); });
+      return b;
+    }
+
     if (!assigned.length) {
-      // Issued but going nowhere. Said outright rather than left blank, because
-      // a certificate nobody deploys is a certificate that silently expires in
-      // production while this page shows it as freshly renewed.
-      var none = el('span', 'mini', 'not deployed');
-      none.title = 'No load balancer is assigned. Assign one in Settings.';
-      td.appendChild(none);
+      td.appendChild(assignButton('not deployed',
+        'No load balancer assigned. Click to choose where this certificate should go.'));
       return td;
     }
 
     if (!dep.last) {
-      td.appendChild(el('span', 'mini', 'never pushed'));
+      td.appendChild(assignButton('never pushed',
+        'Assigned to ' + assigned.join(', ') + ', but not pushed yet. Click to change.'));
       return td;
     }
 
@@ -1087,28 +1162,151 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     });
     td.appendChild(wrap);
 
-    var when = el('div', 'mini', ago(dep.last.at));
-    when.title = new Date(dep.last.at).toLocaleString();
+    var when = el('button', 'btn sm', ago(dep.last.at));
+    when.type = 'button';
+    when.title = 'Last deployed ' + new Date(dep.last.at).toLocaleString() +
+                 '. Assigned to ' + assigned.join(', ') + '. Click to change.';
+    when.addEventListener('click', function(){ openPicker('assign', [c.certId]); });
     td.appendChild(when);
     return td;
   }
 
-  function confirmAndDeploy(certIds){
+  // --- The target picker ------------------------------------------------- //
+
+  var pickMode = null, pickCerts = [];
+
+  function openPicker(mode, certIds){
     var byId = {};
     ((state && state.certs) || []).forEach(function(c){ byId[c.certId] = c; });
 
-    var lines = certIds.map(function(id){
+    pickMode  = mode;
+    pickCerts = certIds;
+
+    var groups = ((state && state.settings && state.settings.targets) || []);
+    var titles = { assign: 'Where should this deploy?', renew: 'Renew', deploy: 'Deploy' };
+    var subs = {
+      assign: 'Saved against the certificate. Unattended renewals use this, so it is also what runs at 3am when nobody is here to choose.',
+      renew:  'Renew now, then push to these. Leave everything unticked to renew only and push nothing.',
+      deploy: 'Push the certificate already on disk to these, then check each node is really serving it.'
+    };
+
+    document.getElementById('picktitle').textContent = titles[mode];
+    document.getElementById('pick-sub').textContent  = subs[mode];
+    document.getElementById('pick-ok').textContent   =
+      mode === 'assign' ? 'Save' : (mode === 'renew' ? 'Renew' : 'Deploy');
+
+    // What is being acted on, and for a renewal whether it is the real thing.
+    var certBox = document.getElementById('pick-certs');
+    certBox.textContent = '';
+    var anyProd = false;
+    certIds.forEach(function(id){
       var c = byId[id];
-      var names = c ? (c.targets || []).join(', ') : '';
-      return '  ' + (c ? c.displayName : id) + '  ->  ' + (names || 'no target');
+      if (!c) { return; }
+      var line = el('div', 'mini');
+      line.appendChild(el('strong', null, c.displayName));
+      if (mode === 'renew') {
+        line.appendChild(document.createTextNode(
+          '  ' + c.caLabel + (c.caStaging ? '  (staging)' : '  (PRODUCTION)')));
+        if (!c.caStaging) { anyProd = true; }
+      }
+      certBox.appendChild(line);
+    });
+    if (mode === 'renew' && anyProd) {
+      certBox.appendChild(el('p', 'hint',
+        'Production orders count against the certificate authority rate limits.'));
+    }
+
+    // Pre-tick from the stored assignment. For assign mode that is the current
+    // value; for the others it is the sensible default to run with.
+    var assigned = {};
+    certIds.forEach(function(id){
+      ((byId[id] && byId[id].targets) || []).forEach(function(t){ assigned[t] = true; });
     });
 
-    if (!window.confirm('Push and verify:\n\n' + lines.join('\n') +
-        '\n\nEach load balancer is checked individually afterwards to confirm it is ' +
-        'actually serving the certificate.\n\nContinue?')) { return; }
+    var box = document.getElementById('pick-targets');
+    box.textContent = '';
 
-    runJob('Deploying ' + certIds.join(', '), 'POST', '/api/deploy', { certs: certIds });
+    if (!groups.length) {
+      // The dead end this whole change exists to remove: no groups, and until
+      // now nothing on screen said what to do about it.
+      var none = el('div', 'callout warn');
+      none.appendChild(el('div', 'h', 'No load balancers configured'));
+      var p = el('p', null, 'Add one under Settings → Load balancers first. ');
+      var go = el('button', 'btn sm', 'Open settings');
+      go.type = 'button';
+      go.addEventListener('click', function(){ closePicker(); openSettings('lb'); });
+      p.appendChild(go);
+      none.appendChild(p);
+      box.appendChild(none);
+    } else {
+      groups.forEach(function(g){
+        var f = el('div', 'field');
+        var lab = el('label', 'check');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'pick-target';
+        cb.value = g.id;
+        cb.checked = !!assigned[g.id];
+        lab.appendChild(cb);
+        var txt = el('span', null, g.label);
+        txt.appendChild(el('span', 'mini', '  ' +
+          ((g.nodes || []).map(function(n){ return n.name; }).join(', ') || 'no nodes')));
+        lab.appendChild(txt);
+        f.appendChild(lab);
+        box.appendChild(f);
+      });
+    }
+
+    setPickStatus('');
+    document.getElementById('picker').classList.remove('hidden');
   }
+
+  function closePicker(){ document.getElementById('picker').classList.add('hidden'); }
+
+  function setPickStatus(text, cls){
+    var s = document.getElementById('pick-status');
+    s.className = 'status-line' + (cls ? ' ' + cls : '');
+    s.textContent = text || '';
+  }
+
+  function pickedTargets(){
+    return Array.prototype.slice.call(document.querySelectorAll('#pick-targets .pick-target'))
+      .filter(function(c){ return c.checked; })
+      .map(function(c){ return c.value; });
+  }
+
+  function confirmPicker(){
+    var chosen = pickedTargets();
+
+    if (pickMode === 'assign') {
+      // One certificate at a time in this mode.
+      setPickStatus('Saving...');
+      api('POST', '/api/cert/' + encodeURIComponent(pickCerts[0]) + '/targets',
+        { targets: chosen }, function(err){
+          if (err) { setPickStatus(err, 'bad'); return; }
+          closePicker();
+          loadState();
+        });
+      return;
+    }
+
+    if (pickMode === 'deploy' && !chosen.length) {
+      // Renewing nowhere is a real choice; deploying nowhere is not.
+      setPickStatus('Pick at least one load balancer, or cancel.', 'bad');
+      return;
+    }
+
+    closePicker();
+    if (pickMode === 'renew') {
+      runJob('Renewing ' + pickCerts.join(', '), 'POST', '/api/renew',
+             { zones: pickCerts, targets: chosen });
+    } else {
+      runJob('Deploying ' + pickCerts.join(', '), 'POST', '/api/deploy',
+             { certs: pickCerts, targets: chosen });
+    }
+  }
+
+  function confirmAndDeploy(certIds){ openPicker('deploy', certIds); }
 
   function renewAllExpiring(){
     var expiring = ((state && state.certs) || []).filter(isExpiring);
@@ -1117,27 +1315,10 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
   }
 
   function confirmAndRenew(zones){
-    // Spell out the issuer per certificate. With several authorities in play,
-    // "are these production or staging?" is no longer one answer for the batch.
-    var byZone = {};
-    ((state && state.certs) || []).forEach(function(c){ byZone[c.certId] = c; });
-
-    var lines = zones.map(function(z){
-      var c = byZone[z];
-      if (!c) { return z; }
-      return (c.displayName || z) + '  ->  ' + c.caLabel + (c.caStaging ? '  (staging)' : '  (PRODUCTION)');
-    });
-
-    var anyProd = zones.some(function(z){ return byZone[z] && !byZone[z].caStaging; });
-
-    var msg = 'Order ' + zones.length + (zones.length === 1 ? ' certificate' : ' certificates') +
-              ':\n\n' + lines.join('\n') + '\n\n' +
-              (anyProd
-                ? 'This includes PRODUCTION orders, which count against the authority\'s rate limits.'
-                : 'All staging, so none of these will be trusted by browsers.') +
-              '\n\nContinue?';
-    if (!window.confirm(msg)) { return; }
-    runJob('Renewing ' + zones.join(', '), 'POST', '/api/renew', { zones: zones });
+    // The picker shows the issuer and staging/production per certificate, which
+    // reads better than concatenating it into a confirm() string, and lets the
+    // same dialog choose where the result gets pushed.
+    openPicker('renew', zones);
   }
 
   // --- Jobs -------------------------------------------------------------- //
@@ -1258,7 +1439,7 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     s.textContent = text || '';
   }
 
-  function openSettings(){
+  function openSettings(tab){
     if (!state) { return; }
     var s = state.settings;
 
@@ -1278,8 +1459,11 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     (s.targets || []).forEach(addTargetCard);
 
     setStatus('');
+    // Callers can land on a specific tab - the picker's "no load balancers"
+    // callout opens straight onto the one that fixes it.
+    showTab(typeof tab === 'string' ? tab : 'general');
     document.getElementById('settings').classList.remove('hidden');
-    document.getElementById('set-contact').focus();
+    if (!tab || tab === 'general') { document.getElementById('set-contact').focus(); }
   }
 
   function closeSettings(){
@@ -1462,6 +1646,57 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     document.getElementById('providers').appendChild(card);
   }
 
+  function showTab(name){
+    document.querySelectorAll('#settings .tab').forEach(function(b){
+      b.setAttribute('aria-selected', b.getAttribute('data-tab') === name ? 'true' : 'false');
+    });
+    document.querySelectorAll('#settings .tabpanel').forEach(function(p){
+      p.classList.toggle('hidden', p.getAttribute('data-panel') !== name);
+    });
+    // Status belongs to whatever you just did on the previous tab; carrying it
+    // across reads as a result for the tab you have only just arrived at.
+    setStatus('');
+  }
+
+  // Per-node results from a load balancer test.
+  function renderTestRows(container, nodes){
+    container.textContent = '';
+    var box = el('div', 'testrows');
+    nodes.forEach(function(n){
+      var row = el('div', 'testrow');
+      row.appendChild(el('span', 'n', n.node || n.url));
+      row.appendChild(el('span', 'v ' + (n.ok ? 'ok' : 'bad'), n.ok ? 'ok' : 'fail'));
+      row.appendChild(el('span', 'd', n.ok
+        ? 'API ' + n.apiVersion + ', ' + (n.certificates || []).length + ' certificate(s) on disk'
+        : (n.error || 'failed')));
+      box.appendChild(row);
+    });
+    container.appendChild(box);
+  }
+
+  function testTarget(targetId, resultBox){
+    var c = collectSettings();
+    if (c.error) { setStatus(c.error, 'bad'); return; }
+
+    // Save first: the password lives in the encrypted store, so an unsaved card
+    // has no credential to test with. Without this the test would either use a
+    // stale password or none at all, and report a puzzling 401.
+    setStatus('Saving, then testing...');
+    resultBox.textContent = '';
+    api('POST', '/api/settings', c.payload, function(err){
+      if (err) { setStatus(err, 'bad'); return; }
+      api('POST', '/api/targets/test', { targetId: targetId }, function(err2, res){
+        if (err2) { setStatus(err2, 'bad'); return; }
+        var nodes = (res && res.nodes) || [];
+        renderTestRows(resultBox, nodes);
+        var bad = nodes.filter(function(n){ return !n.ok; }).length;
+        if (bad) { setStatus(bad + ' of ' + nodes.length + ' node(s) failed.', 'bad'); }
+        else     { setStatus('All ' + nodes.length + ' node(s) reachable.', 'good'); }
+        loadState();
+      });
+    });
+  }
+
   function addTargetCard(t){
     var catalog = (state && state.targetCatalog) || {};
     var types = Object.keys(catalog).sort();
@@ -1477,10 +1712,20 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
 
     var head = el('div', 'phead');
     head.appendChild(el('strong', null, catalog[type].label));
+
+    var headBtns = el('span');
+    // Proving a group works should not require renewing a certificate to find
+    // out. This is the same check deploy runs before it trusts a node.
+    var test = el('button', 'btn sm', 'Test');
+    test.type = 'button';
+    test.title = 'Save these settings, then check every node in this group answers';
+    headBtns.appendChild(test);
+
     var rm = el('button', 'btn sm', 'Remove');
     rm.type = 'button';
     rm.addEventListener('click', function(){ card.parentNode.removeChild(card); });
-    head.appendChild(rm);
+    headBtns.appendChild(rm);
+    head.appendChild(headBtns);
     card.appendChild(head);
 
     function field(cls, label, value, inputType, hint, placeholder){
@@ -1552,6 +1797,12 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
       }
       if (a.Hint) { f.appendChild(el('p', 'hint', a.Hint)); }
       argHost.appendChild(f);
+    });
+
+    var results = el('div');
+    card.appendChild(results);
+    test.addEventListener('click', function(){
+      testTarget(card.getAttribute('data-tid'), results);
     });
 
     document.getElementById('targets').appendChild(card);

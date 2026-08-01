@@ -39,7 +39,16 @@ param(
     # Issue only, do not push to the load balancers. For proving an issuance in
     # isolation; the normal path deploys, because a certificate that never
     # reaches a load balancer has not solved the problem it was renewed for.
-    [switch]$NoDeploy
+    [switch]$NoDeploy,
+
+    # Deploy to these groups instead of whatever the certificate is assigned to.
+    #
+    # Distinct from -NoDeploy on purpose. Not passing this means "use the stored
+    # assignment", which is what the scheduled task relies on. Passing it empty
+    # is not expressible on a command line, so "renew and push nothing" stays
+    # -NoDeploy - one flag, one meaning, rather than an empty array quietly
+    # meaning something different from an absent one.
+    [string[]]$TargetList
 )
 
 $ErrorActionPreference = 'Stop'
@@ -320,8 +329,13 @@ try {
             # Deployment runs in-process rather than as another job so the log
             # reads as one story, and so a renewal that cannot be delivered is
             # reported as a failure rather than a success with a caveat.
+            # A run-time selection wins over the stored assignment; without one
+            # the assignment is used, which is what renew-due.ps1 depends on.
             $certTargets = @()
-            if ($settings.certs -and $settings.certs.ContainsKey($certId)) {
+            if ($TargetList -and @($TargetList).Count) {
+                $certTargets = @($TargetList)
+            }
+            elseif ($settings.certs -and $settings.certs.ContainsKey($certId)) {
                 $cfg = $settings.certs[$certId]
                 if ($cfg.ContainsKey('targets')) { $certTargets = @($cfg.targets) }
             }
@@ -339,8 +353,11 @@ try {
                 $deployScript = Join-Path $PSScriptRoot 'deploy.ps1'
                 $deployResult = Join-Path $script:JobsDir "renew-deploy-$certId.json"
 
+                # Pass the resolved list explicitly rather than letting deploy.ps1
+                # re-read the assignment, so a run-time override survives the hop
+                # between the two scripts.
                 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $deployScript `
-                    -Cert $certId -ResultPath $deployResult 2>&1 |
+                    -Cert $certId -ResultPath $deployResult -TargetList @certTargets 2>&1 |
                   ForEach-Object { Write-Output $_ }
                 $deployOk = ($LASTEXITCODE -eq 0)
 

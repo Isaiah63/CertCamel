@@ -29,9 +29,12 @@ param(
     [Alias('Cert')]
     [string[]]$CertList,
 
-    # Restrict to one target group; otherwise every target the certificate is
-    # assigned to.
-    [string]$TargetId,
+    # Restrict to these target groups. Omit to use every target the certificate
+    # is assigned to. Named plural because a certificate can legitimately go to
+    # several groups - production and DR, say - and picking a subset at run time
+    # is the point of the deployment dialog.
+    [Alias('TargetId')]
+    [string[]]$TargetList,
 
     # Where to drop the machine-readable outcome, for the page to read.
     [string]$ResultPath,
@@ -143,7 +146,11 @@ try {
                 $cfg = $settings.certs[$certId]
                 if ($cfg.ContainsKey('targets')) { $targetIds = @($cfg.targets) }
             }
-            if ($TargetId) { $targetIds = @($targetIds | Where-Object { $_ -eq $TargetId }) }
+            # A run-time selection replaces the stored assignment outright rather
+            # than filtering it, so a newly added group can be deployed to before
+            # anyone has got round to assigning it.
+            if ($TargetList -and @($TargetList).Count) { $targetIds = @($TargetList) }
+
             if (-not $targetIds.Count) { throw "No deployment target is assigned to this certificate." }
 
             foreach ($tid in $targetIds) {
