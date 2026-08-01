@@ -159,6 +159,7 @@ footer{margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border)
   </div>
 
   <div class="side actions">
+    <a class="back" href="haproxy-setup.html">HAProxy setup</a>
     <a class="back" href="ssl-tracker.html">&larr; Back to the tracker</a>
   </div>
 </header>
@@ -453,6 +454,7 @@ per year. The certificates also have to sit inside the directory the Data Plane 
 lines. <strong>One reload to migrate, zero reloads thereafter.</strong></p>
 <p>Using <code>crt-list</code> rather than <code>crt</code> additionally makes <em>adding</em> a new
 domain hitless, not just renewing an existing one. Both are supported.</p>
+<p><strong>Never configured the Data Plane API before?</strong> There is a step-by-step guide with the security details in <a href="haproxy-setup.html">Setting up the HAProxy Data Plane API</a>.</p>
 <h3>Setting it up</h3>
 <p><em>Settings &rarr; Load balancers</em> &rarr; add a group. One entry per set of nodes sharing
 credentials; each node is still pushed to and verified individually. Nodes go one per line:</p>
