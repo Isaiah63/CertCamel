@@ -462,8 +462,21 @@ credentials; each node is still pushed to and verified individually. Nodes go on
 lb2 https://10.0.0.12:5555
 dr1 https://10.9.0.11:5555  10.9.0.11</code></pre>
 <p>Name, then the Data Plane API URL. The optional third value is the address to verify against,
-for when the site is not served from the same host as the API. Then assign the group to a
-certificate on its row and press <strong>Deploy</strong>.</p>
+for when the site is not served from the same host as the API.</p>
+<p>Press <strong>Test</strong> on the group before relying on it. It saves first &mdash; the password
+lives in the encrypted store, so an unsaved card has no credential to test with &mdash; then reports
+per node whether it answered, which API version it speaks and how many certificates it can see.</p>
+<h3>Assigning a certificate</h3>
+<p>Click the <strong>Deployed</strong> cell on a certificate's row. That assignment is what
+unattended renewal uses, because at 3am there is nobody to ask.</p>
+<p><strong>Renew</strong> and <strong>Deploy</strong> open the same picker with that assignment
+pre-ticked, changeable for the run in hand:</p>
+<ul>
+  <li>Untick everything on <strong>Renew</strong> to renew only and push nothing.</li>
+  <li><strong>Deploy</strong> needs at least one &mdash; deploying nowhere is not a thing.</li>
+  <li>Ticking a group the certificate is <em>not</em> assigned to deploys there anyway, which is
+  how you reach a load balancer you have only just added.</li>
+</ul>
 
 <h2 id="verify">11. How deployment is verified</h2>
 <p>&ldquo;The API returned 200&rdquo; is not evidence that anything is being served.</p>

@@ -89,8 +89,26 @@ dr1 https://10.9.0.11:5555  10.9.0.11
 Name, then the Data Plane API URL. An optional third value is the address to
 verify against, for when the site is not served from the same host as the API.
 
-Then assign a group to a certificate on its row in the Certificates table, and
-press **Deploy**.
+Press **Test** on the group to check every node answers before you rely on it.
+It saves first, because the password lives in the encrypted store and an unsaved
+card has no credential to test with. Results are per node:
+
+```
+lb1  ok    API v3, 4 certificates on disk
+lb2  fail  authentication failed - check the username and password
+```
+
+Then assign the group to a certificate: click the **Deployed** cell on its row.
+That assignment is what unattended renewal uses, since at 3am there is nobody to
+ask.
+
+**Renew** and **Deploy** both open a picker with that assignment pre-ticked,
+which you can change for that run:
+
+- Untick everything on **Renew** to renew only and push nothing.
+- **Deploy** needs at least one - deploying nowhere is not a thing.
+- Ticking a group the certificate is *not* assigned to deploys there anyway,
+  which is how you reach a load balancer you have only just added.
 
 ## How deployment is verified
 
