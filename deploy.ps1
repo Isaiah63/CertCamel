@@ -44,7 +44,13 @@ param(
     # can trust.
     [switch]$SkipVerify,
 
-    [int]$VerifyTimeoutSeconds = 10
+    [int]$VerifyTimeoutSeconds = 10,
+
+    # Set by renew.ps1 when it calls this as its own deploy step, so this run
+    # does not also send its own alert - renew.ps1 already sends one covering
+    # both issuance and deployment together, and sending both would mean two
+    # emails for one event.
+    [switch]$CalledFromRenew
 )
 
 $ErrorActionPreference = 'Stop'
@@ -299,6 +305,15 @@ try {
                 $where = " [$([IO.Path]::GetFileName($_.InvocationInfo.ScriptName)):$($_.InvocationInfo.ScriptLineNumber)]"
             }
             Write-Log "$($cert.displayName) FAILED: $($entry.error)$where" 'error'
+        }
+
+        # Only on failure, and only when this is a standalone deploy - renew.ps1
+        # already sends its own alert covering issuance and deployment together
+        # when it calls this as its own deploy step, and there is no "deployment
+        # succeeded on its own" toggle to fire here on the success path.
+        if (-not $entry.ok -and -not $CalledFromRenew) {
+            Send-RenewalOutcomeAlert -Settings $settings -DisplayName $cert.displayName -Ok $false `
+                -Deployed $false -ErrorMessage $(if ($entry.error) { $entry.error } else { 'Deployment did not fully succeed - see the log.' })
         }
 
         $outcome.results += $entry
