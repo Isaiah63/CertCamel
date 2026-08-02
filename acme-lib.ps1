@@ -25,6 +25,7 @@ $script:Root         = $PSScriptRoot
 $script:SettingsFile = Join-Path $script:Root 'settings.json'
 $script:SecretsFile  = Join-Path $script:Root 'secrets.xml'
 $script:ZonesFile    = Join-Path $script:Root 'zones.json'
+$script:AlertStateFile = Join-Path $script:Root 'alert-state.json'
 $script:LibDir       = Join-Path $script:Root 'lib'
 $script:AcmeState    = Join-Path $script:Root 'acme-state'
 $script:CertsDir     = Join-Path $script:Root 'certs'
@@ -147,6 +148,21 @@ function ConvertFrom-SecureStringPlain {
 # Settings
 # --------------------------------------------------------------------------- #
 
+function New-DefaultAlertSettings {
+    # Off by default and no SMTP host, so a fresh install sends nothing until
+    # someone deliberately fills this in.
+    @{
+        smtp = @{
+            host = ''; port = 587; encryption = 'starttls'; from = ''; to = @()
+            authRequired = $false; username = ''
+        }
+        expiry            = @{ enabled = $false; thresholds = @(30, 14, 7) }
+        renewalSuccess    = @{ enabled = $false }
+        deploymentFailure = @{ enabled = $false }
+        monthlySummary    = @{ enabled = $false }
+    }
+}
+
 function New-DefaultSettings {
     $cas = @()
     foreach ($c in $script:BuiltInCAs) {
@@ -166,6 +182,7 @@ function New-DefaultSettings {
         # no target at all.
         targets     = @()
         certs       = @{}
+        alerts      = New-DefaultAlertSettings
     }
 }
 
@@ -330,6 +347,195 @@ function Get-TrackerSecret {
     if (-not $store.ContainsKey($Key)) { return $null }
     if ($AsPlainText) { return ConvertFrom-SecureStringPlain $store[$Key] }
     return $store[$Key]
+}
+
+function Send-AlertEmail {
+    <#
+      Sends one plain-text email through the configured SMTP profile. Throws on
+      failure - callers on the alerting path (renewal, deployment, expiry) catch
+      and log rather than let a mail problem interrupt what it is reporting on.
+      The test-email endpoint lets the throw reach the caller instead, because
+      there the failure is the answer being asked for.
+
+      Encryption is deliberately two real options, not three:
+
+        starttls - connects in plain text on the given port (587 is standard)
+                   and upgrades via STARTTLS. This is what .NET's SmtpClient
+                   actually implements when EnableSsl is true, and it is
+                   reliable.
+        none     - no encryption. For a relay that only accepts connections
+                   from this machine and never leaves it.
+
+      Implicit TLS (a server that expects TLS from the first byte, historically
+      port 465) is NOT offered. System.Net.Mail.SmtpClient - what PowerShell
+      5.1 has, since it predates System.Net.Mail.SmtpClient's newer
+      Framework-only replacements - has long-documented unreliable support for
+      it: EnableSsl assumes a plaintext handshake to negotiate STARTTLS on, so
+      pointing it at a 465-only server tends to hang or fail outright rather
+      than connect insecurely. Silently attempting it and sometimes failing
+      closed is fine; silently attempting it and sometimes failing OPEN - or
+      just being flaky - is not a trade worth making for a security control.
+      A provider offering both STARTTLS-on-587 and implicit-TLS-on-465 should
+      be pointed at the former.
+    #>
+    param(
+        [hashtable]$Settings,
+        [string]$Subject,
+        [string]$Body,
+        [string[]]$ToOverride
+    )
+
+    $smtp = $Settings.alerts.smtp
+    if (-not $smtp -or -not $smtp.host) { throw "No SMTP host is configured." }
+
+    $to = if ($ToOverride -and @($ToOverride).Count) { @($ToOverride) } else { @($smtp.to) }
+    if (-not @($to).Count) { throw "No alert recipient is configured." }
+
+    $from = if ($smtp.from) { [string]$smtp.from } else { [string]$Settings.contact }
+    if (-not $from) { throw "No 'from' address is configured, and no contact email to fall back to." }
+
+    [Net.ServicePointManager]::SecurityProtocol =
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+    $msg = New-Object Net.Mail.MailMessage
+    $client = $null
+    try {
+        $msg.From = $from
+        foreach ($addr in @($to)) { $msg.To.Add($addr) }
+        $msg.Subject = $Subject
+        $msg.Body = $Body
+        $msg.IsBodyHtml = $false
+
+        $port = $(if ($smtp.port) { [int]$smtp.port } else { 587 })
+        $client = New-Object Net.Mail.SmtpClient($smtp.host, $port)
+        $client.EnableSsl = ($smtp.encryption -eq 'starttls')
+
+        if ($smtp.authRequired) {
+            $pw = Get-TrackerSecret -Key 'alerts:smtpPassword' -AsPlainText
+            if (-not $pw) { throw "This SMTP profile requires a password, but none is stored." }
+            $client.Credentials = New-Object Net.NetworkCredential([string]$smtp.username, $pw)
+        }
+        else {
+            $client.UseDefaultCredentials = $false
+        }
+
+        $client.Send($msg)
+    }
+    finally {
+        $msg.Dispose()
+        if ($client) { $client.Dispose() }
+    }
+}
+
+function Send-RenewalOutcomeAlert {
+    <#
+      One certificate's renewal (and, on the normal path, deployment) just
+      finished. Sends the success or failure alert if the operator asked for
+      it. Deliberately does not throw - the caller wraps this anyway, but the
+      point of an alert about a renewal is that it must never become the
+      reason the renewal is recorded as failed.
+    #>
+    param([hashtable]$Settings, [string]$DisplayName, [bool]$Ok, $Deployed, [string]$ErrorMessage)
+
+    try {
+        $alerts = $Settings.alerts
+        if (-not $alerts) { return }
+
+        if ($Ok) {
+            if (-not $alerts.renewalSuccess.enabled) { return }
+            $where = if ($null -eq $Deployed) { 'issued (no load balancer assigned)' }
+                     elseif ($Deployed)        { 'issued and deployed' }
+                     else                       { 'issued' }
+            Send-AlertEmail -Settings $Settings -Subject "Cert Camel: $DisplayName renewed" `
+                -Body "$DisplayName was $where successfully, $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))."
+        }
+        else {
+            if (-not $alerts.deploymentFailure.enabled) { return }
+            Send-AlertEmail -Settings $Settings -Subject "Cert Camel: $DisplayName FAILED" `
+                -Body "$DisplayName did not fully succeed, $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')).`r`n`r`n$ErrorMessage`r`n`r`nCheck the tracker for the full log."
+        }
+    }
+    catch {
+        Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [warn] Alert email could not be sent: $(($_.Exception.Message -split "`n")[0].Trim())"
+    }
+}
+
+function Send-ExpiryAlerts {
+    <#
+      Compares every watched host's days-remaining against the configured
+      thresholds and emails once per host per threshold crossed, not on every
+      run. State is one flat file recording the smallest (most urgent)
+      threshold already alerted on for each host, so crossing 30 fires once
+      and stays quiet until the same host also crosses 14, then 7. A renewal
+      pushes days-remaining back above every threshold, which clears the
+      record so the next approach to expiry can alert again.
+
+      Takes the raw checker results (every watched host, including ones this
+      tool does not renew) rather than the renewable-certificate list, so an
+      externally-managed certificate still gets a warning if whatever renews
+      it elsewhere falls behind.
+    #>
+    param([hashtable]$Settings, [array]$Results)
+
+    if (-not $Settings.alerts -or -not $Settings.alerts.expiry.enabled) { return }
+    $thresholds = @($Settings.alerts.expiry.thresholds | Sort-Object -Descending)
+    if (-not $thresholds.Count) { return }
+
+    $state = @{}
+    if (Test-Path $script:AlertStateFile) {
+        try {
+            $parsed = (Get-Content $script:AlertStateFile -Raw -Encoding UTF8) | ConvertFrom-Json
+            $state = ConvertTo-HashtableDeep $parsed
+        }
+        catch { $state = @{} }
+    }
+    if ($null -eq $state) { $state = @{} }
+
+    $changed = $false
+    $now = Get-Date
+
+    foreach ($r in @($Results)) {
+        if (-not $r.ok -or -not $r.notAfter) { continue }
+        $hostName = [string]$r.host
+        $days = [math]::Floor(([datetime]$r.notAfter - $now).TotalDays)
+
+        $prevAlerted = $null
+        if ($state.ContainsKey($hostName) -and $state[$hostName].ContainsKey('lastThresholdAlerted')) {
+            $prevAlerted = $state[$hostName].lastThresholdAlerted
+        }
+
+        # The smallest (most urgent) configured threshold this host is at or
+        # under right now.
+        $crossed = $null
+        foreach ($t in $thresholds) { if ($days -le $t) { $crossed = $t } }
+
+        if ($null -eq $crossed) {
+            # Back above every threshold - a renewal happened. Clear the record
+            # so the next approach to expiry alerts again rather than staying
+            # silent forever because of what it alerted on last time.
+            if ($state.ContainsKey($hostName)) { $state.Remove($hostName); $changed = $true }
+            continue
+        }
+
+        # Only a NEW (smaller, more urgent) threshold than whatever was last
+        # alerted triggers a send, so 30 does not re-fire every day until 14.
+        if ($null -eq $prevAlerted -or $crossed -lt $prevAlerted) {
+            try {
+                Send-AlertEmail -Settings $Settings -Subject "Cert Camel: $hostName expires in $days day(s)" `
+                    -Body "$hostName has $days day(s) remaining (crossed the $crossed-day threshold), expiring $(([datetime]$r.notAfter).ToString('yyyy-MM-dd'))."
+            }
+            catch {
+                Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [warn] Expiry alert for $hostName could not be sent: $(($_.Exception.Message -split "`n")[0].Trim())"
+            }
+            $state[$hostName] = @{ lastThresholdAlerted = $crossed }
+            $changed = $true
+        }
+    }
+
+    if ($changed) {
+        try { Write-TextFileAtomic -Path $script:AlertStateFile -Content ($state | ConvertTo-Json -Depth 5) }
+        catch { Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [warn] Could not save alert-state.json: $(($_.Exception.Message -split "`n")[0].Trim())" }
+    }
 }
 
 function Test-TrackerSecret {
