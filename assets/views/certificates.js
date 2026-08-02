@@ -11,6 +11,96 @@
 
   function certDays(c){ return c.notAfter ? daysUntil(c.notAfter) : null; }
 
+  // --- Row actions menu -------------------------------------------------- //
+  // Only one open at a time, and it lives on document.body rather than inside
+  // the cell: .tablewrap sets overflow-x:auto, which per spec makes overflow-y
+  // auto too, so a menu rendered inside a row would be clipped by the table.
+  var openMenu = null;
+
+  function closeRowMenu(){
+    if (!openMenu) { return; }
+    if (openMenu.el.parentNode) { openMenu.el.parentNode.removeChild(openMenu.el); }
+    openMenu.trigger.setAttribute('aria-expanded', 'false');
+    openMenu = null;
+    document.removeEventListener('keydown', onMenuKey, true);
+    document.removeEventListener('mousedown', onMenuOutside, true);
+    window.removeEventListener('scroll', closeRowMenu, true);
+    window.removeEventListener('resize', closeRowMenu);
+  }
+
+  function onMenuKey(e){
+    if (e.key === 'Escape') {
+      var t = openMenu && openMenu.trigger;
+      closeRowMenu();
+      if (t) { t.focus(); }   // Escape should land you back where you opened it
+    }
+  }
+  function onMenuOutside(e){
+    if (!openMenu) { return; }
+    if (openMenu.el.contains(e.target) || openMenu.trigger.contains(e.target)) { return; }
+    closeRowMenu();
+  }
+
+  function buildRowMenu(items, forName){
+    var trigger = el('button', 'btn sm menu-trigger', '⋯');
+    trigger.type = 'button';
+    trigger.setAttribute('aria-haspopup', 'true');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.title = 'More actions for ' + forName;
+    trigger.setAttribute('aria-label', 'More actions for ' + forName);
+
+    trigger.addEventListener('click', function(){
+      // A second click on the same trigger closes rather than reopening.
+      if (openMenu && openMenu.trigger === trigger) { closeRowMenu(); return; }
+      closeRowMenu();
+
+      var menu = el('div', 'rowmenu');
+      menu.setAttribute('role', 'menu');
+
+      items.forEach(function(it){
+        var node;
+        if (it.kind === 'link') {
+          node = el('a', null, it.label);
+          node.href = it.href;
+          // The browser handles the download; just get the menu out of the way.
+          node.addEventListener('click', function(){ closeRowMenu(); });
+        } else {
+          node = el('button', null, it.label);
+          node.type = 'button';
+          node.addEventListener('click', function(){ closeRowMenu(); it.run(); });
+        }
+        node.title = it.title || '';
+        node.setAttribute('role', 'menuitem');
+        menu.appendChild(node);
+      });
+
+      document.body.appendChild(menu);
+
+      // Positioned from the trigger, then nudged back inside the viewport if it
+      // would hang off the bottom or the right edge.
+      var r = trigger.getBoundingClientRect();
+      var mw = menu.offsetWidth, mh = menu.offsetHeight;
+      var left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+      var top  = (r.bottom + mh + 8 > window.innerHeight) ? (r.top - mh - 4) : (r.bottom + 4);
+      menu.style.left = Math.max(8, left) + 'px';
+      menu.style.top  = Math.max(8, top) + 'px';
+
+      trigger.setAttribute('aria-expanded', 'true');
+      openMenu = { el: menu, trigger: trigger };
+
+      document.addEventListener('keydown', onMenuKey, true);
+      document.addEventListener('mousedown', onMenuOutside, true);
+      // Capture phase: the scroll that matters is the table's, not the window's.
+      window.addEventListener('scroll', closeRowMenu, true);
+      window.addEventListener('resize', closeRowMenu);
+
+      var first = menu.querySelector('button,a');
+      if (first) { first.focus(); }
+    });
+
+    return trigger;
+  }
+
   // Anything another system renews is excluded from bulk renewal, so "Renew all
   // expiring" can never quietly issue a second certificate for something already
   // looked after elsewhere.
@@ -113,6 +203,11 @@
   }
 
   function render(){
+    // The menu lives on document.body, so a re-render (a finished job, a state
+    // refresh) would otherwise strip its trigger out of the table and leave the
+    // menu floating with nothing behind it.
+    closeRowMenu();
+
     var host = document.getElementById('view-certificates');
     host.textContent = '';
 
@@ -230,32 +325,39 @@
 
       tr.appendChild(deploymentCell(c));
 
+      // Renew stays a visible button - it is the action people come here for,
+      // and burying the common case behind two clicks is a downgrade. The rest
+      // go in the menu, which is what removes four buttons from every row.
       var acts = el('td', 'acts');
+      var items = [];
+
       if (c.hasLocalCert) {
-        var dl = el('a', 'btn sm', '.pem');
-        dl.href = '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(CC.TOKEN);
-        dl.title = 'Download the certificate, chain and private key as one PEM file';
-        acts.appendChild(dl);
+        items.push({
+          kind: 'link',
+          label: 'Download certificate files',
+          title: 'Download the certificate, chain and private key as one PEM file',
+          href: '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(CC.TOKEN)
+        });
       }
       if (!c.external && c.hasLocalCert && (c.targets || []).length) {
-        var dep = el('button', 'btn sm', 'Deploy');
-        dep.type = 'button';
-        dep.title = 'Push this certificate to its load balancers and verify each one is serving it';
-        dep.addEventListener('click', function(){ openPicker('deploy', [c.certId]); });
-        acts.appendChild(dep);
-      }
-      var flip = el('button', 'btn sm', c.external ? 'Renew here' : 'Managed elsewhere');
-      flip.type = 'button';
-      flip.title = c.external
-        ? 'Bring this certificate back under this tool'
-        : 'Mark this as renewed by another system: keep watching it, but never issue it from here';
-      flip.addEventListener('click', function(){
-        api('POST', '/api/cert/' + encodeURIComponent(c.certId) + '/external', {external: !c.external}, function(err){
-          if (err) { window.alert(err); return; }
-          CC.loadState();
+        items.push({
+          label: 'Deploy to load balancers',
+          title: 'Push this certificate to its load balancers and verify each one is serving it',
+          run: function(){ openPicker('deploy', [c.certId]); }
         });
+      }
+      items.push({
+        label: c.external ? 'Renew here' : 'Managed elsewhere',
+        title: c.external
+          ? 'Bring this certificate back under this tool'
+          : 'Mark this as renewed by another system: keep watching it, but never issue it from here',
+        run: function(){
+          api('POST', '/api/cert/' + encodeURIComponent(c.certId) + '/external', {external: !c.external}, function(err){
+            if (err) { window.alert(err); return; }
+            CC.loadState();
+          });
+        }
       });
-      acts.appendChild(flip);
 
       if (!c.external) {
         var rb = el('button', 'btn sm primary', 'Renew');
@@ -263,6 +365,7 @@
         rb.addEventListener('click', function(){ openPicker('renew', [c.certId]); });
         acts.appendChild(rb);
       }
+      acts.appendChild(buildRowMenu(items, c.displayName || c.zone));
       tr.appendChild(acts);
       body.appendChild(tr);
     });
@@ -299,6 +402,7 @@
       return td;
     }
 
+    var stack = el('div', 'deploy-stack');
     var wrap = el('div', 'pips');
     (dep.last.targets || []).forEach(function(t){
       (t.nodes || []).forEach(function(n){
@@ -320,14 +424,15 @@
         wrap.appendChild(pip);
       });
     });
-    td.appendChild(wrap);
+    stack.appendChild(wrap);
 
     var when = el('button', 'btn sm', ago(dep.last.at));
     when.type = 'button';
     when.title = 'Last deployed ' + new Date(dep.last.at).toLocaleString() +
                  '. Assigned to ' + assigned.join(', ') + '. Click to change.';
     when.addEventListener('click', function(){ openPicker('assign', [c.certId]); });
-    td.appendChild(when);
+    stack.appendChild(when);
+    td.appendChild(stack);
     return td;
   }
 
