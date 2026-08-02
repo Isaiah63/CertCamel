@@ -401,17 +401,38 @@ request</em>. Base64 is not encryption. Terminate TLS on the API:</p>
 <p>Alternatively bind to localhost and reach it through an SSH tunnel, which needs no certificate
 at all.</p>
 <h3>If the API uses a private or self-signed certificate</h3>
-<p>Tick <em>Skip TLS verification</em> on the target in Cert Camel. That affects only the connection
-to the API &mdash; certificate <em>verification</em> never trusts anything regardless, because it is
-reading what a node serves rather than trusting it.</p>
+<p>Almost nobody puts a publicly trusted certificate on a management API, so this is the normal
+case rather than the exception. There are two ways to handle it, and the first is better:</p>
+<ol>
+  <li><strong>Install the API's CA on the machine running Cert Camel.</strong> Copy the CA
+  certificate across and import it into the Windows <em>Trusted Root Certification Authorities</em>
+  store &mdash; <code>certutil -addstore -f Root ca.crt</code> as administrator, or per-user via
+  <code>certutil -user -addstore Root ca.crt</code>. Cert Camel then verifies the API normally and
+  the tick-box stays off.</li>
+  <li><strong>Tick <em>Skip TLS verification</em></strong> on the target. Fine for a lab, and the
+  only option when you cannot install the CA. It affects only the connection to the API &mdash;
+  certificate <em>verification</em> never trusts anything regardless, because it reads what a node
+  serves rather than trusting it.</li>
+</ol>
+<p>The certificate also needs the address you connect to in its <strong>SANs</strong>. A certificate
+issued only for <code>lb1.internal</code> will be rejected when Cert Camel is pointed at
+<code>10.0.0.11</code>, correctly and confusingly.</p>
 <div class="callout note">
-  <div class="h">A Windows-specific trap worth knowing</div>
-  <p>Windows validates certificates through Schannel, which insists on a revocation check. A private
-  CA does not publish a CRL, so a chain that verifies perfectly on Linux is rejected on Windows with
-  <code>CERT_TRUST_REVOCATION_STATUS_UNKNOWN</code> &mdash; <code>curl.exe</code> reports exit 60.
-  With <code>curl.exe</code>, <code>--ssl-no-revoke</code> skips only the revocation check while
-  still verifying the chain. Worth recognising, because it looks exactly like a broken certificate
-  and is not one.</p>
+  <div class="h">Telling the two failures apart on Windows</div>
+  <p><code>Could not establish trust relationship for the SSL/TLS secure channel</code> covers both
+  "I do not trust this CA" and "the name does not match", which sends people to the wrong fix. To
+  separate them, build the chain by hand in PowerShell:</p>
+  <pre><code>$c = New-Object Security.Cryptography.X509Certificates.X509Certificate2 'ca.crt'
+$ch = New-Object Security.Cryptography.X509Certificates.X509Chain
+$ch.ChainPolicy.ExtraStore.Add($c); $ch.Build($leaf); $ch.ChainStatus</code></pre>
+  <p><code>UntrustedRoot</code> on its own means the chain is complete and only the root needs
+  installing. <code>PartialChain</code> means you have the wrong CA file.</p>
+  <p>Ignore <code>RevocationStatusUnknown</code> and <code>OfflineRevocation</code> here. A private
+  CA publishes no CRL, so they always appear, and they do <em>not</em> block Cert Camel &mdash;
+  .NET leaves <code>CheckCertificateRevocationList</code> off, so its connections never ask. They do
+  block <code>curl.exe</code>, which checks by default and reports exit 60; use
+  <code>--ssl-no-revoke</code> there to skip only the revocation check while still verifying the
+  chain. A curl failure that Cert Camel does not share is usually this and nothing more.</p>
 </div>
 <h3>Firewall it</h3>
 <pre><code>sudo ufw allow from 10.0.0.50 to any port 5555 proto tcp   <span class="c"># the management host only</span>
@@ -479,15 +500,55 @@ runtime, not just replace an existing one:</p>
 </div>
 <p>A PEM for HAProxy is <strong>leaf, then intermediates, then the private key, in one file</strong>.
 That is exactly what Cert Camel's <code>&lt;name&gt;-full.pem</code> already is.</p>
+<div class="callout warn">
+  <div class="h">Keep <code>ssl_certs_dir</code> to serving certificates only</div>
+  <p>Anyone holding the API password can list and read this directory. It is easy to end up using it
+  as a general key store &mdash; the API's own <code>tls_key</code>, a private CA key, spare
+  <code>.key</code> and <code>.csr</code> files &mdash; because it is already there and already has
+  the right permissions.</p>
+  <p>Do not. A CA key sitting there means one leaked API password mints certificates your estate
+  trusts, and the API's own key means the API can be impersonated. Give the Data Plane API a
+  directory containing only the combined PEMs it serves, and keep everything else somewhere it does
+  not manage.</p>
+</div>
 
 <h2 id="connect">11. Point Cert Camel at it</h2>
 <p><em>Settings &rarr; Load balancers &rarr; Add a load balancer group.</em> One group per set of
 nodes sharing credentials. Nodes go one per line:</p>
 <pre><code>lb1 https://10.0.0.11:5555
 lb2 https://10.0.0.12:5555</code></pre>
+<p>The URL is the <strong>base only</strong> &mdash; scheme, host and port, with no
+<code>/v3</code> or <code>/v2</code> on the end. Cert Camel adds the version itself, after asking
+the API which one it speaks. Nearly every example URL in HAProxy's documentation carries a
+<code>/v3</code>, so this is an easy one to paste in by accident; Cert Camel strips a trailing
+version segment rather than building <code>/v3/v3/&hellip;</code> and reporting a 404 that reads
+like a missing endpoint.</p>
 <p>Fill in the username and password from step 5, set <em>Certificate filename on HAProxy</em> to
-match the name in your bind line or crt-list, then save. Assign the group to a certificate on its
-row in the Certificates table and press <strong>Deploy</strong>.</p>
+match the name in your bind line or crt-list, then press <strong>Test</strong> &mdash; it reports
+per node, with the API version and the certificates each one can see. Then save, assign the group
+to a certificate on its row in the Certificates table, and press <strong>Deploy</strong>.</p>
+<div class="callout warn">
+  <div class="h">The filename must match what HAProxy actually binds</div>
+  <p>HAProxy knows a certificate by its path, so <em>Certificate filename on HAProxy</em> has to be
+  the exact name on your <code>crt</code> line or in your crt-list. If your bind line says
+  <code>crt /etc/haproxy/ssl/lab.pem</code>, the filename is <code>lab.pem</code> &mdash; not the
+  default <code>{certId}.pem</code>, and not the certificate's own name.</p>
+  <p>Get it wrong and nothing looks wrong. The upload succeeds, the API reports success, and the
+  file lands in <code>ssl_certs_dir</code> under a name no bind line references.</p>
+  <p>The deployment log labels its checks, and this is the case that shows why there is more than
+  one:</p>
+  <ul>
+    <li><strong>T0</strong> &mdash; the bundle itself is valid: it parses, and the private key
+    matches the certificate. Runs before anything is sent anywhere.</li>
+    <li><strong>T1</strong> &mdash; the node's API accepted the upload. Per node.</li>
+    <li><strong>T3</strong> &mdash; the node is <em>really serving</em> it: Cert Camel opens a TLS
+    connection to that node and compares the serial number of what comes back. Per node, per
+    name.</li>
+  </ul>
+  <p>A filename that does not match your bind line <strong>passes T1 and fails T3</strong>. T1 only
+  ever meant "the API said yes to a file write"; T3 is the only check that reads what the node is
+  actually serving, so when they disagree, trust T3 over the green tick above it.</p>
+</div>
 
 <h2 id="pairs">12. Pairs and clusters</h2>
 <p>Every node needs the Data Plane API installed and configured. They can share a username and
@@ -500,7 +561,29 @@ password &mdash; that is what a group is &mdash; but each is pushed to and verif
   of traffic. Cert Camel connects to <strong>each node's own address</strong> for exactly this
   reason, which is why the Deployed column shows one pip per node rather than one tick per group.</p>
   <p>If your nodes serve on an address different from their API address, put it as a third value on
-  the node line: <code>lb1 https://10.0.0.11:5555 10.0.0.11</code>.</p>
+  the node line: <code>lb1 https://10.0.0.11:5555 10.0.0.11</code>. It may carry its own port when a
+  node does not answer on the group's verify port &mdash;
+  <code>lb1 https://10.0.0.11:5555 10.0.0.11:8443</code> &mdash; which is what you need when the
+  nodes are reached through per-node forwards rather than directly.</p>
+</div>
+<h3>Which address, exactly</h3>
+<p>Each node's <strong>own permanent IP</strong> &mdash; the address that belongs to that box and
+never moves &mdash; on the port HAProxy serves the site on. Not the VIP, which floats. In most
+builds that permanent address is also the management address, but the thing that matters is not that
+it is used for management: it is that HAProxy is <em>listening for the site</em> on it, on that
+particular node. By default Cert Camel uses the host from the API URL, which is normally the same
+machine and needs no configuration at all.</p>
+<div class="callout warn">
+  <div class="h">Check what your bind line listens on before relying on this</div>
+  <p><code>bind *:443</code> listens on every address the node has, so each node answers on its own
+  IP and per-node verification works.</p>
+  <p><code>bind 10.0.0.100:443</code> &mdash; binding the VIP explicitly &mdash; does not. The
+  standby has nothing listening on its own address, so T3 against it fails with a refused connection
+  even though the push worked perfectly. That is a reporting problem, not a deployment one.</p>
+  <p>If you bind the VIP explicitly, either add a per-node listener for verification to reach, or
+  accept that only the active node can be verified over the network, and treat the standby's T1
+  result as what you have. Do not "fix" it by pointing verification at the VIP &mdash; that
+  turns a visible gap into a green tick that means nothing.</p>
 </div>
 
 <h2 id="trouble">13. When it breaks</h2>
