@@ -300,7 +300,17 @@ function Save-SecretStore {
         }
     }
 
-    $Store | Export-Clixml -Path $script:SecretsFile -Force
+    # Via a temp file, like Write-TextFileAtomic - not Export-Clixml straight to
+    # the real path. Get-SecretStore deliberately throws rather than returning an
+    # empty store on a read failure, specifically so a bad read cannot lead to a
+    # good file being silently overwritten. That protection is defeated if the
+    # write itself can be interrupted mid-file: a kill or power loss during a
+    # direct write leaves a truncated secrets.xml, which then throws on every
+    # future read and forces every credential to be re-entered - the very loss
+    # the throw-on-failure design exists to prevent, from a different cause.
+    $tmp = "$($script:SecretsFile).tmp"
+    $Store | Export-Clixml -Path $tmp -Force
+    Move-Item -Path $tmp -Destination $script:SecretsFile -Force
 }
 
 # Secrets are keyed "<providerId>:<argName>" so one provider can hold several.
