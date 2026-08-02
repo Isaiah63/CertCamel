@@ -159,6 +159,39 @@ That reports what it would renew and stops.
 > Note also that credentials are DPAPI-encrypted and bound to one Windows user
 > on one machine, so they are re-entered on the server rather than copied.
 
+## Email alerts
+
+Under Settings > Alerts, four independently switchable alerts:
+
+| Alert | Fires when |
+|---|---|
+| Certificate expiring soon | A watched host crosses a configured threshold (default 30, 14, 7 days). Once per host per threshold, not on every check. |
+| Renewal succeeded | Issuance and every deployment check passed. |
+| Automated deployment failed | Anything on the unattended path did not fully succeed. The one that matters most — it is the only signal an unattended renewal has stopped working. |
+| Monthly summary | 1st of the month: everything due within 31 days, and anything currently failing. |
+
+The mail server needs a host, port, and at least one recipient. A username and
+password are **optional** — leave "requires a username and password" unticked
+for an internal relay that accepts mail from this machine with no login, which
+is common on a corporate network. When you do supply a password it is stored
+DPAPI-encrypted like every other credential here, never sent back to the
+browser, and a blank password field on a later save means *keep the one
+already stored*, not *clear it*.
+
+Only two encryption modes are offered: STARTTLS (port 587, typical) and none.
+Implicit TLS (a server that expects encryption from the first byte, historically
+port 465) is not offered — PowerShell's mail client does not support it
+reliably, and a security control that sometimes silently fails is worse than
+one that plainly is not there. If your provider offers both, use STARTTLS.
+
+A **Send test email** button saves first, then sends, the same pattern the DNS
+and deployment tests use. Alerting can never fail a renewal: every send is
+wrapped so a bad mail server gets logged and nothing else changes.
+
+The monthly summary is a daily scheduled task that checks the date and does
+nothing on every day but the 1st — the ScheduledTasks module has no clean
+monthly trigger to reach for instead. `First Time Setup.bat` can register it.
+
 ## Requirements
 
 - Windows, with **Windows PowerShell 5.1** (ships with Windows) and .NET 4.7.1+
@@ -182,17 +215,14 @@ table of contents — it is linked from **Read me** in the app.
 
 ## The two ways to open it
 
-| | `ssl-tracker.html` | `Open Tracker.bat` |
-|---|---|---|
-| Expiry table, categories, filters | yes | yes |
-| Renew, download, settings | **no** | yes |
-| Needs anything running | no | a local server, while open |
-
 A page opened from disk (`file://`) genuinely cannot run PowerShell, call a DNS
 API, or write to its own folder — so buttons there would be decoration.
 `Open Tracker.bat` starts a small server on `127.0.0.1` and opens the same page
-against it, which is what gives the buttons something to talk to. Close that
-window and the server stops.
+against it, which is what gives the buttons something to talk to, and is now
+the **only** way to open the tracker — every view, including the certificate
+table, needs the session token the server hands it, so `ssl-tracker.html`
+opened directly shows an explanation rather than a page. Close that window
+and the server stops.
 
 Nothing is exposed to your network: the server binds to loopback only, and every
 request must carry a random token generated fresh each time it starts.
@@ -581,8 +611,12 @@ Unregister-ScheduledTask -TaskName "SSL Cert Check" -Confirm:$false
 
 ```
 Open Tracker.bat      start the server and open the page  <- use this
-ssl-tracker.html      the dashboard (read-only on its own)
+ssl-tracker.html      the app shell (sidebar + view containers; needs the server)
+assets\app.css        all styling
+assets\app.js         router, API client, shared state, the job runner
+assets\views\         one file per sidebar page (home, certificates, settings, docs)
 readme.html           the documentation as a browser page
+haproxy-setup.html    step-by-step HAProxy Data Plane API guide
 domains.txt           the list you edit                   (yours, gitignored)
 domains.example.txt   the shipped sample
 Check Now.bat         refresh the data
@@ -592,15 +626,17 @@ check-ssl.ps1         the checker (parallel, records SANs and serials)
 serve.ps1             the local server
 renew.ps1             performs one renewal, then deploys it
 deploy.ps1            pushes to load balancers and verifies every node
-renew-due.ps1         renews whatever the CA says is due (scheduled task)
-acme-lib.ps1          shared settings, secrets and grouping logic
+renew-due.ps1         renews whatever the CA says is due, sends expiry alerts (scheduled task)
+monthly-report.ps1    sends the monthly summary email, if turned on (scheduled task)
+acme-lib.ps1          shared settings, secrets, grouping and alert-sending logic
 setup.ps1             what setup runs
 
 generated, none committed:
   ssl-data.js         checker output
   settings.json       your configuration
-  secrets.xml         DNS credentials, DPAPI-encrypted
+  secrets.xml         DNS/SMTP credentials, DPAPI-encrypted
   zones.json          cached zone list from your DNS provider
+  alert-state.json    which expiry thresholds have already been emailed, per host
   certs\              issued certificates and private keys
   acme-state\         ACME account and order state
   jobs\               renewal logs

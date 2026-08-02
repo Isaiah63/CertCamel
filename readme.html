@@ -184,6 +184,7 @@ here is presumably something you intend to renew, so the two halves are one tool
     <li><a href="#deploy">Deploying to HAProxy</a></li>
     <li><a href="#verify">How it is verified</a></li>
     <li><a href="#auto">Unattended renewal</a></li>
+    <li><a href="#alerts">Email alerts</a></li>
     <li><a href="#security">Security</a></li>
     <li><a href="#trouble">When it breaks</a></li>
     <li><a href="#clock">The 47-day future</a></li>
@@ -194,19 +195,13 @@ here is presumably something you intend to renew, so the two halves are one tool
 <article>
 
 <h2 id="open">1. Opening it</h2>
-<p>There are two ways in, and they are not equivalent.</p>
-<div class="tablewrap"><table>
-  <thead><tr><th></th><th><code>Open Tracker.bat</code></th><th><code>ssl-tracker.html</code></th></tr></thead>
-  <tbody>
-    <tr><td>Expiry table, categories, filters</td><td>yes</td><td>yes</td></tr>
-    <tr><td>Renew, download, settings</td><td>yes</td><td><strong>no</strong></td></tr>
-    <tr><td>Needs something running</td><td>a local server, while open</td><td>no</td></tr>
-  </tbody>
-</table></div>
-<p>A page opened straight from disk (<code>file://</code>) genuinely cannot run PowerShell, call a
-DNS API, or write to its own folder &mdash; so buttons there would be decoration. <strong>Open
-Tracker.bat</strong> starts a small server on <code>127.0.0.1</code> and opens the same page against
-it. Close that console window and the server stops.</p>
+<p><strong>Always use <code>Open Tracker.bat</code>.</strong> A page opened straight from disk
+(<code>file://</code>) genuinely cannot run PowerShell, call a DNS API, or write to its own folder
+&mdash; so buttons there would be decoration, and every view, including the certificate table
+itself, needs the session token the server hands it. Open <code>ssl-tracker.html</code> directly
+and you get an explanation, not a page.</p>
+<p><code>Open Tracker.bat</code> starts a small server on <code>127.0.0.1</code> and opens the app
+against it. Close that console window and the server stops.</p>
 <p>Nothing is exposed to your network: it binds to loopback only, and every request must carry a
 random token generated fresh each launch. Loopback alone is not access control &mdash; anything
 else running on the machine can reach it, which is why the token exists.</p>
@@ -529,7 +524,42 @@ expiry&rdquo; cannot hear that. A fixed threshold is only the fallback for a CA 
   are re-entered on that server rather than copied to it.</p>
 </div>
 
-<h2 id="security">13. Security</h2>
+<h2 id="alerts">13. Email alerts</h2>
+<p>Under Settings &gt; Alerts, four independently switchable alerts:</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Alert</th><th>Fires when</th></tr></thead>
+  <tbody>
+    <tr><td>Certificate expiring soon</td><td>A watched host crosses a configured threshold
+    (default 30, 14, 7 days). Once per host per threshold, not on every check.</td></tr>
+    <tr><td>Renewal succeeded</td><td>Issuance and every deployment check passed.</td></tr>
+    <tr><td>Automated deployment failed</td><td>Anything on the unattended path did not fully
+    succeed &mdash; the one that matters most, since it is the only signal an unattended renewal
+    has stopped working.</td></tr>
+    <tr><td>Monthly summary</td><td>1st of the month: everything due within 31 days, and anything
+    currently failing.</td></tr>
+  </tbody>
+</table></div>
+<p>The mail server needs a host, port, and at least one recipient. A username and password are
+<strong>optional</strong> &mdash; leave &ldquo;requires a username and password&rdquo; unticked for
+an internal relay that accepts mail from this machine with no login, common on a corporate network.
+A password you do supply is stored DPAPI-encrypted like every other credential here, never sent back
+to the browser, and a blank password field on a later save means <em>keep the one already
+stored</em>, not <em>clear it</em>.</p>
+<div class="callout note">
+  <div class="h">Only two encryption modes are offered</div>
+  <p>STARTTLS (port 587, typical) and none. Implicit TLS &mdash; a server that expects encryption
+  from the first byte, historically port 465 &mdash; is not offered: PowerShell&rsquo;s mail client
+  does not support it reliably, and a security control that sometimes silently fails is worse than
+  one that plainly is not there. If your provider offers both, use STARTTLS.</p>
+</div>
+<p>A <strong>Send test email</strong> button saves first, then sends &mdash; the same pattern the
+DNS and deployment tests use. Alerting can never fail a renewal: every send is wrapped so a bad mail
+server gets logged and nothing else changes.</p>
+<p>The monthly summary is a daily scheduled task that checks the date and does nothing on every day
+but the 1st &mdash; the ScheduledTasks module has no clean monthly trigger to reach for instead.
+<code>First Time Setup.bat</code> can register it.</p>
+
+<h2 id="security">14. Security</h2>
 <ul>
   <li>The server listens on <code>127.0.0.1</code> only and requires a per-launch random token.</li>
   <li>DNS credentials are encrypted with <strong>Windows DPAPI</strong> in <code>secrets.xml</code>,
@@ -554,7 +584,7 @@ useless, but anything already running as you can decrypt it. That is the normal 
 tool &mdash; it is not a vault. It also means credentials do not travel when you copy the folder,
 which is the right behaviour for something meant to be shared.</p>
 
-<h2 id="trouble">14. When it breaks</h2>
+<h2 id="trouble">15. When it breaks</h2>
 <div class="tablewrap"><table>
   <thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
   <tbody>
@@ -594,7 +624,7 @@ which is the right behaviour for something meant to be shared.</p>
 <p>Renewal logs live in <code>jobs\</code> and include the script line number on failure, which is
 usually most of the diagnosis.</p>
 
-<h2 id="clock">15. The 47-day future</h2>
+<h2 id="clock">16. The 47-day future</h2>
 <p>Under CA/Browser Forum ballot SC-081v3, the maximum certificate lifetime dropped to
 <strong>200 days on 15 March 2026</strong>, falls to <strong>100 days in March 2027</strong>, and to
 <strong>47 days in 2029</strong>. This applies to every public CA, paid ones included, and domain
@@ -602,10 +632,14 @@ validation reuse periods shrink alongside it.</p>
 <p>Whatever you renew by hand today needs doing roughly twice as often next year, and about eight
 times as often by 2029. That is the actual argument for automating this.</p>
 
-<h2 id="files">16. Files</h2>
+<h2 id="files">17. Files</h2>
 <pre><code>Open Tracker.bat      start the server and open the page  &lt;- use this
-ssl-tracker.html      the dashboard (read-only on its own)
+ssl-tracker.html      the app shell (sidebar + view containers; needs the server)
+assets\app.css        all styling
+assets\app.js         router, API client, shared state, the job runner
+assets\views\         one file per sidebar page (home, certificates, settings, docs)
 readme.html           this page
+haproxy-setup.html    step-by-step HAProxy Data Plane API guide
 domains.txt           the list you edit                   (yours, gitignored)
 domains.example.txt   the shipped sample
 Check Now.bat         refresh the data
@@ -615,15 +649,17 @@ check-ssl.ps1         the checker (parallel, records SANs and serials)
 serve.ps1             the local server
 renew.ps1             performs one renewal, then deploys it
 deploy.ps1            pushes to load balancers and verifies every node
-renew-due.ps1         renews whatever the CA says is due (scheduled task)
-acme-lib.ps1          shared settings, secrets and grouping logic
+renew-due.ps1         renews whatever the CA says is due, sends expiry alerts (scheduled task)
+monthly-report.ps1    sends the monthly summary email, if turned on (scheduled task)
+acme-lib.ps1          shared settings, secrets, grouping and alert-sending logic
 setup.ps1             what setup runs
 
 generated, none committed:
   ssl-data.js         checker output
   settings.json       your configuration
-  secrets.xml         DNS credentials, DPAPI-encrypted
+  secrets.xml         DNS/SMTP credentials, DPAPI-encrypted
   zones.json          cached zone list from your DNS provider
+  alert-state.json    which expiry thresholds have already been emailed, per host
   certs\              issued certificates and private keys
   acme-state\         ACME account and order state
   jobs\               renewal logs
