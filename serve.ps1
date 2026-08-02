@@ -455,11 +455,22 @@ function Invoke-SaveSettings {
         # credential with no error and no way back.
         if (@($kept).Count -gt 0) {
             $liveIds = @($kept | ForEach-Object { $_.id })
+
+            # Only prune keys that belonged to a DNS profile before this save.
+            # The secret store is one flat namespace shared with load balancer
+            # targets, so without this guard the loop reads every non-"ca:" key
+            # as a provider key - and a target id can never appear in $liveIds,
+            # which made saving settings silently delete the Data Plane API
+            # password every single time. The targets branch below has the
+            # mirror of this guard; this one was missing it.
+            $knownProviderIds = @($settings.providers | ForEach-Object { $_.id })
+
             $store = Get-SecretStore
             $removed = 0
             foreach ($key in @($store.Keys)) {
                 if ($key -like 'ca:*') { continue }
                 $owner = ($key -split ':')[0]
+                if ($knownProviderIds -notcontains $owner) { continue }
                 if ($liveIds -notcontains $owner) { $store.Remove($key); $removed++ }
             }
             if ($removed -gt 0) { Save-SecretStore $store }
