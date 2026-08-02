@@ -357,7 +357,7 @@ try {
                 # re-read the assignment, so a run-time override survives the hop
                 # between the two scripts.
                 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $deployScript `
-                    -Cert $certId -ResultPath $deployResult -TargetList @certTargets 2>&1 |
+                    -Cert $certId -ResultPath $deployResult -TargetList @certTargets -CalledFromRenew 2>&1 |
                   ForEach-Object { Write-Output $_ }
                 $deployOk = ($LASTEXITCODE -eq 0)
 
@@ -387,6 +387,9 @@ try {
             }
             Write-Log "$display FAILED: $($entry.error)$where" 'error'
         }
+
+        Send-RenewalOutcomeAlert -Settings $settings -DisplayName $display -Ok $entry.ok `
+            -Deployed $entry.deployed -ErrorMessage $entry.error
 
         $outcome.results += $entry
         Save-Outcome

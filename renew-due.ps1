@@ -61,6 +61,16 @@ try {
         throw "There is no certificate data yet. Run check-ssl.ps1 first."
     }
 
+    # Every watched host, not just the ones this run might renew - an
+    # externally-managed certificate still deserves a warning if whatever
+    # renews it elsewhere is running late. Never fatal: a bad SMTP setting
+    # here must not stop the actual renewal work below. Skipped under
+    # -WhatIfOnly, which promises a side-effect-free dry run.
+    if (-not $WhatIfOnly) {
+        try { Send-ExpiryAlerts -Settings $settings -Results @($checker.results) }
+        catch { Write-Log "Expiry alerts could not be evaluated: $(($_.Exception.Message -split "`n")[0].Trim())" 'warn' }
+    }
+
     $grouping = Get-CertificateGroups -Results @($checker.results) -Settings $settings -ZoneCache (Get-ZoneCache)
     $renewable = @($grouping.certs | Where-Object { -not $_.external })
 
