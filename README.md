@@ -72,7 +72,14 @@ is usually more work than the config lines themselves.
 **One reload to migrate. Zero reloads thereafter.**
 
 Referencing them with `crt-list` rather than `crt` additionally makes *adding* a
-new domain hitless, not just renewing an existing one. Both are supported.
+new domain hitless, not just renewing an existing one. Both are supported — and
+with a crt-list this is automatic: put the list's path in the deployment group's
+**crt-list path** field (exactly as it appears on the bind line), and any pushed
+certificate the list does not reference yet is appended and hot-loaded. The
+deploy log says which happened per node — `appended ... and the running process
+loaded it` versus `already referenced` — and a certificate that got appended on
+disk but never picked up by the running process fails the node loudly instead
+of surfacing as an unexplained verification failure.
 
 ### Setting it up
 
@@ -231,12 +238,12 @@ request must carry a random token generated fresh each time it starts.
 
 | I want to... | Do this |
 |---|---|
-| Add or remove a domain | Edit **`domains.txt`**, one per line |
-| Group domains by product | Add a `[Category]` header in `domains.txt` |
+| Add or remove a domain | **Edit domains** on the Certificates page — saving re-checks automatically. (Editing `domains.txt` by hand still works.) |
+| Group domains by product | Add a `[Category]` header above them in the editor |
 | Refresh the data | **Check now** on the page, or `Check Now.bat` |
 | Renew a certificate | **Renew** next to it in the Certificates table |
 | Get the certificate file | **.pem** next to it, after a renewal |
-| Set up DNS credentials | **Settings** on the page |
+| Set up DNS credentials | **Settings** in the sidebar |
 
 `domains.txt` is the single source of truth for what gets watched. Blank lines
 and `#` comments are ignored, and you can append `:port` to watch something
