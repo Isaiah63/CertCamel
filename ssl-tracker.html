@@ -223,6 +223,11 @@ td.deploy{white-space:nowrap;}
   max-height:24rem; overflow-y:auto; padding:.9rem 1rem; color:var(--muted);
   border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
 
+/* The gap below the log belongs to the panel, not to the tiles underneath it.
+   The tiles sit directly under the toolbar whenever no job is running, so a
+   margin on them would leave a hole there for the sake of a gap here. */
+#jobpanel{margin-bottom:1.9rem;}
+
 /* Settings */
 .modal{position:fixed; top:0; right:0; bottom:0; left:0; z-index:50; display:flex;
   align-items:flex-start; justify-content:center; overflow-y:auto;
