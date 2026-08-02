@@ -1309,6 +1309,22 @@ function Get-TargetSecret {
 
 $script:DataPlaneApiVersion = @{}
 
+function Get-DataPlaneBaseUrl {
+    <#
+      Reduce whatever was pasted into the nodes box to scheme://host:port.
+
+      Every Data Plane API example URL in HAProxy's own documentation carries a
+      /v3 on the end, so that is what gets copied in. Every path this file builds
+      already starts with /v3 or /v2, so leaving it on produces /v3/v3/... - a
+      404 that reads like the endpoint is missing rather than like a pasted URL.
+      Only a trailing version segment is removed; a base path from a reverse
+      proxy in front of the API is left alone.
+    #>
+    param([string]$BaseUrl)
+    $u = ([string]$BaseUrl).Trim().TrimEnd('/')
+    return [regex]::Replace($u, '/v\d+$', '')
+}
+
 function Invoke-DataPlaneRequest {
     param(
         [string]$BaseUrl,
@@ -1332,10 +1348,7 @@ function Invoke-DataPlaneRequest {
         [Net.ServicePointManager]::Expect100Continue = $false
     } catch { }
 
-    $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${User}:${Password}"))
-    $headers = @{ Authorization = "Basic $auth"; Accept = 'application/json' }
-
-    $uri = $BaseUrl.TrimEnd('/') + $Path
+    $uri = (Get-DataPlaneBaseUrl $BaseUrl) + $Path
 
     # ServerCertificateValidationCallback is process-global on PS 5.1 - there is
     # no per-request option. Save and restore it so one target's self-signed API
@@ -1346,23 +1359,59 @@ function Invoke-DataPlaneRequest {
             [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
         }
 
-        $params = @{
-            Uri = $uri; Method = $Method; Headers = $headers
-            TimeoutSec = $TimeoutSeconds; ErrorAction = 'Stop'
-        }
-        if ($null -ne $Body) { $params.Body = $Body; $params.ContentType = $ContentType }
+        # HttpWebRequest rather than Invoke-RestMethod. IRM's *first* call in a
+        # process reliably fails against a Data Plane API over TLS with "the
+        # underlying connection was closed: an unexpected error occurred on a
+        # send" - the handshake completes, the send does not, and every later
+        # call in the same process then succeeds. Since serve.ps1 launches a
+        # fresh PowerShell per job, that first call is the only call, so the
+        # symptom was every test and every push failing. HttpWebRequest is
+        # reliable cold, and it also keeps the response object on a 4xx, which
+        # is what carries the status code into the message below.
+        $req = [Net.HttpWebRequest]::Create($uri)
+        $req.Method           = $Method
+        $req.Timeout          = $TimeoutSeconds * 1000
+        $req.ReadWriteTimeout = $TimeoutSeconds * 1000
+        $req.Accept           = 'application/json'
+        # Send credentials unasked. A NetworkCredential waits to be challenged,
+        # and costs an extra round trip on every request to do it.
+        $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${User}:${Password}"))
+        $req.Headers.Add('Authorization', "Basic $auth")
 
-        return Invoke-RestMethod @params
+        if ($null -ne $Body) {
+            $bytes = if ($Body -is [byte[]]) { $Body }
+                     else { [Text.Encoding]::UTF8.GetBytes([string]$Body) }
+            $req.ContentType   = $ContentType
+            $req.ContentLength = $bytes.Length
+            $rs = $req.GetRequestStream()
+            try { $rs.Write($bytes, 0, $bytes.Length) } finally { $rs.Dispose() }
+        }
+
+        $resp = $req.GetResponse()
+        try {
+            $sr = New-Object IO.StreamReader($resp.GetResponseStream())
+            $raw = $sr.ReadToEnd(); $sr.Dispose()
+        }
+        finally { $resp.Close() }
+
+        if (-not $raw) { return $null }
+        try { return ($raw | ConvertFrom-Json) } catch { return $raw }
     }
-    catch {
+    catch [Net.WebException] {
+        $wex = $_.Exception
+        # Captured out here on purpose: inside the switch below, $_ is the
+        # switch's input ($status), not the error record, so reading
+        # $_.Exception.Message in the default branch yields nothing at all.
+        $transport = $wex.Message
+
         $status = $null; $detail = $null
-        if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) {
-            try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($wex.Response) {
+            try { $status = [int]$wex.Response.StatusCode } catch { }
             try {
-                $sr = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
-                $raw = $sr.ReadToEnd(); $sr.Dispose()
-                $parsed = $raw | ConvertFrom-Json
-                if ($parsed.message) { $detail = $parsed.message } elseif ($raw) { $detail = $raw }
+                $sr = New-Object IO.StreamReader($wex.Response.GetResponseStream())
+                $errRaw = $sr.ReadToEnd(); $sr.Dispose()
+                $parsed = $errRaw | ConvertFrom-Json
+                if ($parsed.message) { $detail = $parsed.message } elseif ($errRaw) { $detail = $errRaw }
             } catch { }
         }
 
@@ -1370,11 +1419,14 @@ function Invoke-DataPlaneRequest {
             401     { 'authentication failed - check the Data Plane API username and password' }
             403     { 'authorised but forbidden - the user may lack write permission' }
             404     { 'endpoint not found - check the URL and API version' }
-            409     { 'configuration version conflict - something else changed HAProxy config mid-flight' }
-            default { $_.Exception.Message }
+            409     { 'conflict - either a file of that name already exists, or the configuration version moved on mid-flight' }
+            default { $transport }
         }
         if ($detail) { $msg = "$msg ($detail)" }
         throw "$Method $Path -> $(if ($status) { "HTTP $status" } else { 'no response' }): $msg"
+    }
+    catch {
+        throw "$Method $Path -> no response: $($_.Exception.Message)"
     }
     finally {
         [Net.ServicePointManager]::ServerCertificateValidationCallback = $savedCallback
@@ -1388,6 +1440,10 @@ function Get-DataPlaneApiVersion {
       the life of the process.
     #>
     param([string]$BaseUrl, [string]$User, [string]$Password, [switch]$InsecureTls)
+
+    # Normalise before caching, so a URL pasted with a /v3 on it and the same URL
+    # without one are not probed twice and cached under two keys.
+    $BaseUrl = Get-DataPlaneBaseUrl $BaseUrl
 
     if ($script:DataPlaneApiVersion.ContainsKey($BaseUrl)) {
         return $script:DataPlaneApiVersion[$BaseUrl]
@@ -1444,6 +1500,43 @@ function Get-HAProxyCertificates {
     return @($names)
 }
 
+function Get-NormalisedStorageName {
+    # The Data Plane API's own rewrite: interior dots become underscores, the
+    # extension is kept. "www.example.com.pem" -> "www_example_com.pem".
+    param([string]$Name)
+    $ext  = [IO.Path]::GetExtension($Name)
+    $base = if ($ext) { $Name.Substring(0, $Name.Length - $ext.Length) } else { $Name }
+    return (($base -replace '\.', '_') + $ext)
+}
+
+function Resolve-StoredCertificateName {
+    <#
+      Work out what name the Data Plane API has actually filed a certificate
+      under, which is not necessarily the name it was given.
+
+      The API rewrites interior dots to underscores, so "www.example.com.pem" is
+      stored as "www_example_com.pem". Every certificate is named after a domain,
+      so every certificate hits this. The first push creates the rewritten name
+      quite happily; the next one looks for the name it asked for, does not find
+      it, decides the file is new, tries to create it and gets a 409. The result
+      is a deployment that works once and then fails on every renewal after it -
+      months later, unattended, with nobody watching.
+
+      Matching is done against the names the API reports rather than by trusting
+      the rewrite rule, so a build that rewrites differently still resolves.
+      Returns the stored name, or $null when it genuinely is not there yet.
+    #>
+    param([string[]]$Existing, [string]$RemoteName)
+
+    if (@($Existing) -contains $RemoteName) { return $RemoteName }
+
+    $want = Get-NormalisedStorageName $RemoteName
+    foreach ($e in @($Existing)) {
+        if ($e -eq $want -or (Get-NormalisedStorageName $e) -eq $want) { return $e }
+    }
+    return $null
+}
+
 function Push-CertificateToNode {
     <#
       Upload a combined PEM to one HAProxy node.
@@ -1465,7 +1558,8 @@ function Push-CertificateToNode {
     )
 
     $out = @{ node = $BaseUrl; remoteName = $RemoteName; ok = $false
-              action = $null; apiVersion = $null; error = $null }
+              action = $null; apiVersion = $null; error = $null
+              storedName = $null; renamed = $false }
 
     try {
         $api = Get-DataPlaneApiVersion -BaseUrl $BaseUrl -User $User -Password $Password -InsecureTls:$InsecureTls
@@ -1473,15 +1567,22 @@ function Push-CertificateToNode {
 
         $existing = @()
         try { $existing = Get-HAProxyCertificates -BaseUrl $BaseUrl -User $User -Password $Password -ApiVersion $api -InsecureTls:$InsecureTls } catch { }
-        $isReplace = ($existing -contains $RemoteName)
+
+        # Match on what the API reports, not on the name we asked for - see
+        # Resolve-StoredCertificateName. An exact-match test here is what makes a
+        # second push try to create a file that is already there.
+        $stored    = Resolve-StoredCertificateName -Existing $existing -RemoteName $RemoteName
+        $isReplace = [bool]$stored
 
         $cfgVer = Get-DataPlaneConfigVersion -BaseUrl $BaseUrl -User $User -Password $Password -ApiVersion $api -InsecureTls:$InsecureTls
 
         if ($isReplace) {
-            $out.action = 'replace'
+            $out.action     = 'replace'
+            $out.storedName = $stored
+            $out.renamed    = ($stored -ne $RemoteName)
             [void](Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
                      -Method 'PUT' -ContentType 'text/plain' -Body $PemContent -InsecureTls:$InsecureTls `
-                     -Path "/$api/services/haproxy/storage/ssl_certificates/$RemoteName`?version=$cfgVer")
+                     -Path "/$api/services/haproxy/storage/ssl_certificates/$stored`?version=$cfgVer")
         }
         else {
             $out.action = 'create'
@@ -1498,8 +1599,23 @@ function Push-CertificateToNode {
                      -Method 'POST' -ContentType "multipart/form-data; boundary=$boundary" `
                      -Body $body -InsecureTls:$InsecureTls `
                      -Path "/$api/services/haproxy/storage/ssl_certificates`?version=$cfgVer")
+
+            # Ask what it ended up called rather than assuming the name survived.
+            # HAProxy loads certificates by path, so if the API filed this under a
+            # rewritten name, that rewritten name is what the bind line has to
+            # reference - and the operator needs telling, now, not at renewal.
+            try {
+                $after = Get-HAProxyCertificates -BaseUrl $BaseUrl -User $User -Password $Password `
+                             -ApiVersion $api -InsecureTls:$InsecureTls
+                $found = Resolve-StoredCertificateName -Existing $after -RemoteName $RemoteName
+                if ($found) {
+                    $out.storedName = $found
+                    $out.renamed    = ($found -ne $RemoteName)
+                }
+            } catch { }
         }
 
+        if (-not $out.storedName) { $out.storedName = $RemoteName }
         $out.ok = $true
     }
     catch { $out.error = ($_.Exception.Message -split "`n")[0].Trim() }
@@ -1751,7 +1867,21 @@ function Get-ServedCertificate {
 
     $client = $null; $stream = $null
     try {
-        $client = New-Object Net.Sockets.TcpClient
+        # A parameterless TcpClient is IPv4-only on .NET Framework. That makes it
+        # refuse an IPv6 literal outright ("none of the discovered addresses match
+        # the socket address family"), and - worse, because it looks like the node
+        # is down - it makes a dual-stack hostname try only its A record. A host
+        # reachable on AAAA but not A then reports a flat connection refusal with
+        # nothing pointing at why. An IPv6 socket in dual mode reaches both, with
+        # IPv4 arriving as ::ffff:x.x.x.x.
+        try {
+            $client = New-Object Net.Sockets.TcpClient([Net.Sockets.AddressFamily]::InterNetworkV6)
+            $client.Client.DualMode = $true
+        }
+        catch {
+            # IPv6 disabled at the OS level. Fall back rather than fail.
+            $client = New-Object Net.Sockets.TcpClient
+        }
         $client.ReceiveTimeout = $TimeoutSeconds * 1000
         $client.SendTimeout    = $TimeoutSeconds * 1000
 
