@@ -37,7 +37,7 @@
   var domainsLoading  = false;
 
   function buildDomainsEditor(toggleBtn){
-    var card = el('div', 'card' + (domainsOpen ? '' : ' hidden'));
+    var card = el('div', 'card wide' + (domainsOpen ? '' : ' hidden'));
     card.appendChild(el('h4', null, 'domains.txt'));
     card.appendChild(el('p', 'hint',
       'One host per line. A line like "[Category Name]" groups everything below it until the ' +
@@ -47,10 +47,7 @@
 
     var ta = document.createElement('textarea');
     ta.className = 'domains-text';
-    ta.rows = 14;
     ta.spellcheck = false;
-    ta.style.fontFamily = 'ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
-    ta.style.fontSize = '.85rem';
     if (domainsText !== null) { ta.value = domainsText; }
     ta.addEventListener('input', function(){ domainsText = ta.value; });
     card.appendChild(ta);

@@ -75,6 +75,22 @@ body.sidebar-collapsed .sidebar .navgroup-label{display:none;}
 .navgroup{margin:0 0 .3rem;}
 .navgroup-label{font-size:.65rem; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);
   font-weight:700; padding:.9rem .6rem .35rem; white-space:nowrap;}
+
+/* A group heading that is also its collapse toggle. Docs sits below the
+   Settings group with a rule between them, so it reads as a sibling of Home
+   and Certificates rather than the sixth settings page. */
+.navgroup-toggle{display:flex; align-items:center; gap:.4rem; width:100%; font:inherit;
+  font-size:.65rem; letter-spacing:.12em; text-transform:uppercase; font-weight:700;
+  color:var(--faint); background:none; border:none; cursor:pointer; text-align:left;}
+.navgroup-toggle:hover{color:var(--text);}
+.navgroup-toggle .chev{width:.85rem; height:.85rem; transition:transform .15s;}
+.navgroup.collapsed .navgroup-toggle .chev{transform:rotate(-90deg);}
+.navgroup.collapsed .navgroup-items{display:none;}
+.navgroup-divided{margin-top:.45rem; padding-top:.45rem; border-top:1px solid var(--border);}
+/* Icon-only sidebar hides the group heading, and with it the toggle - so the
+   collapsed state must not apply there, or the settings icons would be
+   unreachable with nothing visible to expand them. */
+body.sidebar-collapsed .navgroup.collapsed .navgroup-items{display:block;}
 .navitem{display:flex; align-items:center; gap:.7rem; width:100%; text-align:left; font:inherit;
   font-size:.86rem; font-weight:600; color:var(--muted); cursor:pointer; text-decoration:none;
   padding:.5rem .6rem; border-radius:var(--radius-sm); border:1px solid transparent; background:none;
@@ -115,6 +131,9 @@ body.sidebar-collapsed .theme-picker select{display:none;}
   body:not(.sidebar-pinned-open) .sidebar .brand h1,
   body:not(.sidebar-pinned-open) .sidebar .navlabel,
   body:not(.sidebar-pinned-open) .sidebar .navgroup-label{display:none;}
+  /* Same reasoning as the desktop icon mode: no visible toggle means the
+     group cannot be allowed to stay shut. */
+  body:not(.sidebar-pinned-open) .navgroup.collapsed .navgroup-items{display:block;}
   body:not(.sidebar-pinned-open) .content{margin-left:var(--sidebar-w-collapsed);}
 }
 
@@ -272,6 +291,16 @@ td.deploy{white-space:nowrap;}
   background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);
   max-width:64rem; margin:0 0 1.3rem;}
 .card > .hint{max-width:52rem;}
+.card.wide{max-width:none;}
+
+/* The domains editor. A desktop tool with a whole monitor available should not
+   hand someone a postage stamp to edit their domain list in. It sits outside a
+   .field wrapper, so it needs its own sizing - which is also how it ended up
+   at the browser's ~20-column default the first time. */
+.domains-text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.85rem;
+  line-height:1.5; width:100%; min-height:24rem; color:var(--text); padding:.7rem .9rem;
+  resize:vertical; border:1px solid var(--border); border-radius:var(--radius-sm);
+  background:var(--bg); margin-top:.4rem;}
 
 .testrows{margin:.7rem 0 0; border:1px solid var(--border); border-radius:var(--radius-sm);
   background:var(--bg); overflow:hidden;}

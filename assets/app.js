@@ -226,6 +226,32 @@
     });
   })();
 
+  // --- The Settings nav group folds up ----------------------------------------- //
+  // Five sub-pages is a lot of sidebar for something visited occasionally.
+
+  (function(){
+    var KEY   = 'certcamel-navgroup-settings-collapsed';
+    var group = document.getElementById('navgroup-settings');
+    var btn   = document.getElementById('btn-settings-group');
+    if (!group || !btn) { return; }
+
+    function apply(collapsed){
+      group.classList.toggle('collapsed', collapsed);
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      localStorage.setItem(KEY, collapsed ? '1' : '0');
+    }
+
+    apply(localStorage.getItem(KEY) === '1');
+    btn.addEventListener('click', function(){
+      apply(!group.classList.contains('collapsed'));
+    });
+
+    // Landing on a settings page (deep link, refresh, the picker's "open
+    // settings" shortcut) unfolds the group - the active item must never be
+    // hidden inside a shut drawer.
+    CertCamel.expandSettingsGroup = function(){ apply(false); };
+  })();
+
   // --- Router ----------------------------------------------------------------- //
   // A view registers a render(sub) function, called every time its route becomes
   // active; "sub" is whatever followed the second slash (e.g. "authorities" in
@@ -255,6 +281,8 @@
 
     var container = document.getElementById('view-' + viewName);
     if (container) { container.classList.remove('hidden'); }
+
+    if (viewName === 'settings' && CertCamel.expandSettingsGroup) { CertCamel.expandSettingsGroup(); }
 
     var view = CertCamel.views[viewName];
     if (view && view.render) { view.render(r.sub); }
