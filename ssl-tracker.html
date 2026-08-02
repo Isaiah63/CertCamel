@@ -1760,9 +1760,12 @@ footer{margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--border); 
     nodesBox.placeholder = 'lb1 https://10.0.0.11:5555\nlb2 https://10.0.0.12:5555';
     nodesField.appendChild(nodesBox);
     nodesField.appendChild(el('p', 'hint',
-      'name, then the Data Plane API URL. Optionally a third value: the address to ' +
+      'name, then the Data Plane API base URL — host and port only, with no /v3 ' +
+      'or /v2 on the end. Optionally a third value: the address to ' +
       'verify against, if the site is not served from the same host as the API. ' +
-      'Verification always connects to each node directly, never through a VIP.'));
+      'That one may carry its own port (host:8443) when a node does not use the ' +
+      'group\'s verify port. Verification always connects to each node directly, ' +
+      'never through a VIP.'));
     card.appendChild(nodesField);
 
     var argHost = el('div', 'fields');
