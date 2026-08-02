@@ -329,6 +329,15 @@ td.deploy{padding-top:.55rem; padding-bottom:.55rem;}
 .modal-actions{display:flex; flex-wrap:wrap; gap:.5rem; justify-content:flex-end;
   margin-top:1.5rem; padding-top:1.1rem; border-top:1px solid var(--border);}
 
+/* Same bar on a page rather than in a dialog. Right-aligned is right for the
+   picker - a modal is only as wide as itself, so the buttons stay next to what
+   they act on. On the settings page the row is as wide as the content pane
+   while the cards stop at 64rem, which threw Save into the far corner with the
+   divider running out past it. Left-aligned, and capped to the card width so
+   the rule ends where the cards do. */
+.page-actions{display:flex; flex-wrap:wrap; gap:.5rem; justify-content:flex-start;
+  max-width:64rem; margin-top:1.5rem; padding-top:1.1rem; border-top:1px solid var(--border);}
+
 /* Settings sub-navigation - the same visual language as the old modal tabs,
    now a page-level nav rather than something stacked inside a dialog. */
 .subnav{display:flex; flex-wrap:wrap; gap:.35rem; margin:0 0 1.4rem;

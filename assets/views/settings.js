@@ -70,7 +70,7 @@
     statusLine.id = 'set-status';
     host.appendChild(statusLine);
 
-    var actions = el('div', 'modal-actions');
+    var actions = el('div', 'page-actions');
     var save = el('button', 'btn primary', 'Save');
     save.type = 'button';
     save.addEventListener('click', saveSettings);
