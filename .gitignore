@@ -29,6 +29,10 @@ jobs/
 # Posh-ACME, fetched by First Time Setup rather than vendored into the repo.
 lib/
 
+# Briefs written for a one-off model-assisted audit and redesign. Working notes
+# about the repository rather than any part of the tool.
+fable-prompt-*.md
+
 # Windows junk
 desktop.ini
 Thumbs.db
