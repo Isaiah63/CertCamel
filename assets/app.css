@@ -17,6 +17,11 @@
   --shadow:0 1px 2px rgba(17,24,39,.04), 0 10px 30px -14px rgba(17,24,39,.20);
   --radius:16px; --radius-sm:11px;
   --sidebar-w:15.5rem; --sidebar-w-collapsed:4.2rem;
+  /* Category-header band. Its own tokens rather than reusing --accent: that one
+     is tuned for gradients and borders, where contrast barely matters, and it
+     lands around 4.1:1 as small bold TEXT on the dark ground - under AA. These
+     are picked per theme to clear it comfortably. */
+  --group-bg:rgba(99,102,241,.055); --group-name:#4f46e5;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   color-scheme:dark;
@@ -28,6 +33,7 @@
   --green:#4ade80; --green-bg:rgba(34,197,94,.11);
   --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
   --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --group-bg:rgba(99,102,241,.10); --group-name:#a5b4fc;
   --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
 }}
 :root[data-theme="dark"]{
@@ -40,15 +46,26 @@
   --green:#4ade80; --green-bg:rgba(34,197,94,.11);
   --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
   --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --group-bg:rgba(99,102,241,.10); --group-name:#a5b4fc;
   --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
 }
 *{box-sizing:border-box;}
 html,body{height:100%;}
+
+/* Segoe UI Variable first: it ships with Windows 11 and has genuinely better
+   bold weights than static Segoe UI, which is what the old stack resolved to
+   here. "Text" is the optical size meant for body copy; "Display" (used on
+   headings below) is drawn for larger sizes. Both fall through to plain Segoe
+   UI on Windows 10 and to the platform default elsewhere, so nothing is
+   required to be installed - this is a preference, not a dependency. No
+   webfont: the app never fetches anything external. */
 body{margin:0; color:var(--text); background:var(--bg);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-family:"Segoe UI Variable Text","Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;
   background-image:radial-gradient(58rem 58rem at 6% -10%,var(--glow-1),transparent 60%),
     radial-gradient(48rem 48rem at 104% 2%,var(--glow-2),transparent 55%);
   background-attachment:fixed; -webkit-font-smoothing:antialiased; line-height:1.6;}
+h1,h2,h3,.brand h1{font-family:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",
+  -apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;}
 
 /* ------------------------------------------------------------------------- */
 /* Shell: fixed sidebar, scrolling content pane                             */
@@ -64,7 +81,7 @@ body.sidebar-collapsed .sidebar{flex-basis:var(--sidebar-w-collapsed); width:var
   padding:.34rem; border-radius:11px; color:var(--accent-2);
   border:1px solid var(--border-strong); background:var(--surface-solid); box-shadow:var(--shadow);}
 .sidebar .brand .mark svg{width:100%; height:100%; display:block;}
-.sidebar .brand h1{font-size:1.2rem; line-height:1.1; letter-spacing:-.02em; font-weight:850; margin:0;
+.sidebar .brand h1{font-size:1.2rem; line-height:1.1; letter-spacing:-.005em; font-weight:750; margin:0;
   white-space:nowrap; overflow:hidden;
   background:linear-gradient(135deg,var(--text) 38%,var(--accent) 145%);
   -webkit-background-clip:text; background-clip:text; color:transparent;}
@@ -160,12 +177,14 @@ h2 .rule{flex:1; height:1px; background:linear-gradient(90deg,var(--border),tran
   background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);}
 table{border-collapse:collapse; width:100%; min-width:34rem; font-size:.92rem;}
 th,td{text-align:left; padding:.7rem 1.1rem; border-bottom:1px solid var(--border); vertical-align:middle;}
-thead th{font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); font-weight:700;}
+/* Tracking on the small uppercase labels throughout: at .62-.72rem a bold face
+   sets the letters almost touching, which is most of what read as "squished". */
+thead th{font-size:.7rem; letter-spacing:.085em; text-transform:uppercase; color:var(--faint); font-weight:650;}
 tbody tr:last-child td{border-bottom:none;}
 td.n,th.n{text-align:right; font-variant-numeric:tabular-nums;}
-td.host{font-weight:650; white-space:nowrap;}
+td.host{font-weight:600; white-space:nowrap; letter-spacing:.005em;}
 td.host .port{color:var(--faint); font-weight:500;}
-td.days{font-weight:750;}
+td.days{font-weight:700; font-variant-numeric:tabular-nums;}
 td.dim{color:var(--muted); font-variant-numeric:tabular-nums;}
 td.issuer{color:var(--muted); font-size:.85rem;}
 .err{color:var(--muted); font-size:.85rem; font-style:italic;}
@@ -175,16 +194,20 @@ select.ca-pick{font:inherit; font-size:.8rem; color:var(--text);
   padding:.28rem .5rem; border:1px solid var(--border); border-radius:8px;
   background:var(--bg); max-width:14rem;}
 
-/* Category grouping */
-tr.grouphead td{background:var(--surface-solid); border-bottom:1px solid var(--border-strong);
-  padding-top:.75rem; padding-bottom:.55rem;}
-tr.grouphead .gname{font-size:.72rem; letter-spacing:.1em; text-transform:uppercase; font-weight:700;
-  color:var(--text);}
-tr.grouphead .gmeta{font-size:.75rem; color:var(--faint); font-weight:500; margin-left:.6rem;
+/* Category grouping. The header used to be var(--text) - the same colour as the
+   domain names directly under it - so case and size were doing all the work of
+   separating a label from data. It now gets its own colour and a marker rule,
+   which is what makes a group read as a band rather than as another row. */
+tr.grouphead td{background:var(--group-bg); border-bottom:1px solid var(--border-strong);
+  border-top:1px solid var(--border); padding-top:.85rem; padding-bottom:.6rem;
+  box-shadow:inset 3px 0 0 var(--group-name);}
+tr.grouphead .gname{font-size:.7rem; letter-spacing:.14em; text-transform:uppercase; font-weight:700;
+  color:var(--group-name);}
+tr.grouphead .gmeta{font-size:.75rem; color:var(--faint); font-weight:500; margin-left:.7rem;
   letter-spacing:0; text-transform:none;}
-tr.grouphead .gmeta.warn{color:var(--amber); font-weight:700;}
-tr.grouphead .gmeta.crit{color:var(--red); font-weight:700;}
-tbody tr.grouphead:first-child td{padding-top:.55rem;}
+tr.grouphead .gmeta.warn{color:var(--amber); font-weight:650;}
+tr.grouphead .gmeta.crit{color:var(--red); font-weight:650;}
+tbody tr.grouphead:first-child td{border-top:none; padding-top:.6rem;}
 
 /* Filter chips */
 .chips{display:flex; flex-wrap:wrap; gap:.45rem; margin:0 0 1rem;}
@@ -239,6 +262,31 @@ tr.gone td.days{color:var(--red);}
 
 td.acts{white-space:nowrap; text-align:right;}
 td.acts .btn{margin-left:.35rem;}
+
+/* Row actions menu. Renew stays a visible button; the rest live behind this.
+   position:FIXED, not absolute, and deliberately so: .tablewrap sets
+   overflow-x:auto, and per spec that computes overflow-y to auto as well, so an
+   absolutely-positioned menu inside a cell gets clipped by the wrapper. Fixed
+   escapes the clip; app.js positions it from the trigger's bounding rect and
+   closes it on scroll and resize, since fixed elements do not follow the page. */
+.menu-trigger{font:inherit; line-height:1; letter-spacing:.1em;}
+.rowmenu{position:fixed; z-index:60; min-width:14rem; padding:.35rem;
+  border:1px solid var(--border-strong); border-radius:var(--radius-sm);
+  background:var(--surface-solid); box-shadow:var(--shadow);}
+.rowmenu button{display:block; width:100%; text-align:left; font:inherit; font-size:.84rem;
+  color:var(--text); cursor:pointer; padding:.45rem .7rem; border:none; border-radius:8px;
+  background:none; white-space:nowrap;}
+.rowmenu button:hover{background:var(--group-bg);}
+.rowmenu a{display:block; font:inherit; font-size:.84rem; color:var(--text); text-decoration:none;
+  padding:.45rem .7rem; border-radius:8px; white-space:nowrap;}
+.rowmenu a:hover{background:var(--group-bg);}
+
+/* Visible keyboard focus. There was none anywhere in the app before this - an
+   oversight from the redesign, and one that matters more now there is a menu
+   meant to be driven from the keyboard. :focus-visible so a mouse click does
+   not leave a ring behind. */
+:focus-visible{outline:2px solid var(--group-name); outline-offset:2px; border-radius:4px;}
+.rowmenu button:focus-visible,.rowmenu a:focus-visible{outline-offset:-2px;}
 .badge{display:inline-block; font-size:.62rem; font-weight:700; letter-spacing:.06em;
   text-transform:uppercase; padding:.14rem .45rem; border-radius:999px; margin-left:.45rem;
   color:var(--amber); background:var(--amber-bg); border:1px solid var(--amber);}
@@ -248,8 +296,13 @@ td.acts .btn{margin-left:.35rem;}
    a floating VIP will happily serve the healthy node while its partner sits on
    a stale certificate until failover. */
 td.deploy{white-space:nowrap;}
-.pips{display:flex; flex-wrap:wrap; gap:.25rem;}
-.pip{font-size:.62rem; font-weight:700; letter-spacing:.03em; padding:.14rem .45rem;
+/* The pips and the "7 hours ago" control used to be bare siblings of the cell
+   with nothing between them, which is what read as squished. One flex column
+   with a real gap, and the row gets a little vertical room to sit in. */
+.deploy-stack{display:flex; flex-direction:column; align-items:flex-start; gap:.4rem;}
+td.deploy{padding-top:.55rem; padding-bottom:.55rem;}
+.pips{display:flex; flex-wrap:wrap; gap:.3rem;}
+.pip{font-size:.63rem; font-weight:700; letter-spacing:.06em; padding:.2rem .55rem;
   border-radius:999px; border:1px solid transparent; cursor:help;}
 .pip.good{color:var(--green); background:var(--green-bg); border-color:var(--green);}
 .pip.warn{color:var(--amber); background:var(--amber-bg); border-color:var(--amber);}
