@@ -109,7 +109,20 @@ $worker = {
         $client = $null
         $stream = $null
         try {
-            $client = New-Object Net.Sockets.TcpClient
+            # A parameterless TcpClient is IPv4-only on .NET Framework: it throws
+            # outright on an IPv6 literal ("none of the discovered or specified
+            # addresses match the socket address family") and, for a dual-stack
+            # name, only ever tries the A record - so a host that answers on AAAA
+            # alone looks unreachable. An IPv6 socket in dual mode reaches both,
+            # IPv4 arriving as ::ffff:x.x.x.x.
+            try {
+                $client = New-Object Net.Sockets.TcpClient([Net.Sockets.AddressFamily]::InterNetworkV6)
+                $client.Client.DualMode = $true
+            }
+            catch {
+                # IPv6 disabled at the OS level. Fall back rather than fail.
+                $client = New-Object Net.Sockets.TcpClient
+            }
             $client.ReceiveTimeout = $Timeout * 1000
             $client.SendTimeout    = $Timeout * 1000
 
