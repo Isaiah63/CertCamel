@@ -242,6 +242,11 @@ read but not change anything.</p>
 <p>Note the mode: <code>660</code>, not <code>666</code>. Anyone who can write to this socket can
 reconfigure your load balancer, so it should be owned by a group only HAProxy and the Data Plane
 API belong to.</p>
+<p>Two things to check before adding the line: distro packages often ship a
+<code>stats socket</code> line already (Debian and Ubuntu's uses <code>/run/haproxy/admin.sock</code>)
+&mdash; if one is there, add <code>level admin</code> to it rather than declaring a second socket.
+And the directory has to exist, or the reload fails to bind it; the packaged systemd unit creates
+<code>/run/haproxy</code> for you, so reuse that path if in doubt.</p>
 
 <h2 id="user">5. Create the API user &mdash; with a hashed password</h2>
 <p>The Data Plane API reads its credentials from a <code>userlist</code> in the HAProxy
@@ -277,7 +282,11 @@ frontend fe_https
   parses before reloading anything:</p>
   <p><code>haproxy -c -f /etc/haproxy/haproxy.cfg</code></p>
   <p>That validates the configuration without touching the running process. <code>Configuration file
-  is valid</code> means you are clear to reload.</p>
+  is valid</code> means you are clear to reload &mdash; and the reload is how the socket and
+  userlist from steps 4 and 5 actually take effect:</p>
+  <p><code>sudo systemctl reload haproxy</code></p>
+  <p>A reload is hitless: existing connections finish on the old process while new ones go to the
+  new one. Nothing drops.</p>
 </div>
 <p>The name after <code>userlist</code> &mdash; <code>dataplaneapi</code> here &mdash; is arbitrary,
 but it must match the <code>userlist:</code> value in the YAML in step 6. A mismatch there is the
@@ -457,6 +466,10 @@ curl -su certcamel:PASSWORD http://10.0.0.11:5555/v3/services/haproxy/configurat
 
 <span class="c"># should return a JSON array, possibly empty</span>
 curl -su certcamel:PASSWORD http://10.0.0.11:5555/v3/services/haproxy/storage/ssl_certificates</code></pre>
+<p>If you already enabled TLS in step 8, use <code>https://</code> with
+<code>--cacert ca.crt</code> (or <code>-k</code> for a quick check) &mdash; the
+<code>http://</code> form above will be <em>refused</em>, which is exactly what step 8 configured,
+not a fault to debug.</p>
 <p>If <code>/v3</code> gives a 404, try <code>/v2</code> &mdash; older builds serve that. Cert Camel
 probes both, so either is fine.</p>
 <div class="callout note">
@@ -528,18 +541,31 @@ the API which one it speaks. Nearly every example URL in HAProxy's documentation
 <code>/v3</code>, so this is an easy one to paste in by accident; Cert Camel strips a trailing
 version segment rather than building <code>/v3/v3/&hellip;</code> and reporting a 404 that reads
 like a missing endpoint.</p>
-<p>Fill in the username and password from step 5, set <em>Certificate filename on HAProxy</em> to
-match the name in your bind line or crt-list, then press <strong>Test</strong> &mdash; it reports
-per node, with the API version and the certificates each one can see. Then save, assign the group
-to a certificate on its row in the Certificates table, and press <strong>Deploy</strong>.</p>
+<p>Fill in the username and password from step 5. The two filename-related fields depend on which
+bind form you chose in step 10:</p>
+<ul>
+  <li><strong>Using a crt-list</strong> (the recommended form): put its path in <em>crt-list
+  path</em>, exactly as it appears on the bind line, and leave <em>Certificate filename on
+  HAProxy</em> at the default <code>{certId}.pem</code>. Each certificate gets its own stable
+  file, and Cert Camel appends the reference to the list itself the first time it pushes one the
+  list does not know.</li>
+  <li><strong>Using a plain <code>crt</code> line</strong>: leave <em>crt-list path</em> empty and
+  set <em>Certificate filename on HAProxy</em> to the exact name on the bind line &mdash; see the
+  warning below, because this is the one that bites silently.</li>
+</ul>
+<p>Then press <strong>Test</strong> &mdash; it reports per node, with the API version and the
+certificates each one can see. Then save, assign the group to a certificate on its row in the
+Certificates table, and press <strong>Deploy</strong>.</p>
 <div class="callout warn">
-  <div class="h">The filename must match what HAProxy actually binds</div>
-  <p>HAProxy knows a certificate by its path, so <em>Certificate filename on HAProxy</em> has to be
-  the exact name on your <code>crt</code> line or in your crt-list. If your bind line says
-  <code>crt /etc/haproxy/ssl/lab.pem</code>, the filename is <code>lab.pem</code> &mdash; not the
-  default <code>{certId}.pem</code>, and not the certificate's own name.</p>
+  <div class="h">Without a crt-list, the filename must match what HAProxy actually binds</div>
+  <p>HAProxy knows a certificate by its path, so on a plain <code>crt</code> bind line,
+  <em>Certificate filename on HAProxy</em> has to be the exact name that line references. If your
+  bind line says <code>crt /etc/haproxy/ssl/lab.pem</code>, the filename is <code>lab.pem</code>
+  &mdash; not the default <code>{certId}.pem</code>, and not the certificate's own name.</p>
   <p>Get it wrong and nothing looks wrong. The upload succeeds, the API reports success, and the
-  file lands in <code>ssl_certs_dir</code> under a name no bind line references.</p>
+  file lands in <code>ssl_certs_dir</code> under a name no bind line references. (With a crt-list
+  path configured this failure mode disappears: an unreferenced file gets appended to the list
+  rather than stranded.)</p>
   <p>The deployment log labels its checks, and this is the case that shows why there is more than
   one:</p>
   <ul>
@@ -606,7 +632,8 @@ machine and needs no configuration at all.</p>
         HAProxy mid-flight; retry.</td></tr>
     <tr><td>Upload succeeds, nothing changes</td>
         <td>The certificate went into <code>ssl_certs_dir</code>, but nothing references that path.
-        Check the bind line or crt-list actually points at the filename you uploaded.</td></tr>
+        Check the bind line or crt-list actually points at the filename you uploaded &mdash; or set
+        the group's <em>crt-list path</em> field, and Cert Camel appends the reference itself.</td></tr>
     <tr><td>Works, then reverts later</td>
         <td>Something is pushing over the Runtime API instead, or a config-management tool is
         rewriting the directory. Memory-only changes do not survive a reload.</td></tr>
