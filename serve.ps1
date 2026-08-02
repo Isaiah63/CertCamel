@@ -306,8 +306,7 @@ function Get-StateResponse {
     foreach ($c in @($grouping.certs)) {
         $assigned = @()
         if ($settings.certs -and $settings.certs.ContainsKey($c.certId)) {
-            $cfg = $settings.certs[$c.certId]
-            if ($cfg.ContainsKey('targets')) { $assigned = @($cfg.targets) }
+            $assigned = Get-CertTargetIds -CertConfig $settings.certs[$c.certId]
         }
         $last = $null
         $lastFile = Join-Path $script:JobsDir "deploy-$($c.certId).json"
@@ -407,13 +406,16 @@ function Invoke-SaveSettings {
         if (@($keptCas).Count -gt 0) {
             $liveCaIds = @($keptCas | ForEach-Object { $_.id })
             $store = Get-SecretStore
-            $removed = 0
+            $removedKeys = @()
             foreach ($key in @($store.Keys)) {
                 if ($key -notlike 'ca:*') { continue }
                 $owner = ($key -split ':')[1]
-                if ($liveCaIds -notcontains $owner) { $store.Remove($key); $removed++ }
+                if ($liveCaIds -notcontains $owner) { $store.Remove($key); $removedKeys += $key }
             }
-            if ($removed -gt 0) { Save-SecretStore $store }
+            if ($removedKeys.Count -gt 0) {
+                Save-SecretStore $store
+                Write-SecretAuditLog -Category 'certificate authority removed' -Keys $removedKeys
+            }
         }
 
         $settings.cas = $keptCas
@@ -481,14 +483,17 @@ function Invoke-SaveSettings {
             $knownProviderIds = @($settings.providers | ForEach-Object { $_.id })
 
             $store = Get-SecretStore
-            $removed = 0
+            $removedKeys = @()
             foreach ($key in @($store.Keys)) {
                 if ($key -like 'ca:*') { continue }
                 $owner = ($key -split ':')[0]
                 if ($knownProviderIds -notcontains $owner) { continue }
-                if ($liveIds -notcontains $owner) { $store.Remove($key); $removed++ }
+                if ($liveIds -notcontains $owner) { $store.Remove($key); $removedKeys += $key }
             }
-            if ($removed -gt 0) { Save-SecretStore $store }
+            if ($removedKeys.Count -gt 0) {
+                Save-SecretStore $store
+                Write-SecretAuditLog -Category 'DNS profile removed' -Keys $removedKeys
+            }
         }
 
         $settings.providers = $kept
@@ -540,16 +545,19 @@ function Invoke-SaveSettings {
         if (@($keptTargets).Count -gt 0) {
             $liveTargetIds = @($keptTargets | ForEach-Object { $_.id })
             $store = Get-SecretStore
-            $removed = 0
+            $removedKeys = @()
             foreach ($key in @($store.Keys)) {
                 if ($key -like 'ca:*') { continue }
                 $owner = ($key -split ':')[0]
                 # Only prune keys that clearly belong to a removed TARGET; DNS
                 # provider secrets are pruned by their own branch above.
                 $isTargetKey = @($settings.targets | ForEach-Object { $_.id }) -contains $owner
-                if ($isTargetKey -and $liveTargetIds -notcontains $owner) { $store.Remove($key); $removed++ }
+                if ($isTargetKey -and $liveTargetIds -notcontains $owner) { $store.Remove($key); $removedKeys += $key }
             }
-            if ($removed -gt 0) { Save-SecretStore $store }
+            if ($removedKeys.Count -gt 0) {
+                Save-SecretStore $store
+                Write-SecretAuditLog -Category 'load balancer group removed' -Keys $removedKeys
+            }
         }
 
         $settings.targets = $keptTargets
@@ -895,8 +903,7 @@ function Invoke-Route {
                 # Refuse early rather than spawning a job that will only fail.
                 $assigned = @()
                 if ($settings.certs -and $settings.certs.ContainsKey($cl)) {
-                    $cfg = $settings.certs[$cl]
-                    if ($cfg.ContainsKey('targets')) { $assigned = @($cfg.targets) }
+                    $assigned = Get-CertTargetIds -CertConfig $settings.certs[$cl]
                 }
                 if (-not $assigned.Count) {
                     Send-Error $Stream 400 "'$c' has no deployment target assigned. Pick one on its row first."
@@ -1061,6 +1068,42 @@ function Invoke-Route {
             if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
             $id = Start-ChildJob -Kind 'check' -ScriptArgs @((Join-Path $PSScriptRoot 'check-ssl.ps1'))
             Send-Json $Stream @{ jobId = $id }
+            return
+        }
+
+        '^/api/domains$' {
+            if ($Request.Method -eq 'GET') {
+                # ReadAllText, NOT Get-Content -Raw. Get-Content attaches
+                # NoteProperties (PSPath, PSDrive, PSProvider...) to the string
+                # it returns, and PS 5.1's ConvertTo-Json serialises them -
+                # PSDrive leads into the session-state object graph, and at
+                # -Depth 10 that walk is effectively unbounded. The symptom is
+                # Send-Json "hanging" on a one-line file, which wedges the whole
+                # single-threaded server. ReadAllText returns a bare string.
+                $content = if (Test-Path $script:DomainsFile) { [IO.File]::ReadAllText($script:DomainsFile, [Text.Encoding]::UTF8) } else { '' }
+                Send-Json $Stream @{ content = $content }
+                return
+            }
+            if ($Request.Method -eq 'POST') {
+                if (-not $payload -or -not $payload.PSObject.Properties['content']) {
+                    Send-Error $Stream 400 'Missing "content".'
+                    return
+                }
+                $content = [string]$payload.content
+                # Loopback-and-token protected already, so this is a size sanity
+                # check rather than a security boundary - nothing legitimate
+                # approaches this, and it catches a pasted-the-wrong-thing accident
+                # before it overwrites the real list.
+                if ($content.Length -gt 2mb) {
+                    Send-Error $Stream 400 'That is far larger than a domain list should be.'
+                    return
+                }
+                try { Write-TextFileAtomic -Path $script:DomainsFile -Content $content }
+                catch { Send-Error $Stream 500 "Could not save domains.txt: $($_.Exception.Message)"; return }
+                Send-Json $Stream @{ ok = $true }
+                return
+            }
+            Send-Error $Stream 405 'Use GET or POST.'
             return
         }
 

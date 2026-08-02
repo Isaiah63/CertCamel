@@ -26,6 +26,8 @@ $script:SettingsFile = Join-Path $script:Root 'settings.json'
 $script:SecretsFile  = Join-Path $script:Root 'secrets.xml'
 $script:ZonesFile    = Join-Path $script:Root 'zones.json'
 $script:AlertStateFile = Join-Path $script:Root 'alert-state.json'
+$script:DomainsFile  = Join-Path $script:Root 'domains.txt'
+$script:SecretAuditFile = Join-Path $script:Root 'secrets-audit.log'
 $script:LibDir       = Join-Path $script:Root 'lib'
 $script:AcmeState    = Join-Path $script:Root 'acme-state'
 $script:CertsDir     = Join-Path $script:Root 'certs'
@@ -106,6 +108,24 @@ function New-TrackerDirectories {
     foreach ($d in @($script:LibDir, $script:AcmeState, $script:CertsDir, $script:JobsDir)) {
         if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
     }
+}
+
+function Get-CertTargetIds {
+    <#
+      The per-certificate target assignment, read defensively. PS 5.1's
+      ConvertTo-Json unwraps a one-element array to a bare scalar on every
+      settings round-trip, so on disk this field has been seen as a real array,
+      a lone string, and - after enough cycles - an empty object. Normalise to
+      an array of non-empty strings here, once, instead of every caller
+      re-discovering a shape the hard way. (The symptom that forced this was a
+      deploy skipping its target with "Target 'System.Collections.Hashtable' is
+      no longer configured".)
+    #>
+    param($CertConfig)
+
+    if (-not $CertConfig) { return @() }
+    if ($CertConfig -is [hashtable] -and -not $CertConfig.ContainsKey('targets')) { return @() }
+    return @(@($CertConfig.targets) | Where-Object { ($_ -is [string]) -and $_ })
 }
 
 # PowerShell 5.1 has no ConvertFrom-Json -AsHashtable, and PSCustomObject is
@@ -328,6 +348,33 @@ function Save-SecretStore {
     $tmp = "$($script:SecretsFile).tmp"
     $Store | Export-Clixml -Path $tmp -Force
     Move-Item -Path $tmp -Destination $script:SecretsFile -Force
+}
+
+function Write-SecretAuditLog {
+    <#
+      A persistent, append-only record of every secret a settings save removes,
+      separate from the server's console output. The console window closes or
+      scrolls away; this survives a restart and a support request. Never
+      records a value - only which key, why, and when - the key names
+      themselves are ids ("p1a2b3c4:CFToken"), not secrets.
+
+      Deliberately scoped to pruning, not every write: a save that legitimately
+      sets a new password is not the failure mode this exists to catch. It is
+      a credential vanishing with nothing to explain why - which has happened
+      twice in this codebase already, both times from a prune loop.
+    #>
+    param([string]$Category, [string[]]$Keys)
+
+    if (-not $Keys -or -not @($Keys).Count) { return }
+
+    $line = "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] pruned $(@($Keys).Count) secret(s) ($Category): $($Keys -join ', ')"
+    try {
+        [IO.File]::AppendAllText($script:SecretAuditFile, $line + "`r`n", [Text.Encoding]::UTF8)
+    }
+    catch {
+        # A logging failure must not be why a settings save fails.
+        Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [warn] Could not write to secrets-audit.log: $(($_.Exception.Message -split "`n")[0].Trim())"
+    }
 }
 
 # Secrets are keyed "<providerId>:<argName>" so one provider can hold several.
@@ -1282,7 +1329,7 @@ function Get-CertificateGroups {
                 # Which load balancers this certificate belongs on. Empty means
                 # issued but never deployed, which the page states outright
                 # rather than leaving as a blank column.
-                if ($override.ContainsKey('targets') -and $override.targets) { $targets = @($override.targets) }
+                $targets = Get-CertTargetIds -CertConfig $override
                 # "Managed elsewhere": still watched, never renewed from here. A
                 # domain someone else auto-renews is worth watching precisely so
                 # you find out when that automation stops - but issuing a second
@@ -1475,7 +1522,7 @@ $script:TargetCatalog = @{
             @{ Name = 'remoteName'; Label = 'Certificate filename on HAProxy'; Secret = $false; Type = 'text'
                Hint  = 'Inside the Data Plane API ssl_certs_dir. Leave blank for "<cert>.pem". This is the certificate IDENTITY to HAProxy - it must never change between renewals, so no dates in it.' }
             @{ Name = 'crtList';  Label = 'crt-list path (optional)'; Secret = $false; Type = 'text'
-               Hint  = 'e.g. /etc/hapee-3.0/crt-list.txt. Only needed to add a certificate HAProxy has never loaded; renewals of an existing one do not use it.' }
+               Hint  = 'e.g. /etc/haproxy/ssl/crt-list.txt, exactly as it appears on the bind line. When set, a pushed certificate the list does not reference yet is appended and hot-loaded, so a brand-new certificate starts serving without a config edit. Must live inside ssl_certs_dir.' }
             @{ Name = 'verifyPort'; Label = 'Port to verify on'; Secret = $false; Type = 'text'
                Hint  = 'Usually 443. Verification connects to each node here and reads what it actually serves.' }
             @{ Name = 'insecureTls'; Label = 'Skip TLS verification of the API endpoint'; Secret = $false; Type = 'bool'
@@ -1832,6 +1879,100 @@ function Push-CertificateToNode {
         }
 
         if (-not $out.storedName) { $out.storedName = $RemoteName }
+        $out.ok = $true
+    }
+    catch { $out.error = ($_.Exception.Message -split "`n")[0].Trim() }
+
+    return $out
+}
+
+function Sync-HAProxyCrtList {
+    <#
+      Make sure a pushed certificate is referenced by the node's crt-list, so a
+      brand-new certificate starts being served without anyone editing HAProxy
+      config. Without this, uploading a file HAProxy has never heard of is a
+      push into the void: the API says 200, the file sits in ssl_certs_dir, and
+      no bind line ever reads it - T1 green, T3 red, and nothing in between
+      explains why.
+
+      Everything here was verified against a live Data Plane API rather than
+      taken from the docs:
+
+        - A crt-list is addressed by its storage_name (the basename), not its
+          path - the same name-mangling family as certificate uploads.
+        - Appending an entry is one POST to storage/.../entries with
+          {file: <full path>}. It appends, never prepends, which matters
+          because the FIRST entry is what unmatched SNI falls back to.
+        - The storage POST alone triggers the API's reload pipeline; the
+          running process picks the entry up within a few seconds. Do NOT also
+          call the runtime entries endpoint - that stacks a second, duplicate
+          entry on top of the one the reload just loaded.
+        - The runtime entries listing reflects the live process, so polling it
+          is the proof the entry is actually being served from, not just
+          written to disk.
+    #>
+    param(
+        [string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion,
+        # The crt-list path exactly as it appears on the node's bind line.
+        [string]$CrtListPath,
+        # The certificate's storage name on the node (after any dot rewriting).
+        [string]$CertStorageName,
+        [switch]$InsecureTls,
+        [int]$LoadTimeoutSeconds = 15
+    )
+
+    $out = @{ ok = $false; action = $null; runtimeLoaded = $false; error = $null }
+
+    try {
+        # Which storage object is that path? The API only manages crt-lists
+        # inside ssl_certs_dir, so a path outside it simply will not be here.
+        $lists = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                     -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists" -InsecureTls:$InsecureTls)
+        $list = @($lists | Where-Object { $_.file -eq $CrtListPath }) | Select-Object -First 1
+        if (-not $list) {
+            $known = (@($lists | ForEach-Object { $_.file }) -join ', ')
+            throw "The Data Plane API does not manage a crt-list at '$CrtListPath'.$(if ($known) { " It manages: $known." } else { ' It manages none - the crt-list must live inside ssl_certs_dir.' })"
+        }
+        $storageName = [string]$list.storage_name
+
+        # The full path the entry must carry. Read it from the certificate's own
+        # storage record rather than assembling it, falling back to "same
+        # directory as the crt-list" only when the record does not say.
+        $certPath = $null
+        $certs = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                     -Path "/$ApiVersion/services/haproxy/storage/ssl_certificates" -InsecureTls:$InsecureTls)
+        $rec = @($certs | Where-Object { $_.storage_name -eq $CertStorageName }) | Select-Object -First 1
+        if ($rec -and $rec.file) { $certPath = [string]$rec.file }
+        else { $certPath = ($CrtListPath -replace '/[^/]+$', '') + '/' + $CertStorageName }
+
+        $entries = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                       -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists/$storageName/entries" -InsecureTls:$InsecureTls)
+        if (@($entries | Where-Object { $_.file -eq $certPath }).Count) {
+            $out.action = 'present'
+        }
+        else {
+            [void](Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password -Method 'POST' `
+                     -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists/$storageName/entries" `
+                     -Body (@{ file = $certPath } | ConvertTo-Json -Compress) -InsecureTls:$InsecureTls)
+            $out.action = 'added'
+        }
+
+        # Disk is not serving; the running process is. Poll the runtime list
+        # until the entry lands (the reload takes a couple of seconds) so the
+        # caller's T3 check that follows is not racing the reload.
+        $listEnc  = [Uri]::EscapeDataString($CrtListPath)
+        $deadline = (Get-Date).AddSeconds($LoadTimeoutSeconds)
+        do {
+            $rt = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                      -Path "/$ApiVersion/services/haproxy/runtime/ssl_crt_lists/entries?name=$listEnc" -InsecureTls:$InsecureTls)
+            if (@($rt | Where-Object { $_.file -eq $certPath }).Count) { $out.runtimeLoaded = $true; break }
+            Start-Sleep -Seconds 2
+        } while ((Get-Date) -lt $deadline)
+
+        if (-not $out.runtimeLoaded) {
+            throw "The crt-list file now references '$certPath', but the running process has not loaded it after $LoadTimeoutSeconds seconds - disk and memory have diverged. A reload on the node should reconcile them."
+        }
+
         $out.ok = $true
     }
     catch { $out.error = ($_.Exception.Message -split "`n")[0].Trim() }
