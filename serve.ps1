@@ -345,6 +345,21 @@ function Get-StateResponse {
             })
             providers   = @($providers)
             targets     = @($targetsOut)
+            alerts      = @{
+                smtp = @{
+                    host = $settings.alerts.smtp.host; port = $settings.alerts.smtp.port
+                    encryption = $settings.alerts.smtp.encryption; from = $settings.alerts.smtp.from
+                    to = @($settings.alerts.smtp.to); authRequired = [bool]$settings.alerts.smtp.authRequired
+                    username = $settings.alerts.smtp.username
+                    # Whether a password is stored, never the password itself -
+                    # the same rule every other credential in this file follows.
+                    passwordSet = [bool](Test-TrackerSecret -Key 'alerts:smtpPassword')
+                }
+                expiry             = @{ enabled = [bool]$settings.alerts.expiry.enabled; thresholds = @($settings.alerts.expiry.thresholds) }
+                renewalSuccess     = @{ enabled = [bool]$settings.alerts.renewalSuccess.enabled }
+                deploymentFailure  = @{ enabled = [bool]$settings.alerts.deploymentFailure.enabled }
+                monthlySummary     = @{ enabled = [bool]$settings.alerts.monthlySummary.enabled }
+            }
         }
         catalog       = $catalogOut
         targetCatalog = $targetCatalogOut
@@ -524,7 +539,6 @@ function Invoke-SaveSettings {
         # bug than a deliberate "delete every credential".
         if (@($keptTargets).Count -gt 0) {
             $liveTargetIds = @($keptTargets | ForEach-Object { $_.id })
-            $knownTypes    = @($script:TargetCatalog.Keys)
             $store = Get-SecretStore
             $removed = 0
             foreach ($key in @($store.Keys)) {
@@ -539,6 +553,64 @@ function Invoke-SaveSettings {
         }
 
         $settings.targets = $keptTargets
+    }
+
+    if ($Payload.PSObject.Properties['alerts'] -and $null -ne $Payload.alerts) {
+        $al   = $Payload.alerts
+        $smtp = $(if ($al.PSObject.Properties['smtp']) { $al.smtp } else { $null })
+
+        $toList = @()
+        if ($smtp -and $smtp.PSObject.Properties['to']) {
+            $toList = @(@($smtp.to) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+        }
+
+        $expiryOn  = [bool]($al.PSObject.Properties['expiry']            -and $al.expiry.enabled)
+        $renewOn   = [bool]($al.PSObject.Properties['renewalSuccess']    -and $al.renewalSuccess.enabled)
+        $failOn    = [bool]($al.PSObject.Properties['deploymentFailure'] -and $al.deploymentFailure.enabled)
+        $monthlyOn = [bool]($al.PSObject.Properties['monthlySummary']    -and $al.monthlySummary.enabled)
+        $anyOn     = $expiryOn -or $renewOn -or $failOn -or $monthlyOn
+
+        if ($anyOn -and (-not $smtp -or -not $smtp.host)) { throw "An SMTP host is required to send any alert." }
+        if ($anyOn -and -not $toList.Count)                { throw "At least one alert recipient is required to send any alert." }
+
+        # Blank means "keep what is stored", same rule as every other credential
+        # here. This key is fixed rather than per-id (there is only ever one SMTP
+        # profile), so unlike CAs, DNS profiles and targets it has nothing to
+        # prune - there is no list an id can fall out of.
+        if ($smtp -and $smtp.PSObject.Properties['password'] -and $smtp.password) {
+            Set-TrackerSecret -Key 'alerts:smtpPassword' -Value ([string]$smtp.password)
+        }
+
+        $thresholds = @()
+        if ($al.PSObject.Properties['expiry'] -and $al.expiry.PSObject.Properties['thresholds']) {
+            $thresholds = @(@($al.expiry.thresholds) | ForEach-Object { [int]$_ } | Where-Object { $_ -ge 0 } |
+                             Sort-Object -Descending -Unique)
+        }
+        if (-not $thresholds.Count) { $thresholds = @(30, 14, 7) }
+
+        # Only two real values exist (see Send-AlertEmail for why "ssl" is not
+        # one of them). Anything else - a stale client, a hand-made request -
+        # normalises to the encrypted default rather than being trusted as-is,
+        # so a typo here fails toward "still encrypted" and not toward "silently
+        # sends in the clear".
+        $enc = $(if ($smtp) { [string]$smtp.encryption } else { '' })
+        if ($enc -ne 'none') { $enc = 'starttls' }
+
+        $settings.alerts = @{
+            smtp = @{
+                host         = $(if ($smtp) { [string]$smtp.host } else { '' })
+                port         = $(if ($smtp -and $smtp.port) { [int]$smtp.port } else { 587 })
+                encryption   = $enc
+                from         = $(if ($smtp) { [string]$smtp.from } else { '' })
+                to           = $toList
+                authRequired = [bool]($smtp -and $smtp.authRequired)
+                username     = $(if ($smtp) { [string]$smtp.username } else { '' })
+            }
+            expiry             = @{ enabled = $expiryOn;  thresholds = $thresholds }
+            renewalSuccess     = @{ enabled = $renewOn }
+            deploymentFailure  = @{ enabled = $failOn }
+            monthlySummary     = @{ enabled = $monthlyOn }
+        }
     }
 
     Save-TrackerSettings -Settings $settings
@@ -677,6 +749,39 @@ function Invoke-Route {
         # page shows its own "no data" state rather than a script error.
         $js = if (Test-Path $file) { Get-Content $file -Raw -Encoding UTF8 } else { 'window.SSL_DATA = null;' }
         Send-Response -Stream $Stream -ContentType $script:Mime['.js'] -Body ([Text.Encoding]::UTF8.GetBytes($js))
+        return
+    }
+
+    if ($path.StartsWith('/assets/')) {
+        # Every other static route above is an exact, hardcoded path - this is
+        # the first one built from what the client asked for, so it is the
+        # first one that needs a real traversal guard rather than just a
+        # lookup. Resolve to a full path and require it land inside the assets
+        # directory; ".." or an absolute path either fails to resolve under it
+        # or gets caught by the prefix check below.
+        $assetsRoot = Join-Path $PSScriptRoot 'assets'
+        $relative   = $path.Substring('/assets/'.Length) -replace '/', '\'
+        $requested  = Join-Path $assetsRoot $relative
+
+        $full = $null
+        try { $full = [IO.Path]::GetFullPath($requested) } catch { }
+        # A trailing separator on the root, not a bare prefix check: without it
+        # "...\assets-evil\file" passes a StartsWith("...\assets") test, because
+        # the string "assets-evil" itself starts with "assets". Appending the
+        # separator makes the only way to match "the assets folder, or a real
+        # child of it" - a sibling directory that merely shares the prefix
+        # cannot satisfy it.
+        $rootFull = [IO.Path]::GetFullPath($assetsRoot).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+
+        if (-not $full -or -not $full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $full -PathType Leaf)) {
+            Send-Error $Stream 404 'Not found.'
+            return
+        }
+
+        $ext = [IO.Path]::GetExtension($full).ToLowerInvariant()
+        $ct  = if ($script:Mime.ContainsKey($ext)) { $script:Mime[$ext] } else { 'application/octet-stream' }
+        Send-Response -Stream $Stream -ContentType $ct -Body ([IO.File]::ReadAllBytes($full))
         return
     }
 
@@ -935,6 +1040,18 @@ function Invoke-Route {
                     writes    = @($writes)
                     errors    = @($errors)
                 }
+            }
+            catch { Send-Error $Stream 400 $_.Exception.Message }
+            return
+        }
+
+        '^/api/settings/test-email$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+            try {
+                $settings = Get-TrackerSettings
+                Send-AlertEmail -Settings $settings -Subject 'Cert Camel test email' `
+                    -Body "This is a test message from Cert Camel, sent $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')).`r`n`r`nIf this arrived, alerts are configured correctly."
+                Send-Json $Stream @{ ok = $true }
             }
             catch { Send-Error $Stream 400 $_.Exception.Message }
             return
