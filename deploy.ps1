@@ -70,12 +70,37 @@ function Save-Outcome {
 # The address to connect to for verification. Defaults to the host part of the
 # Data Plane API URL, since the API and the served site are normally the same
 # machine - but a node can override it when they differ.
-function Resolve-VerifyHost {
-    param($Node)
+#
+# The override may carry its own port ("lb1.internal:8443"), which wins over the
+# group's verify port. Nodes usually all serve on the same port and the group
+# setting is the right place for it; the exception is reaching each node through
+# a separate forward, where every node answers on a different local port. Without
+# a per-node port those setups cannot verify each node individually at all - and
+# checking them one at a time is the whole point of T3.
+function Resolve-VerifyTarget {
+    param($Node, [int]$DefaultPort)
 
-    if ($Node.PSObject.Properties['verifyHost'] -and $Node.verifyHost) { return [string]$Node.verifyHost }
-    if ($Node -is [hashtable] -and $Node.ContainsKey('verifyHost') -and $Node.verifyHost) { return [string]$Node.verifyHost }
-    try { return ([Uri]$Node.url).Host } catch { return $null }
+    $override = $null
+    if ($Node.PSObject.Properties['verifyHost'] -and $Node.verifyHost) {
+        $override = [string]$Node.verifyHost
+    }
+    elseif ($Node -is [hashtable] -and $Node.ContainsKey('verifyHost') -and $Node.verifyHost) {
+        $override = [string]$Node.verifyHost
+    }
+
+    if ($override) {
+        # Split a trailing :port off, but leave a bare IPv6 literal alone - it is
+        # colons all the way down, and "::1" is a host, not a host and a port.
+        $m = [regex]::Match($override.Trim(), '^(?<h>\[[^\]]+\]|[^:]+):(?<p>\d+)$')
+        if ($m.Success) {
+            return @{ host = $m.Groups['h'].Value.Trim('[', ']'); port = [int]$m.Groups['p'].Value }
+        }
+        return @{ host = $override.Trim(); port = $DefaultPort }
+    }
+
+    $h = $null
+    try { $h = ([Uri]$Node.url).Host } catch { }
+    return @{ host = $h; port = $DefaultPort }
 }
 
 try {
@@ -127,6 +152,15 @@ try {
             }
 
             # --- T0: never push a bundle that is broken ------------------- #
+            # The tier labels are worth keeping - they are short enough to grep
+            # for and to quote in a bug report - but they mean nothing to anyone
+            # reading this log for the first time. Spell them out once per run,
+            # rather than annotating each line and repeating it per node per
+            # certificate.
+            if (-not $script:LegendShown) {
+                Write-Log "Checks: T0 the bundle is valid | T1 the node's API accepted it | T3 the node is really serving it"
+                $script:LegendShown = $true
+            }
             Write-Log "T0  validating the bundle..."
             $pre = Test-CertificateBundle -Path $pemPath -ExpectedNames @($cert.names)
             $entry.preflight = $pre
@@ -137,7 +171,7 @@ try {
             }
             if (-not $pre.ok) { throw "Pre-flight failed; nothing was pushed. $($pre.errors -join '; ')" }
 
-            Write-Log "T0  ok - serial $($pre.serial), expires $(([datetime]$pre.notAfter).ToString('yyyy-MM-dd'))" 'ok'
+            Write-Log "T0  ok - bundle valid, serial $($pre.serial), expires $(([datetime]$pre.notAfter).ToString('yyyy-MM-dd'))" 'ok'
             $pem = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($pemPath))
 
             # --- which targets -------------------------------------------- #
@@ -175,9 +209,10 @@ try {
                     # Resolve the verification address here, while the node
                     # object is in hand, so T3 does not have to match nodes back
                     # up by name afterwards.
+                    $vt = Resolve-VerifyTarget -Node $node -DefaultPort $port
                     $nResult = @{
                         name = $nodeName; url = $node.url; push = $null; verify = @()
-                        verifyHost = (Resolve-VerifyHost -Node $node); verifyPort = $port
+                        verifyHost = $vt.host; verifyPort = $vt.port
                     }
 
                     # --- T1: transport ------------------------------------ #
@@ -186,8 +221,18 @@ try {
                                 -RemoteName $remoteName -PemContent $pem -InsecureTls:$insecure
                     $nResult.push = $push
 
-                    if ($push.ok) { Write-Log "  $nodeName : T1 ok ($($push.action), API $($push.apiVersion))" 'ok' }
-                    else          { Write-Log "  $nodeName : T1 FAILED - $($push.error)" 'error' }
+                    if ($push.ok) {
+                        Write-Log "  $nodeName : T1 ok - upload accepted ($($push.action), API $($push.apiVersion))" 'ok'
+                        # The API rewrites dots in a filename to underscores, so
+                        # the name on disk is often not the name that was asked
+                        # for. HAProxy loads certificates by path, so the bind
+                        # line has to use the real one - say so plainly rather
+                        # than letting T3 fail later with no explanation.
+                        if ($push.renamed) {
+                            Write-Log "  $nodeName : stored as '$($push.storedName)', not '$($push.remoteName)' - your bind line or crt-list must reference '$($push.storedName)'" 'warn'
+                        }
+                    }
+                    else { Write-Log "  $nodeName : T1 FAILED - upload rejected - $($push.error)" 'error' }
 
                     $tResult.nodes += $nResult
                 }
@@ -204,9 +249,24 @@ try {
                 # push stays invisible until failover - exactly when it hurts.
                 Write-Log "T3  checking what each node serves (expecting serial $($pre.serial))..."
 
-                # Wildcards cannot be requested as an SNI name; use the apex the
-                # wildcard certificate also carries.
-                $sniNames = @(@($cert.names) | ForEach-Object { if ($_ -like '*.*' -and $_.StartsWith('*.')) { $_.Substring(2) } else { $_ } } | Select-Object -Unique)
+                # A wildcard cannot be sent as an SNI name, so it has to be
+                # probed by proxy. The apex is the obvious stand-in, but only
+                # when the certificate actually carries it: "*.example.com" does
+                # NOT match a bare "example.com", so probing the apex against a
+                # wildcard-only certificate asks for a name it does not cover and
+                # fails a deployment that worked perfectly. Where the apex is
+                # absent, use a subdomain the wildcard does match, distinctive
+                # enough not to collide with a real host that has its own cert.
+                $sniNames = @()
+                foreach ($n in @($cert.names)) {
+                    if ($n.StartsWith('*.')) {
+                        $apex = $n.Substring(2)
+                        if (@($cert.names) -contains $apex) { $sniNames += $apex }
+                        else                                { $sniNames += "certcamel-probe.$apex" }
+                    }
+                    else { $sniNames += $n }
+                }
+                $sniNames = @($sniNames | Select-Object -Unique)
 
                 foreach ($t in $entry.targets) {
                     foreach ($n in $t.nodes) {
