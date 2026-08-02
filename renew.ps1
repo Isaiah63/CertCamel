@@ -336,8 +336,7 @@ try {
                 $certTargets = @($TargetList)
             }
             elseif ($settings.certs -and $settings.certs.ContainsKey($certId)) {
-                $cfg = $settings.certs[$certId]
-                if ($cfg.ContainsKey('targets')) { $certTargets = @($cfg.targets) }
+                $certTargets = Get-CertTargetIds -CertConfig $settings.certs[$certId]
             }
 
             if (-not $certTargets.Count) {

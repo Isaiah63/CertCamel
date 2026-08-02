@@ -136,7 +136,7 @@ try {
         foreach ($cert in @($grouping.certs)) {
             $cfg = $null
             if ($settings.certs -and $settings.certs.ContainsKey($cert.certId)) { $cfg = $settings.certs[$cert.certId] }
-            if ($cfg -and $cfg.ContainsKey('targets') -and @($cfg.targets).Count) { $planned += $cert }
+            if (@(Get-CertTargetIds -CertConfig $cfg).Count) { $planned += $cert }
         }
         if (-not $planned.Count) { throw "No certificate has a deployment target configured." }
     }
@@ -183,8 +183,7 @@ try {
             # --- which targets -------------------------------------------- #
             $targetIds = @()
             if ($settings.certs -and $settings.certs.ContainsKey($certId)) {
-                $cfg = $settings.certs[$certId]
-                if ($cfg.ContainsKey('targets')) { $targetIds = @($cfg.targets) }
+                $targetIds = Get-CertTargetIds -CertConfig $settings.certs[$certId]
             }
             # A run-time selection replaces the stored assignment outright rather
             # than filtering it, so a newly added group can be deployed to before
@@ -206,6 +205,7 @@ try {
 
                 $remoteName = Get-TargetArg -Target $target -Name 'remoteName' -Default "$certId.pem"
                 $remoteName = $remoteName.Replace('{certId}', $certId)
+                $crtListPath = [string](Get-TargetArg -Target $target -Name 'crtList' -Default '')
 
                 Write-Log "Target: $($target.label)  ->  $remoteName"
 
@@ -237,13 +237,39 @@ try {
                         if ($push.renamed) {
                             Write-Log "  $nodeName : stored as '$($push.storedName)', not '$($push.remoteName)' - your bind line or crt-list must reference '$($push.storedName)'" 'warn'
                         }
+
+                        # With a crt-list configured, make sure this certificate
+                        # is actually referenced by it - the step that lets a
+                        # BRAND-NEW certificate start serving with no config
+                        # edit. Runs on replacements too: it is a cheap check
+                        # when the entry already exists, and it heals a file
+                        # that was pushed before the crt-list was configured.
+                        if ($crtListPath) {
+                            $sync = Sync-HAProxyCrtList -BaseUrl $node.url -User $user -Password $password `
+                                        -ApiVersion $push.apiVersion -CrtListPath $crtListPath `
+                                        -CertStorageName $push.storedName -InsecureTls:$insecure
+                            $nResult.crtList = $sync
+                            if ($sync.ok) {
+                                if ($sync.action -eq 'added') {
+                                    Write-Log "  $nodeName : crt-list ok - appended $($push.storedName), and the running process loaded it" 'ok'
+                                } else {
+                                    Write-Log "  $nodeName : crt-list ok - already referenced"
+                                }
+                            }
+                            else { Write-Log "  $nodeName : crt-list FAILED - $($sync.error)" 'error' }
+                        }
                     }
                     else { Write-Log "  $nodeName : T1 FAILED - upload rejected - $($push.error)" 'error' }
 
                     $tResult.nodes += $nResult
                 }
 
-                $tResult.ok = (@($tResult.nodes | Where-Object { -not $_.push.ok }).Count -eq 0)
+                # A failed crt-list sync fails the node just like a failed push:
+                # a certificate nothing references is not deployed, however
+                # cleanly it uploaded.
+                $tResult.ok = (@($tResult.nodes | Where-Object {
+                    (-not $_.push.ok) -or ($_.ContainsKey('crtList') -and -not $_.crtList.ok)
+                }).Count -eq 0)
                 $entry.targets += $tResult
             }
 

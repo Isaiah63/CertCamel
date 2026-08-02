@@ -20,6 +20,101 @@
     return d === null || d <= RENEW_DAYS;
   }
 
+  // Edits domains.txt in the browser rather than requiring a text editor and a
+  // trip back to this folder. Collapsed by default - it is not needed on every
+  // visit, and a raw textarea sitting open above the certificate table would
+  // fight the table for attention.
+  //
+  // render() rebuilds this view's whole DOM from scratch on every visit AND
+  // whenever server state changes underneath it - a background job finishing
+  // is enough to trigger that. Module-level state, not a render-local
+  // variable, is what lets an in-progress edit survive that rebuild: a job
+  // completing while someone is mid-edit here must not silently discard what
+  // they typed, the same reasoning the settings pages already apply to
+  // switching between panels.
+  var domainsOpen    = false;
+  var domainsText     = null;   // last known content; null until first load completes
+  var domainsLoading  = false;
+
+  function buildDomainsEditor(toggleBtn){
+    var card = el('div', 'card' + (domainsOpen ? '' : ' hidden'));
+    card.appendChild(el('h4', null, 'domains.txt'));
+    card.appendChild(el('p', 'hint',
+      'One host per line. A line like "[Category Name]" groups everything below it until the ' +
+      'next one; lines before the first header are Uncategorized. "#" starts a comment. ' +
+      'Certificates are grouped by DNS zone, so a new hostname joins the right certificate on ' +
+      'its own - no other setup needed here.'));
+
+    var ta = document.createElement('textarea');
+    ta.className = 'domains-text';
+    ta.rows = 14;
+    ta.spellcheck = false;
+    ta.style.fontFamily = 'ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
+    ta.style.fontSize = '.85rem';
+    if (domainsText !== null) { ta.value = domainsText; }
+    ta.addEventListener('input', function(){ domainsText = ta.value; });
+    card.appendChild(ta);
+
+    var status = el('p', 'status-line');
+    card.appendChild(status);
+    if (domainsLoading) { status.textContent = 'Loading...'; }
+
+    function setStatus(text, cls){
+      status.className = 'status-line' + (cls ? ' ' + cls : '');
+      status.textContent = text || '';
+    }
+
+    var actions = el('div', 'toolbar');
+    var saveBtn = el('button', 'btn primary', 'Save & check now');
+    saveBtn.type = 'button';
+    var cancelBtn = el('button', 'btn', 'Cancel');
+    cancelBtn.type = 'button';
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+    card.appendChild(actions);
+
+    function close(){ domainsOpen = false; domainsText = null; card.classList.add('hidden'); }
+
+    cancelBtn.addEventListener('click', close);
+
+    saveBtn.addEventListener('click', function(){
+      setStatus('Saving...');
+      saveBtn.disabled = true;
+      api('POST', '/api/domains', {content: ta.value}, function(err){
+        saveBtn.disabled = false;
+        if (err) { setStatus(err, 'bad'); return; }
+        close();
+        CC.runJob('Checking certificates', 'POST', '/api/check', null);
+      });
+    });
+
+    function load(){
+      domainsLoading = true;
+      api('GET', '/api/domains', null, function(err, res){
+        domainsLoading = false;
+        if (err) { setStatus(err, 'bad'); return; }
+        domainsText = (res && res.content) || '';
+        ta.value = domainsText;
+        setStatus('');
+        ta.focus();
+      });
+    }
+
+    toggleBtn.addEventListener('click', function(){
+      if (domainsOpen) { close(); return; }
+      domainsOpen = true;
+      card.classList.remove('hidden');
+      load();
+    });
+
+    // Reopened by a rebuild rather than a click - state changed while it was
+    // open, and load() has already run once, so re-fetching would only race
+    // an in-progress edit against a network round trip for no reason.
+    if (domainsOpen && domainsText === null && !domainsLoading) { load(); }
+
+    return card;
+  }
+
   function render(){
     var host = document.getElementById('view-certificates');
     host.textContent = '';
@@ -33,8 +128,13 @@
       CC.runJob('Checking certificates', 'POST', '/api/check', null);
     });
     toolbar.appendChild(checkBtn);
+    var editBtn = el('button', 'btn', 'Edit domains');
+    editBtn.type = 'button';
+    toolbar.appendChild(editBtn);
     head.appendChild(toolbar);
     host.appendChild(head);
+
+    host.appendChild(buildDomainsEditor(editBtn));
 
     var state = CC.state;
     var certs = (state && state.certs) || [];
@@ -211,6 +311,11 @@
         var pip = el('span', 'pip ' + cls, n.name);
         var why = [];
         why.push(pushed ? 'push ok' : 'push failed' + (n.push && n.push.error ? ': ' + n.push.error : ''));
+        if (n.crtList) {
+          why.push(n.crtList.ok
+            ? 'crt-list: ' + (n.crtList.action === 'added' ? 'appended and loaded' : 'already referenced')
+            : 'crt-list failed: ' + (n.crtList.error || 'not referenced'));
+        }
         (n.verify || []).forEach(function(v){
           why.push(v.sni + ': ' + (v.ok ? 'serving it, ' + v.daysRemaining + ' days left' : (v.error || 'not serving it')));
         });

@@ -17,6 +17,7 @@ settings.json
 secrets.xml
 zones.json
 alert-state.json
+secrets-audit.log
 
 # Issued certificates, archived versions, ACME account state. These contain
 # UNENCRYPTED PRIVATE KEYS - that is how PEM works, and every ACME client is the
