@@ -207,8 +207,11 @@ random token generated fresh each launch. Loopback alone is not access control &
 else running on the machine can reach it, which is why the token exists.</p>
 
 <h2 id="domains">2. Adding domains</h2>
-<p>Edit <code>domains.txt</code>. One host per line; blank lines and <code>#</code> comments are
-ignored. Add <code>:port</code> to watch something other than HTTPS.</p>
+<p>Press <strong>Edit domains</strong> on the Certificates page &mdash; saving runs a fresh check
+automatically, so the new host shows up in the same gesture. (The file behind it is
+<code>domains.txt</code>, and editing that by hand then pressing <strong>Check now</strong> still
+works.) One host per line; blank lines and <code>#</code> comments are ignored. Add
+<code>:port</code> to watch something other than HTTPS.</p>
 <pre><code>[Example Product]
 example.com
 www.example.com
@@ -448,7 +451,13 @@ per year. The certificates also have to sit inside the directory the Data Plane 
 (<code>resources.ssl_certs_dir</code>); converging them there is usually more work than the config
 lines. <strong>One reload to migrate, zero reloads thereafter.</strong></p>
 <p>Using <code>crt-list</code> rather than <code>crt</code> additionally makes <em>adding</em> a new
-domain hitless, not just renewing an existing one. Both are supported.</p>
+domain hitless, not just renewing an existing one. Both are supported &mdash; and with a crt-list
+it is automatic: put the list's path in the deployment group's <em>crt-list path</em> field,
+exactly as it appears on the bind line, and any pushed certificate the list does not reference yet
+is appended and hot-loaded. The deploy log says which happened per node (<code>appended&hellip;
+and the running process loaded it</code> versus <code>already referenced</code>), and an append the
+running process never picks up fails the node loudly rather than surfacing later as an unexplained
+verification failure.</p>
 <p><strong>Never configured the Data Plane API before?</strong> There is a step-by-step guide with the security details in <a href="haproxy-setup.html">Setting up the HAProxy Data Plane API</a>.</p>
 <h3>Setting it up</h3>
 <p><em>Settings &rarr; Load balancers</em> &rarr; add a group. One entry per set of nodes sharing

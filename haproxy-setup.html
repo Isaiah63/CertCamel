@@ -485,7 +485,12 @@ config, which means a reload.</p>
 <pre><code>frontend fe_https
     bind *:443 ssl crt /etc/haproxy/ssl/example.com.pem alpn h2,http/1.1</code></pre>
 <p>Or, better, a crt-list &mdash; which additionally lets you add a <em>new</em> certificate at
-runtime, not just replace an existing one:</p>
+runtime, not just replace an existing one. Cert Camel makes direct use of this: give it the
+crt-list path (in the deployment group's <em>crt-list path</em> field, exactly as it appears on
+the bind line) and any certificate it pushes that the list does not reference yet is appended and
+hot-loaded &mdash; a brand-new certificate starts serving with no config edit and no reload window
+to schedule. The list must live inside <code>ssl_certs_dir</code>, since that is the only
+directory the API manages:</p>
 <pre><code>frontend fe_https
     bind *:443 ssl crt-list /etc/haproxy/ssl/crt-list.txt alpn h2,http/1.1</code></pre>
 <pre><code><span class="c"># /etc/haproxy/ssl/crt-list.txt</span>
