@@ -200,6 +200,54 @@ if ($wantRenew -match '^[Yy]') {
 }
 
 # --------------------------------------------------------------------------- #
+# 7. Monthly summary email (optional)
+# --------------------------------------------------------------------------- #
+# Registered as a daily task, not a monthly one: New-ScheduledTaskTrigger has
+# no monthly option in this PowerShell version, and monthly-report.ps1 already
+# no-ops itself on every day but the 1st. A daily trigger that mostly does
+# nothing is simpler to get right than reaching for the CIM trigger types the
+# cmdlet does not expose.
+
+$reportTask   = 'Cert Camel Monthly Report'
+$reportScript = Join-Path $root 'monthly-report.ps1'
+
+Write-Host ""
+Write-Host "  [+] Monthly summary email" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "      Registers '$reportTask' to check every morning and send a summary" -ForegroundColor DarkGray
+Write-Host "      email on the 1st of the month - only if the monthly summary alert" -ForegroundColor DarkGray
+Write-Host "      is turned on and email is configured under Settings > Alerts." -ForegroundColor DarkGray
+Write-Host ""
+
+$wantReport = Read-Host "      Register the monthly summary task? (Y/N)"
+
+if ($wantReport -match '^[Yy]') {
+    try {
+        $mAction  = New-ScheduledTaskAction -Execute 'powershell.exe' `
+            -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$reportScript`""
+        $mTrigger = New-ScheduledTaskTrigger -Daily -At 8:00am
+        $mSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+            -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+
+        Register-ScheduledTask -TaskName $reportTask -Action $mAction -Trigger $mTrigger `
+            -Settings $mSettings -Description 'Sends the monthly certificate summary email, if enabled under Settings > Alerts.' `
+            -Force | Out-Null
+
+        Write-Host ""
+        Write-Host "      Registered. Checks daily at 8:00 AM; only sends on the 1st." -ForegroundColor Green
+        Write-Host "      Try it safely first:" -ForegroundColor DarkGray
+        Write-Host "        powershell -ExecutionPolicy Bypass -File `"$reportScript`" -Force" -ForegroundColor DarkGray
+    }
+    catch {
+        Write-Host ""
+        Write-Host "      Could not register it: $($_.Exception.Message)" -ForegroundColor Red
+    }
+} else {
+    Write-Host ""
+    Write-Host "      Skipped. Run monthly-report.ps1 by hand whenever you want one." -ForegroundColor Yellow
+}
+
+# --------------------------------------------------------------------------- #
 # Done
 # --------------------------------------------------------------------------- #
 
@@ -208,12 +256,11 @@ Write-Host "  Setup complete." -ForegroundColor Cyan
 Write-Host ""
 Write-Host "    Add/remove domains .... edit domains.txt"
 Write-Host "    Refresh now ........... Check Now.bat"
-Write-Host "    View + renew .......... Open Tracker.bat"
-Write-Host "    View only ............. ssl-tracker.html"
+Write-Host "    Open the tracker ...... Open Tracker.bat"
 Write-Host ""
-Write-Host "    Renewing needs 'Open Tracker.bat': it starts a small local server" -ForegroundColor DarkGray
-Write-Host "    so the page's buttons have something to talk to. Opening the HTML" -ForegroundColor DarkGray
-Write-Host "    directly still works, it is just read-only." -ForegroundColor DarkGray
+Write-Host "    Always use 'Open Tracker.bat': it starts a small local server the page" -ForegroundColor DarkGray
+Write-Host "    needs for everything, including just displaying what is tracked." -ForegroundColor DarkGray
+Write-Host "    Opening ssl-tracker.html directly no longer works on its own." -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "    Moved this folder? Run this setup again so the scheduled" -ForegroundColor DarkGray
 Write-Host "    task points at the new location." -ForegroundColor DarkGray
@@ -227,6 +274,9 @@ if (Test-Path $launcher) {
     if ($open -match '^[Yy]') { Start-Process -FilePath $launcher }
 }
 elseif (Test-Path $tracker) {
-    $open = Read-Host "  Open the dashboard now? (Y/N)"
-    if ($open -match '^[Yy]') { Start-Process $tracker }
+    # No fallback to opening $tracker directly: ssl-tracker.html now requires
+    # the session token serve.ps1 hands it and shows an explanatory error
+    # without one, rather than the read-only page it used to fall back to.
+    Write-Host "  'Open Tracker.bat' is missing, so there is nothing to launch." -ForegroundColor Yellow
+    Write-Host "  Run serve.ps1 directly instead: powershell -ExecutionPolicy Bypass -File `"$(Join-Path $root 'serve.ps1')`"" -ForegroundColor DarkGray
 }
