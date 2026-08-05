@@ -18,7 +18,10 @@
 [CmdletBinding()]
 param(
     # Send even when today is not the 1st. For testing.
-    [switch]$Force
+    [switch]$Force,
+
+    [string]$RunLogPath,
+    [string]$Source = 'task'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,7 +30,9 @@ $ErrorActionPreference = 'Stop'
 
 function Write-Log {
     param([string]$Message, [string]$Level = 'info')
-    Write-Output "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] [$Level] $Message"
+    $line = "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] [$Level] $Message"
+    Write-Output $line
+    Write-RunLog $line
 }
 
 try {
@@ -37,6 +42,12 @@ try {
     }
 
     New-TrackerDirectories
+
+    # Deliberately after the date check. This task fires daily and does nothing
+    # on 30-odd of those days; opening a log first would leave an empty file for
+    # each of them and bury the one run that matters.
+    [void](Start-RunLog -Kind 'monthly-report' -Path $RunLogPath -Source $Source)
+
     $settings = Get-TrackerSettings
 
     if (-not $settings.alerts -or -not $settings.alerts.monthlySummary.enabled) {

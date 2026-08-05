@@ -186,6 +186,7 @@ here is presumably something you intend to renew, so the two halves are one tool
     <li><a href="#auto">Unattended renewal</a></li>
     <li><a href="#alerts">Email alerts</a></li>
     <li><a href="#security">Security</a></li>
+    <li><a href="#logs">Logs &amp; the audit trail</a></li>
     <li><a href="#trouble">When it breaks</a></li>
     <li><a href="#clock">The 47-day future</a></li>
     <li><a href="#files">Files</a></li>
@@ -623,7 +624,64 @@ useless, but anything already running as you can decrypt it. That is the normal 
 tool &mdash; it is not a vault. It also means credentials do not travel when you copy the folder,
 which is the right behaviour for something meant to be shared.</p>
 
-<h2 id="trouble">15. When it breaks</h2>
+<h2 id="logs">15. Logs and the audit trail</h2>
+<p>The <strong>Logs</strong> page is read-only, and deliberately so &mdash; a page that could edit the
+record would not be worth much as a record. It shows two things that are easy to confuse.</p>
+
+<h3>Run logs</h3>
+<p>The narrative of one run: every ACME step, every push, every verification tier. This is what you
+read when something went wrong and you want to know where. They live in <code>jobs\</code> and are
+named for what they are and when they ran &mdash;
+<code>2026-08-05T032000Z-renew-due.log</code>.</p>
+<p>Scheduled runs write these too. They did not before: all three tasks launched hidden with no
+redirection, so the 03:20 renewal produced no narrative at all. The runs nobody watches were the ones
+with no record, which is backwards.</p>
+
+<h3>The audit trail</h3>
+<p>One line per state change, append-only, in <code>audit.log</code>:</p>
+<pre><code>when                  who    source  event     object            outcome  detail
+2026-08-05T09:47:25Z  ULTRA  task    renew     camelnuggets.com  ok       issued serial 05B3DC&hellip;, expires 2026-11-03
+2026-08-05T09:47:27Z  ULTRA  task    deploy    camelnuggets.com  ok       lb1 serving, lb2 serving
+2026-08-05T10:02:11Z  ULTRA  ui      settings  general, logs     ok       2 section(s) updated</code></pre>
+<p><strong>who</strong> is the Windows user, because in an assessment that is the answer to the
+question. <strong>source</strong> separates <code>ui</code> from <code>task</code> &mdash; whether a
+person or the scheduler made the change, which is usually what gets asked next about any given
+line.</p>
+<p>A scheduled sweep records itself even when nothing was due, so a quiet stretch means
+&ldquo;nothing needed doing&rdquo; rather than &ldquo;the scheduler stopped firing&rdquo;. Telling
+those two apart is most of the point.</p>
+
+<div class="callout">
+  <div class="h">What never reaches either log</div>
+  <p>No credential value, no private key, no certificate body. Credential changes are recorded by key
+  <em>name</em> only &mdash; <code>fake-pair:password removed</code> &mdash; and every line goes
+  through a redaction pass on the way in, so a debug line added later cannot leak one by accident.</p>
+</div>
+
+<h3>Retention</h3>
+<p>Two settings under <strong>Settings &rarr; General</strong>, applied to run logs:</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Setting</th><th>Default</th></tr></thead>
+  <tbody>
+    <tr><td>Keep run logs for</td><td>90 days</td></tr>
+    <tr><td>Maximum log folder size</td><td>200 MB</td></tr>
+  </tbody>
+</table></div>
+<p>Whichever is reached first trims oldest-first. Per-certificate state files
+(<code>deploy-&lt;id&gt;.json</code>) are current state rather than history, so they are never
+trimmed. Every trim writes its own audit line, which lets the log account for its own gaps instead of
+just having them.</p>
+
+<div class="callout crit">
+  <div class="h">The audit trail is exempt from both limits</div>
+  <p>It rotates to <code>audit-&lt;stamp&gt;.log</code> when large, and the archives are kept.
+  Deleting audit records to reclaim disk is precisely what an assessor would object to, and a silent
+  exception would be worse than a stated one &mdash; so it is stated, on the Logs page as well as
+  here. If a retention policy genuinely requires audit expiry, that wants to be its own explicit
+  setting rather than a side effect of a disk cap.</p>
+</div>
+
+<h2 id="trouble">16. When it breaks</h2>
 <div class="tablewrap"><table>
   <thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
   <tbody>
@@ -663,7 +721,7 @@ which is the right behaviour for something meant to be shared.</p>
 <p>Renewal logs live in <code>jobs\</code> and include the script line number on failure, which is
 usually most of the diagnosis.</p>
 
-<h2 id="clock">16. The 47-day future</h2>
+<h2 id="clock">17. The 47-day future</h2>
 <p>Under CA/Browser Forum ballot SC-081v3, the maximum certificate lifetime dropped to
 <strong>200 days on 15 March 2026</strong>, falls to <strong>100 days in March 2027</strong>, and to
 <strong>47 days in 2029</strong>. This applies to every public CA, paid ones included, and domain
@@ -671,7 +729,7 @@ validation reuse periods shrink alongside it.</p>
 <p>Whatever you renew by hand today needs doing roughly twice as often next year, and about eight
 times as often by 2029. That is the actual argument for automating this.</p>
 
-<h2 id="files">17. Files</h2>
+<h2 id="files">18. Files</h2>
 <pre><code>Open Tracker.bat      start the server and open the page  &lt;- use this
 ssl-tracker.html      the app shell (sidebar + view containers; needs the server)
 assets\app.css        all styling

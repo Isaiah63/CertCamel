@@ -106,6 +106,33 @@
       'Credentials on the other pages are encrypted with Windows DPAPI and stored in secrets.xml ' +
       'beside this page. They never leave this PC, and they do not travel if you copy this folder ' +
       'to another machine.'));
+
+    p.appendChild(el('h4', null, 'Log retention'));
+    p.appendChild(el('p', 'hint',
+      'Applies to run logs — the narrative of each check, renewal and deployment. Whichever limit ' +
+      'is reached first, the oldest are removed. Every trim is itself recorded in the audit trail, ' +
+      'so a gap is always accounted for.'));
+
+    var grid = el('div', 'fields');
+    var days = el('div', 'field');
+    days.appendChild(el('label', null, 'Keep run logs for (days)'));
+    var di = document.createElement('input');
+    di.type = 'number'; di.min = '1'; di.max = '3650'; di.id = 'set-log-days'; di.autocomplete = 'off';
+    days.appendChild(di);
+    grid.appendChild(days);
+
+    var size = el('div', 'field');
+    size.appendChild(el('label', null, 'Maximum log folder size (MB)'));
+    var si = document.createElement('input');
+    si.type = 'number'; si.min = '1'; si.max = '51200'; si.id = 'set-log-mb'; si.autocomplete = 'off';
+    size.appendChild(si);
+    grid.appendChild(size);
+    p.appendChild(grid);
+
+    p.appendChild(el('p', 'hint',
+      'The audit trail is deliberately not covered by either limit. It records who changed what and ' +
+      'when, and deleting that to reclaim disk is the opposite of what it is for — it rotates to a ' +
+      'dated file instead, and the older files are kept.'));
     return p;
   }
 
@@ -791,6 +818,11 @@
     var alertsResult = collectAlerts();
     if (alertsResult && alertsResult.error) { return {error: alertsResult.error}; }
 
+    var logDays = parseInt(document.getElementById('set-log-days').value, 10);
+    var logMb   = parseInt(document.getElementById('set-log-mb').value, 10);
+    if (isNaN(logDays) || logDays < 1) { return {error: 'Log retention needs a number of days, at least 1.'}; }
+    if (isNaN(logMb)   || logMb   < 1) { return {error: 'The maximum log folder size needs to be at least 1 MB.'}; }
+
     return {
       payload: {
         contact:     document.getElementById('set-contact').value.trim(),
@@ -798,7 +830,8 @@
         defaultCaId: document.getElementById('set-default-ca').value,
         providers:   providers,
         targets:     targets,
-        alerts:      alertsResult ? alertsResult.value : null
+        alerts:      alertsResult ? alertsResult.value : null,
+        logs:        {retentionDays: logDays, maxSizeMb: logMb}
       }
     };
   }
@@ -831,6 +864,8 @@
     var s = (CC.state && CC.state.settings) || {};
 
     document.getElementById('set-contact').value = s.contact || '';
+    document.getElementById('set-log-days').value = (s.logs && s.logs.retentionDays) || 90;
+    document.getElementById('set-log-mb').value   = (s.logs && s.logs.maxSizeMb) || 200;
 
     var caHost = document.getElementById('cas');
     caHost.textContent = '';
