@@ -51,6 +51,22 @@
     var d = new Date(iso);
     return d.toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
   };
+  // Full local date AND time, with the zone spelled out. Renewal windows arrive
+  // as UTC instants, and "renews Oct 4" is not enough to know whether that is
+  // tonight or tomorrow morning where you are sitting.
+  //
+  // No timezone setting sits behind this: the server binds 127.0.0.1, so the
+  // browser and the scheduled tasks are always the same machine. A setting could
+  // only ever hold the value the OS already reports, and would need changing
+  // twice a year for daylight saving. The zone label moves on its own instead.
+  CertCamel.fmtDateTime = function(iso){
+    var d = new Date(iso);
+    if (isNaN(d)) { return ''; }
+    return d.toLocaleString(undefined, {
+      weekday:'short', year:'numeric', month:'short', day:'numeric',
+      hour:'numeric', minute:'2-digit', timeZoneName:'short'
+    });
+  };
   CertCamel.ago = function(iso){
     var mins = Math.floor((new Date() - new Date(iso)) / 60000);
     if (mins < 1)    return 'just now';
