@@ -41,6 +41,15 @@ lib/
 # about the repository rather than any part of the tool.
 fable-prompt-*.md
 
+# Headless DOM tests and their jsdom install (~21 MB). Development-time only:
+# the app is PowerShell plus static files with no build step, and nothing it
+# ships references Node or npm. Kept out so what people download stays a folder
+# they can run, not a project they have to install.
+#
+# Being ignored means it is NOT backed up by git and `git clean -fdx` would
+# delete it. See tests\README.md to rebuild - it is only `npm install jsdom`.
+tests/
+
 # Windows junk
 desktop.ini
 Thumbs.db
