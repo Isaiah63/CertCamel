@@ -725,24 +725,44 @@ powershell -ExecutionPolicy Bypass -File .\renew-due.ps1 -WhatIfOnly
 ### The Automation panel on Home
 
 The Home page reports what the scheduler actually has registered, so none of the
-above has to be taken on trust. Per task: whether it is set up, whether it is
-switched on, when it next runs, and what that run is allowed to do.
-
-Below that, the renewal forecast — when each certificate is next due, and what
-happens afterwards:
+above has to be taken on trust. The **Automation** box lists each service and
+when it runs, with an overall state — a list rather than a sentence, because the
+three run at three different times and any one-line summary of them is wrong:
 
 ```
-camelnuggets.com     renews Oct 4, 2026   → deploys to lb-prod
-*.camelnuggets.com   renews Oct 3, 2026   → no load balancer assigned, so it will not deploy
+AUTOMATION                        On
+Renew and deploy       daily 3:20 AM
+Expiry check           daily 9:00 AM
+Monthly summary email     not set up
+```
+
+`On` here means unattended renewal specifically — the only one of the three that
+can change a certificate. It reads `Off` when the task is registered but
+disabled, `Not set up` when it was never registered, and `Unknown` when the
+scheduler could not be read at all, which is deliberately not the same as `Off`.
+
+**Automated renewals scheduled** then gives the date and time each certificate
+is next due, in this PC's local time, and what happens afterwards:
+
+```
+*.camelnuggets.com
+  Sat, Oct 3, 2026, 1:13 PM EDT
+  deploys to Haproxy-Home-Lab
+
+camelnuggets.com
+  Sun, Oct 4, 2026, 8:48 AM EDT
+  no load balancer assigned, so it will not deploy
 ```
 
 Dates come from the CA's own ARI renewal window, not from a threshold we picked,
 and they can move — the CA can pull every client's window forward during a mass
-revocation. They are rechecked nightly. **Preview what would renew** runs
-`renew-due.ps1 -WhatIfOnly` to refresh them on demand; it issues nothing and
-touches no load balancer.
+revocation. They are rechecked nightly. If the forecast is missing or has gone
+over 36 hours stale, a **Work it out now** button appears, which runs
+`renew-due.ps1 -WhatIfOnly`: it issues nothing and touches no load balancer.
+When the forecast is current there is no button at all.
 
-Three things the panel is there to catch, none of which anything else notices:
+Three things this is there to catch, none of which anything else notices. All
+three appear as alerts at the top of Home rather than inside the boxes:
 
 - **A certificate with no load balancer assigned.** It will renew, and the new
   certificate will sit on disk. "Automation is on" reads as more reassuring than

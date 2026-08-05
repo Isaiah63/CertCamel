@@ -583,17 +583,34 @@ hidden window, with <code>StartWhenAvailable</code> so they catch up after the P
 and the top of the hour is where every naive scheduler piles up.</p>
 
 <h3>The Automation panel on Home</h3>
-<p>None of the above has to be taken on trust. The Home page reads what the Windows scheduler
-actually has registered and reports, per task, whether it is set up, whether it is switched on, when
-it next runs, and what that run is allowed to do. Below that sits the renewal forecast:</p>
-<pre><code>camelnuggets.com     renews Oct 4, 2026   → deploys to lb-prod
-*.camelnuggets.com   renews Oct 3, 2026   → no load balancer assigned, so it will not deploy</code></pre>
+<p>None of the above has to be taken on trust. The Home page reads what the Windows scheduler actually
+has registered. The <strong>Automation</strong> box lists each service and when it runs &mdash; a
+list rather than a sentence, because the three run at three different times and any one-line summary
+of them is wrong:</p>
+<pre><code>AUTOMATION                        On
+Renew and deploy       daily 3:20 AM
+Expiry check           daily 9:00 AM
+Monthly summary email     not set up</code></pre>
+<p><code>On</code> refers to unattended renewal specifically &mdash; the only one of the three that
+can change a certificate. It reads <code>Off</code> when the task is registered but disabled,
+<code>Not set up</code> when it was never registered, and <code>Unknown</code> when the scheduler
+could not be read, which is deliberately not the same as <code>Off</code>.</p>
+<p><strong>Automated renewals scheduled</strong> gives the date and time each certificate is next
+due, in this PC&rsquo;s local time, and what happens afterwards:</p>
+<pre><code>*.camelnuggets.com
+  Sat, Oct 3, 2026, 1:13 PM EDT
+  deploys to Haproxy-Home-Lab
+
+camelnuggets.com
+  Sun, Oct 4, 2026, 8:48 AM EDT
+  no load balancer assigned, so it will not deploy</code></pre>
 <p>Those dates are the CA&rsquo;s own ARI window, and they move &mdash; they are rechecked nightly.
-<strong>Preview what would renew</strong> refreshes them on demand by running the
-<code>-WhatIfOnly</code> dry run above; it issues nothing and touches no load balancer. The panel is
-read-only otherwise: it reports on the tasks, it does not administer them.</p>
+If the forecast is missing or has gone over 36 hours stale, a <strong>Work it out now</strong> button
+appears, running the <code>-WhatIfOnly</code> dry run above; it issues nothing and touches no load
+balancer. When the forecast is current there is no button at all. The page is read-only otherwise:
+it reports on the tasks, it does not administer them.</p>
 <div class="callout">
-  <div class="h">Three things it exists to catch</div>
+  <div class="h">Three things it exists to catch, each raised as an alert at the top of Home</div>
   <p><strong>A certificate with no load balancer assigned.</strong> It renews, and the new
   certificate sits on disk. <code>renew.ps1</code> logs it and carries on, so &ldquo;automation is
   on&rdquo; reads as more reassuring than it should for that certificate.</p>
