@@ -29,16 +29,25 @@ param(
     # Renew, but do not push to load balancers.
     [switch]$NoDeploy,
 
-    [string]$ResultPath
+    [string]$ResultPath,
+
+    [string]$RunLogPath,
+
+    # Defaults to 'task' rather than 'cli': this script exists to be run by the
+    # scheduler at 03:20, and that is the run whose provenance matters most.
+    [string]$Source = 'task'
 )
 
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'acme-lib.ps1')
+[void](Start-RunLog -Kind 'renew-due' -Path $RunLogPath -Source $Source)
 
 function Write-Log {
     param([string]$Message, [string]$Level = 'info')
-    Write-Output "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] [$Level] $Message"
+    $line = "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] [$Level] $Message"
+    Write-Output $line
+    Write-RunLog $line     # this is the run that had no record at all before
 }
 
 $outcome = @{
@@ -138,11 +147,18 @@ try {
 
     if (-not $due.Count) {
         Write-Log "Nothing is due. $(@($renewable).Count) certificate(s) checked." 'ok'
+        # Recorded even though nothing changed. An empty stretch in the trail
+        # would otherwise be ambiguous between "nothing needed doing" and "the
+        # scheduler never fired", and telling those apart is the whole point.
+        Write-AuditEvent -Event 'sweep' -Outcome 'ok' -Source $Source `
+            -Detail "nothing due, $(@($renewable).Count) certificate(s) checked"
         Save-Outcome; exit 0
     }
 
     if ($WhatIfOnly) {
         Write-Log "$(@($due).Count) certificate(s) would be renewed. Stopping (-WhatIfOnly)." 'warn'
+        Write-AuditEvent -Event 'sweep' -Outcome 'ok' -Source $Source `
+            -Detail "$(@($due).Count) certificate(s) due, stopped without renewing (-WhatIfOnly)"
         Save-Outcome; exit 0
     }
 
@@ -157,7 +173,10 @@ try {
         $renewScript = Join-Path $PSScriptRoot 'renew.ps1'
         $resultFile  = Join-Path $script:JobsDir "renew-due-$($cert.certId).json"
 
-        $renewArgs = @('-Cert', $cert.certId, '-ResultPath', $resultFile)
+        # -Source rides along so the audit line for a 03:20 renewal says 'task'
+        # and not 'cli'. Without it every unattended renewal would be recorded as
+        # though a person had typed it, which is the one thing that column is for.
+        $renewArgs = @('-Cert', $cert.certId, '-ResultPath', $resultFile, '-Source', $Source)
         if ($NoDeploy) { $renewArgs += '-NoDeploy' }
 
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $renewScript @renewArgs 2>&1 |
@@ -174,13 +193,21 @@ try {
     if ($outcome.ok) { Write-Log "$(@($due).Count) certificate(s) renewed and deployed." 'ok' }
     else             { Write-Log "$failed of $(@($due).Count) certificate(s) FAILED." 'error' }
 
+    # The per-certificate detail is already recorded by renew.ps1 and deploy.ps1.
+    # This is the sweep itself: it ran, over this many, with this result.
+    Write-AuditEvent -Event 'sweep' -Outcome $(if ($outcome.ok) { 'ok' } else { 'fail' }) -Source $Source `
+        -Detail $(if ($outcome.ok) { "$(@($due).Count) certificate(s) renewed and deployed" }
+                  else { "$failed of $(@($due).Count) certificate(s) failed" })
+
     Save-Outcome
+    Invoke-LogRetention
     exit $(if ($outcome.ok) { 0 } else { 1 })
 }
 catch {
     $outcome.ok = $false
     $outcome.error = ($_.Exception.Message -split "`n")[0].Trim()
     Write-Log $outcome.error 'error'
+    Write-AuditEvent -Event 'sweep' -Outcome 'fail' -Source $Source -Detail $outcome.error
     Save-Outcome
     exit 1
 }
