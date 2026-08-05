@@ -134,6 +134,13 @@
       'next one; lines before the first header are Uncategorized. "#" starts a comment. ' +
       'Certificates are grouped by DNS zone, so a new hostname joins the right certificate on ' +
       'its own - no other setup needed here.'));
+    // The one rule that is not self-evident from the file. Reaches people who
+    // already have a domains.txt and so never see the shipped sample's header.
+    card.appendChild(el('p', 'hint',
+      'Listing a domain and its wildcard together (example.com and *.example.com) is fine. ' +
+      'The apex goes on the wildcard certificate, because *.example.com does not match a bare ' +
+      'example.com — the other certificate leaves it out so the two never compete for one name. ' +
+      'Both stay watched.'));
 
     var ta = document.createElement('textarea');
     ta.className = 'domains-text';
@@ -292,6 +299,24 @@
       if (c.deferredNames && c.deferredNames.length) {
         covers.appendChild(el('div', 'mini', 'Not included: ' + c.deferredNames.join(', ')));
       }
+      // Deliberately its own line, not folded into "Not included". That one is a
+      // warning - the live certificate has names this renewal would drop. This
+      // is the opposite: the name IS covered, by the sibling wildcard, on
+      // purpose.
+      if (c.apexOnWildcard) {
+        covers.appendChild(el('div', 'mini', c.zone + ' is on the wildcard certificate for this zone'));
+      }
+      // The rule has changed what will be issued, but the certificate on disk
+      // predates it and still carries the moved name - so it is still competing
+      // for it wherever it is deployed.
+      if (c.staleNames && c.staleNames.length) {
+        var stale = el('div', 'mini warnline',
+          'Issued copy still carries ' + c.staleNames.join(', ') + ' — renew to apply');
+        stale.title = 'The certificate currently on disk was issued before this zone gained a wildcard. ' +
+                      'Until it is renewed it still claims that name, and whichever certificate HAProxy ' +
+                      'matches first will serve it.';
+        covers.appendChild(stale);
+      }
       tr.appendChild(covers);
 
       var caCell = el('td');
@@ -407,7 +432,23 @@
     (dep.last.targets || []).forEach(function(t){
       (t.nodes || []).forEach(function(n){
         var pushed = n.push && n.push.ok;
-        var served = (n.verify || []).length ? (n.verify || []).every(function(v){ return v.ok; }) : null;
+        var checks = n.verify || [];
+        // Mirrors deploy.ps1's pass rule exactly. A node is green on evidence -
+        // an identity probe that matched the serial - not on the absence of
+        // complaints. A contested COVERAGE probe (another certificate that also
+        // covers a shared name is winning it) is a fact about the config, not a
+        // failure, so it must not paint the node red; anything else unmatched
+        // still does.
+        var hardFailed = checks.filter(function(v){
+          return !v.ok && !(v.contested && v.role === 'coverage');
+        }).length;
+        var proved = checks.filter(function(v){ return v.ok && v.role === 'identity'; }).length;
+
+        var served;
+        if (!checks.length)                    { served = null; }        // not verified
+        else if (hardFailed === 0 && proved)   { served = true; }
+        else                                   { served = false; }
+
         var cls = (pushed && served === true) ? 'good' : (pushed && served === null) ? 'warn' : 'bad';
         var pip = el('span', 'pip ' + cls, n.name);
         var why = [];
@@ -417,8 +458,10 @@
             ? 'crt-list: ' + (n.crtList.action === 'added' ? 'appended and loaded' : 'already referenced')
             : 'crt-list failed: ' + (n.crtList.error || 'not referenced'));
         }
-        (n.verify || []).forEach(function(v){
-          why.push(v.sni + ': ' + (v.ok ? 'serving it, ' + v.daysRemaining + ' days left' : (v.error || 'not serving it')));
+        checks.forEach(function(v){
+          if (v.ok)             { why.push(v.sni + ': serving it, ' + v.daysRemaining + ' days left'); }
+          else if (v.contested) { why.push(v.sni + ': contested - ' + (v.error || 'another certificate covers this name')); }
+          else                  { why.push(v.sni + ': ' + (v.error || 'not serving it')); }
         });
         pip.title = why.join('\n');
         wrap.appendChild(pip);
@@ -501,6 +544,14 @@
       none.appendChild(p);
       box.appendChild(none);
     } else {
+      // What this certificate has already pinned for each group, so reopening
+      // the dialog shows the overrides rather than silently dropping them.
+      var boundOverrides = {};
+      if (mode === 'assign' && certIds.length === 1) {
+        var depNow = ((CC.state && CC.state.deployment) || {})[certIds[0]] || {};
+        (depNow.bindings || []).forEach(function(b){ boundOverrides[b.id] = b.overrides || {}; });
+      }
+
       groups.forEach(function(g){
         var f = el('div', 'field');
         var lab = el('label', 'check');
@@ -514,6 +565,46 @@
         txt.appendChild(el('span', 'mini', '  ' + ((g.nodes || []).map(function(n){ return n.name; }).join(', ') || 'no nodes')));
         lab.appendChild(txt);
         f.appendChild(lab);
+
+        // Per-certificate overrides, assign mode only. A group answers "which
+        // nodes and what credentials"; a crt-list answers "where is this
+        // certificate referenced" - so one pair of nodes can front two
+        // frontends without defining the nodes twice.
+        if (mode === 'assign' && certIds.length === 1) {
+          var ov = boundOverrides[g.id] || {};
+          var hasOv = Object.keys(ov).length > 0;
+
+          var det = document.createElement('details');
+          det.className = 'pick-advanced';
+          det.open = hasOv;                       // already pinned: show it
+          var sum = document.createElement('summary');
+          sum.textContent = hasOv ? 'Overrides for this certificate (set)' : 'Overrides for this certificate';
+          det.appendChild(sum);
+
+          // Inherited values shown as placeholders, so blank plainly means
+          // "whatever the group says" rather than "empty".
+          [['crtList', 'crt-list path'], ['verifyPort', 'Verify port'], ['remoteName', 'Certificate filename']]
+            .forEach(function(pair){
+              var key = pair[0], label = pair[1];
+              var wrap = el('div', 'field');
+              wrap.appendChild(el('label', null, label));
+              var inp = document.createElement('input');
+              inp.type = 'text';
+              inp.className = 'pick-ov';
+              inp.setAttribute('data-target', g.id);
+              inp.setAttribute('data-key', key);
+              inp.autocomplete = 'off';
+              inp.value = (ov[key] !== undefined && ov[key] !== null) ? String(ov[key]) : '';
+              var inherited = (g.args && g.args[key] !== undefined && g.args[key] !== null && g.args[key] !== '')
+                ? String(g.args[key]) : '';
+              inp.placeholder = inherited ? ('inherits ' + inherited) : 'inherits the group setting';
+              wrap.appendChild(inp);
+              det.appendChild(wrap);
+            });
+
+          f.appendChild(det);
+        }
+
         box.appendChild(f);
       });
     }
@@ -530,24 +621,48 @@
     s.textContent = text || '';
   }
 
+  // Bare ids by default. A target only becomes an object when this certificate
+  // actually pins something for it, so a settings file grows objects exactly
+  // where someone asked for one and stays readable everywhere else.
   function pickedTargets(){
     return Array.prototype.slice.call(document.querySelectorAll('#pick-targets .pick-target'))
       .filter(function(c){ return c.checked; })
-      .map(function(c){ return c.value; });
+      .map(function(c){
+        var id = c.value;
+        var overrides = {};
+        Array.prototype.slice.call(document.querySelectorAll('#pick-targets .pick-ov'))
+          .filter(function(i){ return i.getAttribute('data-target') === id; })
+          .forEach(function(i){
+            var v = i.value.trim();
+            if (v) { overrides[i.getAttribute('data-key')] = v; }
+          });
+        if (!Object.keys(overrides).length) { return id; }
+        overrides.id = id;
+        return overrides;
+      });
+  }
+
+  // Renew and Deploy send a plain id list - they are choosing WHERE to run now,
+  // not editing what is stored, and the backend takes ids there.
+  function pickedTargetIds(){
+    return pickedTargets().map(function(t){ return (typeof t === 'string') ? t : t.id; });
   }
 
   function confirmPicker(){
-    var chosen = pickedTargets();
-
     if (pickMode === 'assign') {
+      // Assign is the only mode that edits what is stored, so it is the only
+      // one that sends overrides.
       setPickStatus('Saving...');
-      api('POST', '/api/cert/' + encodeURIComponent(pickCerts[0]) + '/targets', {targets: chosen}, function(err){
+      api('POST', '/api/cert/' + encodeURIComponent(pickCerts[0]) + '/targets',
+          {targets: pickedTargets()}, function(err){
         if (err) { setPickStatus(err, 'bad'); return; }
         closePicker();
         CC.loadState();
       });
       return;
     }
+
+    var chosen = pickedTargetIds();
 
     if (pickMode === 'deploy' && !chosen.length) {
       setPickStatus('Pick at least one load balancer, or cancel.', 'bad');

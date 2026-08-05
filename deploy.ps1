@@ -178,34 +178,61 @@ try {
             if (-not $pre.ok) { throw "Pre-flight failed; nothing was pushed. $($pre.errors -join '; ')" }
 
             Write-Log "T0  ok - bundle valid, serial $($pre.serial), expires $(([datetime]$pre.notAfter).ToString('yyyy-MM-dd'))" 'ok'
+
+            # T0 has already parsed the certificate, so this costs nothing: does
+            # the artifact about to be pushed still carry a name that now belongs
+            # to a sibling certificate? If so it will compete for that name on
+            # every node it lands on, and no amount of correct deploying fixes
+            # it - only a renewal does.
+            $extra = @(@($pre.names) | Where-Object { @($cert.names) -notcontains $_ })
+            if ($extra.Count) {
+                Write-Log "T0  note - this certificate still carries $($extra -join ', '), which is no longer part of it. Renew to re-issue without it; until then it competes for that name wherever it is deployed." 'warn'
+            }
+
             $pem = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($pemPath))
 
             # --- which targets -------------------------------------------- #
-            $targetIds = @()
+            # Bindings, not bare ids: an assignment may carry per-certificate
+            # overrides (which crt-list, which port), so the group it names is
+            # only half the answer.
+            $bindings = @()
             if ($settings.certs -and $settings.certs.ContainsKey($certId)) {
-                $targetIds = Get-CertTargetIds -CertConfig $settings.certs[$certId]
+                $bindings = Get-CertTargetBindings -CertConfig $settings.certs[$certId]
             }
             # A run-time selection replaces the stored assignment outright rather
             # than filtering it, so a newly added group can be deployed to before
-            # anyone has got round to assigning it.
-            if ($TargetList -and @($TargetList).Count) { $targetIds = @($TargetList) }
+            # anyone has got round to assigning it. Picked at run time means no
+            # stored overrides to carry, so the group's own values apply.
+            if ($TargetList -and @($TargetList).Count) {
+                $bindings = @(@($TargetList) | ForEach-Object { @{ id = $_; overrides = @{} } })
+            }
 
-            if (-not $targetIds.Count) { throw "No deployment target is assigned to this certificate." }
+            if (-not $bindings.Count) { throw "No deployment target is assigned to this certificate." }
 
-            foreach ($tid in $targetIds) {
+            foreach ($binding in $bindings) {
+                $tid = $binding.id
                 $target = Get-TargetProfile -Settings $settings -TargetId $tid
                 if (-not $target) { Write-Log "Target '$tid' is no longer configured - skipping." 'warn'; continue }
 
                 $tResult = @{ targetId = $tid; label = $target.label; ok = $false; nodes = @() }
 
+                # Credentials stay group-level on purpose: they describe how to
+                # reach the nodes, which is the one thing a per-certificate
+                # override has no business changing.
                 $user     = Get-TargetArg -Target $target -Name 'user'
                 $password = Get-TargetSecret -TargetId $tid -Name 'password'
                 $insecure = [bool](Get-TargetArg -Target $target -Name 'insecureTls' -Default $false)
-                $port     = [int](Get-TargetArg -Target $target -Name 'verifyPort' -Default 443)
 
-                $remoteName = Get-TargetArg -Target $target -Name 'remoteName' -Default "$certId.pem"
-                $remoteName = $remoteName.Replace('{certId}', $certId)
-                $crtListPath = [string](Get-TargetArg -Target $target -Name 'crtList' -Default '')
+                # Placement settings resolve through the binding first.
+                $port     = [int](Resolve-TargetSetting -Target $target -Binding $binding -Name 'verifyPort' -Default 443)
+
+                $remoteName = Resolve-TargetSetting -Target $target -Binding $binding -Name 'remoteName' -Default "$certId.pem"
+                $remoteName = ([string]$remoteName).Replace('{certId}', $certId)
+                $crtListPath = [string](Resolve-TargetSetting -Target $target -Binding $binding -Name 'crtList' -Default '')
+
+                if (@($binding.overrides.Keys).Count) {
+                    Write-Log "  (this certificate overrides $(@($binding.overrides.Keys) -join ', ') for this group)"
+                }
 
                 Write-Log "Target: $($target.label)  ->  $remoteName"
 
@@ -231,11 +258,22 @@ try {
                         Write-Log "  $nodeName : T1 ok - upload accepted ($($push.action), API $($push.apiVersion))" 'ok'
                         # The API rewrites dots in a filename to underscores, so
                         # the name on disk is often not the name that was asked
-                        # for. HAProxy loads certificates by path, so the bind
-                        # line has to use the real one - say so plainly rather
-                        # than letting T3 fail later with no explanation.
+                        # for. HAProxy loads certificates by path, so something
+                        # has to reference the real one.
+                        #
+                        # Whether that is the operator's problem depends entirely
+                        # on whether a crt-list is configured. With one, the sync
+                        # below reconciles it using exactly this name and there is
+                        # nothing to do - warning there described work this run
+                        # had already done, and made a clean deployment read like
+                        # a failed one. Without one, a human must edit a bind
+                        # line, and that genuinely is a warning.
                         if ($push.renamed) {
-                            Write-Log "  $nodeName : stored as '$($push.storedName)', not '$($push.remoteName)' - your bind line or crt-list must reference '$($push.storedName)'" 'warn'
+                            if ($crtListPath) {
+                                Write-Log "  $nodeName : stored as '$($push.storedName)' (the API rewrites dots) - the crt-list is kept in step with that name"
+                            } else {
+                                Write-Log "  $nodeName : stored as '$($push.storedName)', not '$($push.remoteName)' - your bind line must reference '$($push.storedName)'" 'warn'
+                            }
                         }
 
                         # With a crt-list configured, make sure this certificate
@@ -281,42 +319,74 @@ try {
                 # push stays invisible until failover - exactly when it hurts.
                 Write-Log "T3  checking what each node serves (expecting serial $($pre.serial))..."
 
-                # A wildcard cannot be sent as an SNI name, so it has to be
-                # probed by proxy. The apex is the obvious stand-in, but only
-                # when the certificate actually carries it: "*.example.com" does
-                # NOT match a bare "example.com", so probing the apex against a
-                # wildcard-only certificate asks for a name it does not cover and
-                # fails a deployment that worked perfectly. Where the apex is
-                # absent, use a subdomain the wildcard does match, distinctive
-                # enough not to collide with a real host that has its own cert.
-                $sniNames = @()
+                # A wildcard cannot be sent as an SNI name, so it is probed by
+                # proxy - and WHICH proxy decides whether the check proves
+                # anything. The apex looks like the obvious stand-in, but it is
+                # the name most likely to be claimed by a second certificate,
+                # and an exact SNI match beats a wildcard. Probing only the apex
+                # therefore tests "who won this name", not "is my wildcard
+                # live", and reported a perfectly good deployment as failed.
+                #
+                # Two probes, with different jobs:
+                #   identity - a synthetic subdomain only this wildcard can
+                #              match. Real proof the certificate is loaded.
+                #   coverage - the apex, when carried. Informative: it says who
+                #              is serving a name several certificates may share.
+                $probes = @()
                 foreach ($n in @($cert.names)) {
                     if ($n.StartsWith('*.')) {
                         $apex = $n.Substring(2)
-                        if (@($cert.names) -contains $apex) { $sniNames += $apex }
-                        else                                { $sniNames += "certcamel-probe.$apex" }
+                        $probes += @{ sni = "certcamel-probe.$apex"; role = 'identity' }
+                        if (@($cert.names) -contains $apex) {
+                            $probes += @{ sni = $apex; role = 'coverage' }
+                        }
                     }
-                    else { $sniNames += $n }
+                    else { $probes += @{ sni = $n; role = 'identity' } }
                 }
-                $sniNames = @($sniNames | Select-Object -Unique)
+                # De-duplicate on the name, keeping the strongest role: a name
+                # reached both ways must not be demoted to coverage-only, or a
+                # certificate could pass with nothing actually proving it.
+                $seen = @{}
+                $ordered = @()
+                foreach ($p in $probes) {
+                    if (-not $seen.ContainsKey($p.sni)) { $seen[$p.sni] = $p; $ordered += $p }
+                    elseif ($p.role -eq 'identity') { $seen[$p.sni].role = 'identity' }
+                }
+                $probes = $ordered
 
                 foreach ($t in $entry.targets) {
                     foreach ($n in $t.nodes) {
                         if (-not $n.verifyHost) { Write-Log "  $($n.name) : no address to verify against" 'warn'; continue }
 
-                        foreach ($sni in $sniNames) {
-                            $v = Test-ServedCertificate -ConnectHost $n.verifyHost -Port $n.verifyPort -SniName $sni `
+                        foreach ($p in $probes) {
+                            $v = Test-ServedCertificate -ConnectHost $n.verifyHost -Port $n.verifyPort -SniName $p.sni `
                                      -ExpectedSerial $pre.serial -TimeoutSeconds $VerifyTimeoutSeconds
+                            $v.role = $p.role
                             $n.verify += $v
 
                             if ($v.ok) {
-                                Write-Log "  $($n.name) [$sni] : T3 ok - serving the new certificate, $($v.daysRemaining) days remaining" 'ok'
+                                Write-Log "  $($n.name) [$($p.sni)] : T3 ok - serving the new certificate, $($v.daysRemaining) days remaining" 'ok'
+                            } elseif ($v.contested) {
+                                Write-Log "  $($n.name) [$($p.sni)] : T3 contested - $($v.error). Only one certificate can serve a name; an exact match beats a wildcard." 'warn'
                             } else {
-                                Write-Log "  $($n.name) [$sni] : T3 FAILED - $($v.error)" 'error'
+                                Write-Log "  $($n.name) [$($p.sni)] : T3 FAILED - $($v.error)" 'error'
                             }
                         }
                     }
-                    $t.ok = $t.ok -and (@($t.nodes | ForEach-Object { $_.verify } | Where-Object { -not $_.ok }).Count -eq 0)
+
+                    # A node passes on evidence, not on absence of complaint: at
+                    # least one identity probe must have matched the serial, and
+                    # nothing may have hard-failed. A contested coverage probe is
+                    # reported and forgiven; a contested IDENTITY probe is not,
+                    # because that means something else is answering to a name
+                    # only this certificate should be able to serve.
+                    foreach ($n in $t.nodes) {
+                        $checked = @($n.verify)
+                        if (-not $checked.Count) { continue }   # no verifyHost; already warned
+                        $hardFailed = @($checked | Where-Object { -not $_.ok -and -not ($_.contested -and $_.role -eq 'coverage') }).Count
+                        $proved     = @($checked | Where-Object { $_.ok -and $_.role -eq 'identity' }).Count
+                        if ($hardFailed -gt 0 -or $proved -eq 0) { $t.ok = $false }
+                    }
                 }
             }
 
