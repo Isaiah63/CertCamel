@@ -122,10 +122,78 @@ function Get-CertTargetIds {
       no longer configured".)
     #>
     param($CertConfig)
+    return @(@(Get-CertTargetBindings -CertConfig $CertConfig) | ForEach-Object { $_.id })
+}
+
+function Get-CertTargetBindings {
+    <#
+      The same assignment read as { id; overrides } pairs.
+
+      An entry is either a bare id string - "use everything the group says", the
+      only shape that existed before and still the common one - or an object
+      carrying per-certificate overrides:
+
+          "targets": [ "office", { "id": "office", "crtList": "/etc/haproxy/wild.txt" } ]
+
+      That exists because a group answers "which nodes, and what credentials",
+      while a crt-list answers "where is this certificate referenced". Those are
+      different questions, and tying them together meant one group could only
+      ever manage one frontend; two frontends on the same pair required defining
+      the same nodes twice with duplicate credentials.
+
+      Same defensive parsing as before - PS 5.1's ConvertTo-Json unwraps a
+      one-element array to a bare scalar on every settings round-trip, so on
+      disk this field has been seen as an array, a lone string, and an empty
+      object. Anything that does not yield a usable id is dropped rather than
+      being allowed to reach a deployment as a phantom target.
+    #>
+    param($CertConfig)
 
     if (-not $CertConfig) { return @() }
     if ($CertConfig -is [hashtable] -and -not $CertConfig.ContainsKey('targets')) { return @() }
-    return @(@($CertConfig.targets) | Where-Object { ($_ -is [string]) -and $_ })
+
+    $out = @()
+    foreach ($t in @($CertConfig.targets)) {
+        if ($null -eq $t) { continue }
+
+        if ($t -is [string]) {
+            if ($t) { $out += @{ id = $t; overrides = @{} } }
+            continue
+        }
+
+        # Object form. Reached as a hashtable via ConvertTo-HashtableDeep, but
+        # tolerate PSCustomObject too so a hand-edited or freshly-parsed
+        # settings.json behaves the same either way.
+        $id = $null
+        $ov = @{}
+        if ($t -is [hashtable]) {
+            if ($t.ContainsKey('id')) { $id = [string]$t.id }
+            foreach ($k in $t.Keys) { if ($k -ne 'id') { $ov[$k] = $t[$k] } }
+        }
+        elseif ($t.PSObject -and $t.PSObject.Properties['id']) {
+            $id = [string]$t.id
+            foreach ($p in $t.PSObject.Properties) { if ($p.Name -ne 'id') { $ov[$p.Name] = $p.Value } }
+        }
+
+        if ($id) { $out += @{ id = $id; overrides = $ov } }
+    }
+    return $out
+}
+
+function Resolve-TargetSetting {
+    <#
+      One setting, resolved through the precedence that makes overrides useful:
+      what this certificate says for this group, then what the group says, then
+      the built-in default. Mirrors how a certificate's CA is already resolved,
+      so "pinned here, inherited from there" reads the same way throughout.
+    #>
+    param([hashtable]$Target, $Binding, [string]$Name, $Default = $null)
+
+    if ($Binding -and $Binding.overrides -and $Binding.overrides.ContainsKey($Name)) {
+        $v = $Binding.overrides[$Name]
+        if ($null -ne $v -and "$v" -ne '') { return $v }
+    }
+    return (Get-TargetArg -Target $Target -Name $Name -Default $Default)
 }
 
 # PowerShell 5.1 has no ConvertFrom-Json -AsHashtable, and PSCustomObject is
@@ -1296,9 +1364,39 @@ function Get-CertificateGroups {
         $zoneInfo = $(if ($g) { $g } else { $wildcardZones[$zone] })
 
         # --- the certificate kinds this zone produces --------------------- #
+        #
+        # The apex belongs to the wildcard whenever a zone has one. Both
+        # certificates would otherwise carry it - the wildcard because it must
+        # (*.example.com does not match example.com) and the SAN certificate
+        # because the operator listed the apex in domains.txt, which is the
+        # normal way to use this tool. That puts ONE name on TWO certificates
+        # with equal specificity, where only one can ever serve it: HAProxy
+        # picks by exact SNI match and the loser silently never appears. It also
+        # made verification report a perfectly good wildcard deployment as
+        # failed, because the apex was the name being probed.
+        #
+        # Subdomains overlapping between the two is harmless by comparison - an
+        # exact match always beats a wildcard, so the winner is predictable.
+        #
+        # This is deliberately not something the operator fixes by editing
+        # domains.txt. A line there means two things at once, "watch this name"
+        # and "put it on the SAN certificate", and they want the first without
+        # the second. Deleting the line would drop it from monitoring instead,
+        # which is worse. check-ssl.ps1 reads domains.txt directly and never
+        # calls this function, so what is watched is unaffected either way.
         $kinds = @()
         if ($g -and @($g.names).Count) {
-            $kinds += @{ kind = 'san'; id = $zone; display = $zone; names = @($g.names) }
+            $snames = @($g.names)
+            if ($wantsWildcard) { $snames = @($snames | Where-Object { $_ -ne $zone }) }
+
+            # The guard matters: a zone listing only its apex plus a wildcard
+            # now yields the wildcard alone, rather than an empty SAN order.
+            if (@($snames).Count) {
+                $kinds += @{
+                    kind = 'san'; id = $zone; display = $zone; names = $snames
+                    apexOnWildcard = [bool]$wantsWildcard
+                }
+            }
         }
         if ($wantsWildcard) {
             # "*" is not legal in a Windows filename, so the identifier used for
@@ -1354,11 +1452,38 @@ function Get-CertificateGroups {
             $notAfter = $null
             if ($g -and $g.notAfter) { $notAfter = $g.notAfter.ToString('o') }
 
+            # The apex rule changes what gets ISSUED, not what is already on
+            # disk. Until this certificate is renewed, the old one still carries
+            # the apex and still contests it in HAProxy - which looks exactly
+            # like the bug the rule was written to prevent. Say so on the row
+            # rather than letting someone rediscover it during a deployment.
+            #
+            # Only parsed for a certificate the rule actually affects, so the
+            # common case pays nothing.
+            $staleNames = @()
+            if ($k.ContainsKey('apexOnWildcard') -and $k.apexOnWildcard -and (Test-Path $pemPath)) {
+                try {
+                    $leafDer = @(Read-PemBlocks -Text ([IO.File]::ReadAllText($pemPath)) |
+                                 Where-Object { $_.Label -eq 'CERTIFICATE' -and $_.Der })[0]
+                    if ($leafDer) {
+                        $issued = New-Object Security.Cryptography.X509Certificates.X509Certificate2 (,$leafDer.Der)
+                        foreach ($sanName in @(Get-CertificateSanNames -Certificate $issued)) {
+                            if (@($names) -notcontains $sanName) { $staleNames += $sanName }
+                        }
+                    }
+                }
+                catch { }   # unreadable is not worth failing a page load over
+            }
+
             $out += [pscustomobject]@{
                 certId        = $k.id
                 displayName   = $k.display
                 kind          = $k.kind
                 zone          = $zone
+                # True when this zone's wildcard owns the apex, so the UI can
+                # explain why it is absent here rather than looking like a loss.
+                apexOnWildcard = [bool]$(if ($k.ContainsKey('apexOnWildcard')) { $k.apexOnWildcard } else { $false })
+                staleNames     = @($staleNames)
                 providerId    = $zoneInfo.providerId
                 providerLabel = $zoneInfo.providerLabel
                 plugin        = $zoneInfo.plugin
@@ -1763,6 +1888,52 @@ function Get-HAProxyCertificates {
     return @($names)
 }
 
+function Get-HAProxyFrontends {
+    <#
+      Which frontends this node terminates TLS on, and for each: the port it
+      binds and the crt-list (or single crt) it loads certificates from.
+
+      Strictly read-only, and that boundary is the point. Cert Camel writes
+      certificate storage and crt-list entries, never a bind line and never a
+      frontend, so it can sit alongside whatever config management owns
+      haproxy.cfg. This exists so the operator picks a frontend from a list
+      instead of retyping a path and a port that the node already knows - the
+      entire class of typo that the filename-rewrite warning exists to catch.
+
+      Frontends with no TLS bind are skipped: there is nothing to deploy a
+      certificate to.
+    #>
+    param([string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion, [switch]$InsecureTls)
+
+    $out = @()
+    $frontends = Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                    -Path "/$ApiVersion/services/haproxy/configuration/frontends" -InsecureTls:$InsecureTls
+
+    foreach ($fe in @($frontends)) {
+        $name = [string]$fe.name
+        if (-not $name) { continue }
+
+        $binds = @()
+        try {
+            $binds = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                        -Path "/$ApiVersion/services/haproxy/configuration/frontends/$([Uri]::EscapeDataString($name))/binds" `
+                        -InsecureTls:$InsecureTls)
+        }
+        catch { continue }   # a frontend whose binds cannot be read is not a usable target
+
+        foreach ($b in $binds) {
+            if (-not $b.ssl) { continue }
+            $out += @{
+                frontend = $name
+                port     = $(if ($b.port) { [int]$b.port } else { $null })
+                crtList  = [string]$b.crt_list
+                crt      = [string]$b.crt
+            }
+        }
+    }
+    return @($out)
+}
+
 function Get-NormalisedStorageName {
     # The Data Plane API's own rewrite: interior dots become underscores, the
     # extension is kept. "www.example.com.pem" -> "www_example_com.pem".
@@ -2082,6 +2253,73 @@ function Get-RsaModulusFromKeyDer {
     catch { return $null }
 }
 
+function Get-CertificateSanNames {
+    <#
+      Every DNS name a certificate covers, lower-cased and de-duplicated.
+
+      .NET Framework has no typed SAN extension class (that arrived in .NET 7),
+      so the extension is formatted to text and parsed. The label on each line is
+      LOCALISED - "DNS Name=" in English, something else elsewhere - so match on
+      the value after the "=" rather than on the label, then keep only values
+      shaped like hostnames. That drops IP, email and URI entries, and any label
+      wording we did not anticipate.
+
+      check-ssl.ps1 carries its own copy of this on purpose: it runs the parse
+      inside a runspace, which cannot see functions defined out here.
+    #>
+    param($Certificate)
+
+    $found = @()
+    if (-not $Certificate) { return $found }
+    $ext = $Certificate.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }
+    if (-not $ext) { return $found }
+
+    foreach ($line in (($ext.Format($true)) -split "`r?`n")) {
+        if ($line -notmatch '=\s*(?<v>\S+)\s*$') { continue }
+        $v = $Matches.v.Trim().TrimEnd('.').ToLowerInvariant()
+        if ($v -match '^(\*\.)?([a-z0-9]([a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,}$' -and $found -notcontains $v) {
+            $found += $v
+        }
+    }
+    return $found
+}
+
+function Test-NameCoveredBySans {
+    <#
+      Would a TLS client accept this certificate for this name? Matches RFC 6125
+      wildcard rules, which are narrower than people expect and are the whole
+      reason the apex keeps causing trouble:
+
+        *.example.com  matches  a.example.com
+        *.example.com  does NOT match  example.com        (no label to consume)
+        *.example.com  does NOT match  a.b.example.com    (one label only)
+
+      Used to tell "someone else's certificate is winning this name" (a
+      configuration fact) apart from "this node is serving something that has
+      nothing to do with the name I asked for" (genuinely broken).
+    #>
+    param([string[]]$Sans, [string]$Name)
+
+    if (-not $Name) { return $false }
+    $n = $Name.Trim().TrimEnd('.').ToLowerInvariant()
+
+    foreach ($s in @($Sans)) {
+        $san = ([string]$s).Trim().TrimEnd('.').ToLowerInvariant()
+        if (-not $san) { continue }
+        if ($san -eq $n) { return $true }
+
+        if ($san.StartsWith('*.')) {
+            $suffix = $san.Substring(1)          # ".example.com"
+            if (-not $n.EndsWith($suffix)) { continue }
+            # Exactly one label may be consumed, so what precedes the suffix must
+            # not itself contain a dot.
+            $label = $n.Substring(0, $n.Length - $suffix.Length)
+            if ($label -and $label.IndexOf('.') -lt 0) { return $true }
+        }
+    }
+    return $false
+}
+
 function Test-CertificateBundle {
     <#
       Validate a combined PEM before it goes anywhere. Returns a result object
@@ -2144,18 +2382,7 @@ function Test-CertificateBundle {
     # an intermediate, so a single-certificate bundle is almost always a mistake.
     Add-Check 'chain included' ($certs.Count -ge 2) "$($certs.Count - 1) intermediate(s)"
 
-    $sans = @()
-    $ext = $leaf.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }
-    if ($ext) {
-        foreach ($line in (($ext.Format($true)) -split "`r?`n")) {
-            if ($line -match '=\s*(?<v>\S+)\s*$') {
-                $v = $Matches.v.Trim().TrimEnd('.').ToLowerInvariant()
-                if ($v -match '^(\*\.)?([a-z0-9]([a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,}$' -and $sans -notcontains $v) {
-                    $sans += $v
-                }
-            }
-        }
-    }
+    $sans = @(Get-CertificateSanNames -Certificate $leaf)
     $result.names = @($sans)
 
     if ($ExpectedNames.Count) {
@@ -2284,6 +2511,10 @@ function Test-ServedCertificate {
         node = "${ConnectHost}:$Port"; sni = $SniName; ok = $false
         servedSerial = $null; expectedSerial = $ExpectedSerial
         notAfter = $null; daysRemaining = $null; issuer = $null; error = $null
+        # Set when a DIFFERENT certificate answered but legitimately covers this
+        # name. That is a fact about the configuration, not a failed deployment -
+        # see the classification note below.
+        contested = $false; servedSubject = $null; servedCovers = $false
     }
 
     try {
@@ -2294,11 +2525,31 @@ function Test-ServedCertificate {
         $out.notAfter      = $cert.NotAfter.ToString('o')
         $out.daysRemaining = [math]::Floor(($cert.NotAfter - (Get-Date)).TotalDays)
         $out.issuer        = $cert.Issuer
+        $out.servedSubject = $cert.Subject
 
         if ($ExpectedSerial) {
             $out.ok = ($cert.SerialNumber -eq $ExpectedSerial)
             if (-not $out.ok) {
-                $out.error = "serving serial $($cert.SerialNumber), expected $ExpectedSerial"
+                # Two very different situations produce a serial mismatch, and
+                # conflating them is what made a correct deployment report as a
+                # failure:
+                #
+                #   contested - the certificate being served ALSO covers this
+                #               name. Both are valid for it and only one can win
+                #               (an exact SNI match beats a wildcard). Nothing is
+                #               broken; the operator needs to know which won.
+                #   failed    - the certificate being served does not cover this
+                #               name at all, so the node is serving something
+                #               unrelated. That is genuinely wrong.
+                $out.servedCovers = Test-NameCoveredBySans `
+                                        -Sans (Get-CertificateSanNames -Certificate $cert) -Name $SniName
+                $out.contested = $out.servedCovers
+
+                if ($out.contested) {
+                    $out.error = "served by $($cert.Subject) (serial $($cert.SerialNumber)), which also covers this name"
+                } else {
+                    $out.error = "serving serial $($cert.SerialNumber), expected $ExpectedSerial"
+                }
             }
         } else {
             $out.ok = $true   # nothing to compare against; report what is served
