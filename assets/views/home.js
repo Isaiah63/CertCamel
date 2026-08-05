@@ -6,10 +6,27 @@
   "use strict";
   var CC = window.CertCamel;
   var el = CC.el, api = CC.api, daysUntil = CC.daysUntil, fmtDate = CC.fmtDate, ago = CC.ago;
+  var fmtDateTime = CC.fmtDateTime;
   var RENEW_DAYS = CC.RENEW_DAYS, STALE_DAYS = CC.STALE_DAYS;
 
   var UNCATEGORIZED = 'Uncategorized';
   var LABEL = {ok:'OK', soon:'Renew soon', gone:'Expired', unknown:'Error'};
+
+  // Both used from render() and from the automation panel, which lands later
+  // than the synchronous pass, so they live out here rather than inside it.
+  function tile(label, value, sub, cls){
+    var t = el('div', 'pill' + (cls ? ' ' + cls : ''));
+    t.appendChild(el('div', 'k', label));
+    t.appendChild(el('div', 'val', String(value)));
+    t.appendChild(el('div', 'sub', sub));
+    return t;
+  }
+  function callout(cls, heading, body){
+    var c = el('div', 'callout ' + cls);
+    c.appendChild(el('div', 'h', heading));
+    c.appendChild(el('p', null, body));
+    return c;
+  }
 
   function byUrgency(a, b){
     if (a.days === null && b.days === null) { return a.raw.host.localeCompare(b.raw.host); }
@@ -33,15 +50,33 @@
     host.appendChild(pillsBox);
     var alertsBox = el('div');
     host.appendChild(alertsBox);
-    var autoBox = el('div');
-    host.appendChild(autoBox);
-    var activityBox = el('div');
-    host.appendChild(activityBox);
 
-    renderAutomation(autoBox);
-    renderActivity(activityBox);
+    // One row, two cards: the renewal schedule beside recent deployments. The
+    // renewals card is appended when /api/automation answers, so it is created
+    // here to hold its place in the order.
+    var cardRow = el('div', 'cardrow');
+    host.appendChild(cardRow);
+
+    // The automation tile arrives from a fetch while the others are built
+    // synchronously below, so its position would otherwise depend on how fast
+    // the server answered. An empty placeholder claims the slot and is swapped
+    // for the real tile, which fixes the row order either way.
+    //
+    // The slot goes in BEFORE the request starts - a cached or stubbed response
+    // can arrive during the call, and a tile that has nowhere to land is a tile
+    // that silently never appears.
+    var autoSlot = el('div', 'pillslot');
+    function startAutomation(){
+      pillsBox.appendChild(autoSlot);
+      renderAutomation(autoSlot, alertsBox, cardRow);
+    }
+
+    renderActivity(cardRow);
 
     if (!hasData) {
+      // Still worth answering "is anything automated?" when there is no checker
+      // data at all - arguably that is exactly when it matters.
+      startAutomation();
       var empty = el('div', 'empty');
       empty.appendChild(el('h3', null, 'No certificate data yet'));
       var p = el('p', null, '');
@@ -73,27 +108,15 @@
     var expired  = rows.filter(function(r){ return r.state === 'gone'; });
     var errored  = rows.filter(function(r){ return r.state === 'unknown'; });
 
-    function tile(label, value, sub, cls){
-      var t = el('div', 'pill' + (cls ? ' ' + cls : ''));
-      t.appendChild(el('div', 'k', label));
-      t.appendChild(el('div', 'val', String(value)));
-      t.appendChild(el('div', 'sub', sub));
-      return t;
-    }
     pillsBox.appendChild(tile('Tracked', rows.length, rows.length === 1 ? 'domain' : 'domains'));
     pillsBox.appendChild(tile('Renew soon', expiring.length, 'within ' + RENEW_DAYS + ' days', expiring.length ? 'hot' : ''));
     pillsBox.appendChild(tile('Expired', expired.length, 'past due', expired.length ? 'bad' : ''));
     if (errored.length) { pillsBox.appendChild(tile('Unreachable', errored.length, 'check failed', 'hot')); }
+    startAutomation();
 
     updateSidebarBadge(expired.length + errored.length);
 
     function names(list){ return list.map(function(r){ return r.raw.host; }).join(', '); }
-    function callout(cls, heading, body){
-      var c = el('div', 'callout ' + cls);
-      c.appendChild(el('div', 'h', heading));
-      c.appendChild(el('p', null, body));
-      return c;
-    }
 
     if (expired.length) {
       alertsBox.appendChild(callout('crit',
@@ -339,115 +362,103 @@
     return d.toLocaleString(undefined, {weekday:'short', hour:'numeric', minute:'2-digit'});
   }
 
-  function taskRow(t){
-    var row = el('div', 'autorow');
-
-    var who = el('div', 'who');
-    who.appendChild(el('div', 't', t.label));
-    who.appendChild(el('div', 'lvl', t.level));
-    row.appendChild(who);
-
-    // The state word carries the meaning; the dot only repeats it. Colour on
-    // its own is not a status anyone can rely on.
-    var cls, word;
-    if (!t.registered)   { cls = 'off'; word = 'Not set up'; }
-    else if (!t.enabled) { cls = 'bad'; word = 'Disabled'; }
-    else if (t.state === 'running') { cls = 'on'; word = 'Running now'; }
-    else                 { cls = 'on'; word = 'On'; }
-
-    var st = el('div', 'autostate ' + cls);
-    st.appendChild(el('span', 'dot ' + cls));
-    st.appendChild(document.createTextNode(word));
-    row.appendChild(st);
-
-    var when = el('div', 'when');
-    if (t.registered && t.schedule) {
-      var clock = clockOf(t.schedule);
-      when.appendChild(document.createTextNode(clock ? 'daily ' + clock : 'scheduled'));
-      if (t.enabled && t.nextRun) {
-        when.appendChild(el('span', 'next', 'next ' + nextRunText(t.nextRun)));
-      }
-    } else if (!t.registered) {
-      when.appendChild(document.createTextNode('—'));
-    }
-    row.appendChild(when);
-
-    return row;
+  function taskOf(a, key){
+    var found = null;
+    (a && a.tasks ? a.tasks : []).forEach(function(t){ if (t.key === key) { found = t; } });
+    return found;
   }
 
-  function renderAutomation(box){
-    api('GET', '/api/automation', null, function(err, res){
-      if (err || !res) { return; }   // a missing panel beats a broken page
+  // The status tile: a headline word, then one row per service with the time it
+  // runs. A list rather than a sentence on purpose - every prose version of this
+  // left the verb dangling ("checks daily at 3:20 AM" reads as though it were
+  // checking the services, not the certificates). A name and a time cannot be
+  // misread, and the three services run at three different times anyway, so a
+  // single shared sentence was never going to be accurate.
+  function automationTile(a){
+    var renew = taskOf(a, 'renew');
 
-      var card = el('div', 'card');
-      var head = el('div', 'toolbar');
-      head.appendChild(el('h4', null, 'Automation'));
-      head.appendChild(el('span', 'spacer'));
+    var cls, word;
+    if (!a || a.available === false)      { cls = 'hot'; word = 'Unknown'; }
+    else if (!renew || !renew.registered) { cls = 'hot'; word = 'Not set up'; }
+    else if (!renew.enabled)              { cls = 'bad'; word = 'Off'; }
+    else if (renew.state === 'running')   { cls = 'good'; word = 'Running'; }
+    else                                  { cls = 'good'; word = 'On'; }
 
-      var btn = el('button', 'btn sm', 'Preview what would renew');
-      btn.type = 'button';
-      btn.setAttribute('data-busy-disable', '');
-      btn.title = 'Works out what would renew and stops. Issues nothing, deploys nothing.';
-      btn.addEventListener('click', function(){
-        CC.runJob('Previewing what would renew', 'POST', '/api/forecast');
-      });
-      head.appendChild(btn);
-      card.appendChild(head);
+    var t = el('div', 'pill auto ' + cls);
+    var head = el('div', 'autohead');
+    head.appendChild(el('span', 'k', 'Automation'));
+    head.appendChild(el('span', 'val', word));
+    t.appendChild(head);
 
-      var a = res.automation || {};
+    if (!a || a.available === false) {
+      t.appendChild(el('div', 'sub', 'The Windows scheduler could not be read, so none of this can be confirmed.'));
+      return t;
+    }
 
-      // "Could not read the scheduler" is not the same as "automation is off",
-      // and showing the second when the first is true would be a lie in the
-      // direction that gets certificates expired.
-      if (a.available === false) {
-        var c = el('div', 'callout note');
-        c.appendChild(el('div', 'h', 'Could not read the Windows scheduler'));
-        c.appendChild(el('p', null,
-          (a.error || 'The Task Scheduler service did not answer.') +
-          ' Automation may well still be running — this panel simply cannot see it.'));
-        card.appendChild(c);
-        box.appendChild(card);
-        return;
+    var list = el('div', 'svclist');
+    (a.tasks || []).forEach(function(s){
+      var row = el('div', 'svc');
+      row.appendChild(el('span', 'n', s.label));
+
+      var when;
+      if (!s.registered)  { when = 'not set up'; }
+      else if (!s.enabled){ when = 'switched off'; }
+      else {
+        var clock = clockOf(s.schedule);
+        when = clock ? 'daily ' + clock : 'scheduled';
       }
+      row.appendChild(el('span', 'v', when));
+      row.title = s.detail || '';
+      list.appendChild(row);
+    });
+    t.appendChild(list);
+    return t;
+  }
 
-      var tasks = a.tasks || [];
-      tasks.forEach(function(t){ card.appendChild(taskRow(t)); });
+  // The three conditions worth acting on. They are attention items rather than
+  // status, so they belong with the expired/expiring callouts rather than
+  // padding out a card that is otherwise just a schedule.
+  function automationAlerts(box, a, callout){
+    if (!a) { return; }
 
-      var renew = null;
-      tasks.forEach(function(t){ if (t.key === 'renew') { renew = t; } });
+    if (a.available === false) {
+      box.appendChild(callout('note', 'Could not read the Windows scheduler',
+        (a.error || 'The Task Scheduler service did not answer.') +
+        ' Automation may well still be running — this page simply cannot see it.'));
+      return;
+    }
 
-      // A task pointing at a script somewhere else has silently stopped working
-      // on this folder. Nothing else in the tool notices.
-      tasks.forEach(function(t){
-        if (t.registered && t.pathMatches === false) {
-          var w = el('p', 'mini warnline');
-          w.textContent = '“' + t.name + '” runs a script in a different folder (' +
-            (t.commandPath || 'unknown path') + '). It is not driving this copy. ' +
-            'Run First Time Setup.bat to re-point it.';
-          card.appendChild(w);
-        }
-      });
+    var renew = taskOf(a, 'renew');
+    if (renew && !renew.registered) {
+      box.appendChild(callout('note', 'Unattended renewal is not set up',
+        'Nothing renews on its own. Certificates renew only when you do it from the ' +
+        'Certificates page. Run First Time Setup.bat to register the daily task.'));
+    } else if (renew && !renew.enabled) {
+      box.appendChild(callout('warn', 'Unattended renewal is switched off',
+        'The task is registered but disabled, so nothing will renew on its own.'));
+    }
 
-      if (renew && (!renew.registered || !renew.enabled)) {
-        var note = el('p', 'mini warnline');
-        note.textContent = renew.registered
-          ? 'Unattended renewal is registered but switched off. Nothing will renew on its own.'
-          : 'Unattended renewal is not set up. Nothing renews unless you do it from this page. ' +
-            'Run First Time Setup.bat to register it.';
-        card.appendChild(note);
+    // A task pointing at a script somewhere else has silently stopped driving
+    // this folder. Nothing else in the tool notices.
+    (a.tasks || []).forEach(function(t){
+      if (t.registered && t.pathMatches === false) {
+        box.appendChild(callout('warn', '“' + t.name + '” is pointing somewhere else',
+          'It runs ' + (t.commandPath || 'an unknown path') + ', not the copy in this folder, ' +
+          'so it is not driving this install. Run First Time Setup.bat to re-point it.'));
       }
-
-      card.appendChild(forecastBlock(res, renew));
-      box.appendChild(card);
     });
   }
 
   // Which certificates renew when, and whether anything happens afterwards.
-  function forecastBlock(res, renew){
-    var wrap = el('div', 'forecast');
+  function renewalsCard(res){
+    var a = res.automation || {};
     var f = res.forecast;
+    var renew = taskOf(a, 'renew');
     var state = CC.state || {};
     var deployment = state.deployment || {};
+
+    var card = el('div', 'card');
+    card.appendChild(el('h4', null, 'Automated renewals scheduled'));
 
     function targetsFor(certId){
       var d = deployment[certId];
@@ -463,14 +474,11 @@
     }
 
     if (!f || !f.considered || !f.considered.length) {
-      var p = el('p', 'mini');
-      p.textContent = 'No renewal forecast yet. The nightly run records one, or press ' +
-        '“Preview what would renew” to work it out now.';
-      wrap.appendChild(p);
-      return wrap;
+      card.appendChild(el('p', 'mini',
+        'Not worked out yet. The nightly run records this.'));
+      card.appendChild(cardFoot([refreshControl(true)]));
+      return card;
     }
-
-    wrap.appendChild(el('div', 't', 'Next renewal'));
 
     var items = f.considered.slice().sort(function(x, y){
       if (!x.renewAfter) { return 1; }
@@ -479,15 +487,17 @@
     });
 
     items.forEach(function(c){
-      var line = el('div', 'fc');
-      line.appendChild(el('span', 'n', c.name || c.certId));
+      var b = el('div', 'renewal');
+      b.appendChild(el('div', 'n', c.name || c.certId));
 
       if (c.due) {
-        line.appendChild(el('span', 'warn', 'due now — ' + (c.reason || 'the CA says so')));
+        b.appendChild(el('div', 'w', 'Due now — ' + (c.reason || 'the CA says so')));
       } else if (c.renewAfter) {
-        line.appendChild(el('span', 'd', 'renews ' + fmtDate(c.renewAfter)));
+        // The full local timestamp, not just a date: "renews Oct 4" does not say
+        // whether that is tonight or tomorrow morning where you are sitting.
+        b.appendChild(el('div', 'd', fmtDateTime(c.renewAfter)));
       } else {
-        line.appendChild(el('span', 'd', 'renewal date not known yet'));
+        b.appendChild(el('div', 'd', 'Renewal date not known yet'));
       }
 
       // Renewal and deployment are separate things. A certificate with nothing
@@ -495,24 +505,75 @@
       // on, so "automation is on" reads as more reassuring than it should.
       var tg = targetsFor(c.certId);
       if (tg.length) {
-        line.appendChild(el('span', 'd', '→ deploys to ' +
-          tg.map(targetLabel).join(', ')));
+        b.appendChild(el('div', 'g', 'deploys to ' + tg.map(targetLabel).join(', ')));
       } else {
-        line.appendChild(el('span', 'warn', '→ no load balancer assigned, so it will not deploy'));
+        b.appendChild(el('div', 'w', 'no load balancer assigned, so it will not deploy'));
       }
-      wrap.appendChild(line);
+      card.appendChild(b);
     });
 
     var stamp = el('p', 'mini');
-    var when = f.finishedAt ? ago(f.finishedAt) : 'at an unknown time';
     var how  = (f.mode === 'preview') ? 'a preview you ran' : 'the scheduled run';
     var tail = (renew && renew.registered && renew.enabled)
-      ? ' Dates come from the certificate authority and can move; they are rechecked every night.'
+      ? ' Dates come from the certificate authority and can move.'
       : ' Nothing is scheduled to act on these dates.';
-    stamp.textContent = 'Worked out ' + when + ' by ' + how + '.' + tail;
-    wrap.appendChild(stamp);
+    stamp.textContent = 'Worked out ' + (f.finishedAt ? ago(f.finishedAt) : 'at an unknown time') +
+      ' by ' + how + '.' + tail;
 
-    return wrap;
+    card.appendChild(cardFoot([stamp, refreshControl(isStale(f))]));
+    return card;
+  }
+
+  // Notes about the card, not another entry in it. Without the rule these sat
+  // flush under the last certificate and read as though they belonged to it.
+  function cardFoot(parts){
+    var foot = el('div', 'cardfoot');
+    parts.forEach(function(p){ if (p) { foot.appendChild(p); } });
+    return foot;
+  }
+
+  // Over a day and a half old means the nightly run has not landed, which is
+  // itself worth being able to act on.
+  function isStale(f){
+    if (!f || !f.finishedAt) { return true; }
+    return (new Date() - new Date(f.finishedAt)) > 36 * 3600 * 1000;
+  }
+
+  // Only offered when there is nothing to show or it has gone stale. In the
+  // normal case the card carries no control at all.
+  function refreshControl(show){
+    if (!show) { return document.createDocumentFragment(); }
+    var p = el('p', 'mini');
+    var btn = el('button', 'btn sm', 'Work it out now');
+    btn.type = 'button';
+    btn.setAttribute('data-busy-disable', '');
+    btn.title = 'Works out what would renew and stops. Issues nothing, deploys nothing.';
+    btn.addEventListener('click', function(){
+      CC.runJob('Working out what would renew', 'POST', '/api/forecast');
+    });
+    p.appendChild(btn);
+    return p;
+  }
+
+
+  function renderAutomation(autoSlot, alertsBox, cardRow){
+    api('GET', '/api/automation', null, function(err, res){
+      // A missing panel beats a broken page - but the placeholder has to go,
+      // or an empty tile-sized gap is left sitting in the row.
+      if (err || !res) {
+        if (autoSlot.parentNode) { autoSlot.parentNode.removeChild(autoSlot); }
+        return;
+      }
+      var a = res.automation || {};
+
+      if (autoSlot.parentNode) {
+        autoSlot.parentNode.replaceChild(automationTile(a), autoSlot);
+      }
+      automationAlerts(alertsBox, a, callout);
+
+      // Prepended so the schedule reads before the history beside it.
+      cardRow.insertBefore(renewalsCard(res), cardRow.firstChild);
+    });
   }
 
   function renderActivity(box){
@@ -529,8 +590,8 @@
     events.sort(function(a, b){ return new Date(b.at) - new Date(a.at); });
     events = events.slice(0, 5);
 
+    // No inline width any more: it sits in the .cardrow grid, which sizes it.
     var wrap = el('div', 'card');
-    wrap.style.maxWidth = '44rem';
     wrap.appendChild(el('h4', null, 'Recently deployed'));
     var list = el('div');
     events.forEach(function(e){
