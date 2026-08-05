@@ -77,11 +77,10 @@ h1,h2,h3,.brand h1{font-family:"Segoe UI Variable Display","Segoe UI Variable Te
   height:100vh; overflow-y:auto;}
 body.sidebar-collapsed .sidebar{flex-basis:var(--sidebar-w-collapsed); width:var(--sidebar-w-collapsed);}
 .sidebar .brand{display:flex; align-items:center; gap:.65rem; padding:.3rem .35rem 1.1rem; flex:none;}
-/* The logo is a finished lockup - a camel, a certificate and a lock - at about
-   1.8:1. It carries its own shape, so it gets no tile, border or shadow around
-   it: a bordered box around artwork that is already a composition reads as a
-   box inside a box, and letterboxing something this wide into a square would
-   have shrunk it to nothing. Height is fixed and width follows. */
+/* The logo is a finished lockup - a camel, a certificate and a lock - so it
+   gets no tile, border or shadow around it: a bordered box around artwork that
+   is already a composition reads as a box inside a box. Height is fixed and
+   width follows, which keeps this working whatever aspect the artwork is. */
 .sidebar .brand .mark{display:block; flex:none; height:2.3rem;}
 .sidebar .brand .mark img{height:100%; width:auto; display:block;}
 .sidebar .brand h1{font-size:1.2rem; line-height:1.1; letter-spacing:-.005em; font-weight:750; margin:0;
@@ -91,11 +90,9 @@ body.sidebar-collapsed .sidebar{flex-basis:var(--sidebar-w-collapsed); width:var
 body.sidebar-collapsed .sidebar .brand h1,
 body.sidebar-collapsed .sidebar .navlabel,
 body.sidebar-collapsed .sidebar .navgroup-label{display:none;}
-/* Collapsed, the rail is 4.2rem and a 2.3rem-tall logo is 4.2rem wide - exactly
-   the rail, before its own padding. Shrink it so it sits inside rather than
-   pressing against both edges. */
+/* Collapsed, the rail is 4.2rem. The logo is near-square, so at full height it
+   is about 2.2rem wide and sits inside comfortably - it only needs centring. */
 body.sidebar-collapsed .sidebar .brand{justify-content:center; padding-left:0; padding-right:0;}
-body.sidebar-collapsed .sidebar .brand .mark{height:1.7rem;}
 
 .navgroup{margin:0 0 .3rem;}
 .navgroup-label{font-size:.65rem; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);
@@ -158,7 +155,6 @@ body.sidebar-collapsed .theme-picker select{display:none;}
   body:not(.sidebar-pinned-open) .sidebar .navgroup-label{display:none;}
   /* The narrow-window rail is the same width as the collapsed one. */
   body:not(.sidebar-pinned-open) .sidebar .brand{justify-content:center; padding-left:0; padding-right:0;}
-  body:not(.sidebar-pinned-open) .sidebar .brand .mark{height:1.7rem;}
   /* Same reasoning as the desktop icon mode: no visible toggle means the
      group cannot be allowed to stay shut. */
   body:not(.sidebar-pinned-open) .navgroup.collapsed .navgroup-items{display:block;}
