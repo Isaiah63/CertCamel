@@ -19,6 +19,12 @@ zones.json
 alert-state.json
 secrets-audit.log
 
+# The audit trail and its rotated archives. Records what happened on THIS
+# install - who changed what and when - so it belongs to the operator, not to
+# the repository. Never auto-deleted by retention; see Invoke-LogRetention.
+audit.log
+audit-*.log
+
 # Issued certificates, archived versions, ACME account state. These contain
 # UNENCRYPTED PRIVATE KEYS - that is how PEM works, and every ACME client is the
 # same. Keep them out of git, and out of any folder that syncs to the cloud.
