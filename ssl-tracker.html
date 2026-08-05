@@ -87,6 +87,10 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
     </div>
 
     <div class="navgroup navgroup-divided">
+      <a class="navitem" href="#/logs" data-view="logs">
+        <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg></span>
+        <span class="navlabel">Logs</span>
+      </a>
       <a class="navitem" href="#/docs" data-view="docs">
         <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
         <span class="navlabel">Docs</span>
@@ -117,6 +121,7 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
       <div id="view-home" class="view hidden"></div>
       <div id="view-certificates" class="view hidden"></div>
       <div id="view-settings" class="view hidden"></div>
+      <div id="view-logs" class="view hidden"></div>
       <div id="view-docs" class="view hidden"></div>
 
     </div>
@@ -147,6 +152,7 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
 <script src="assets/views/home.js"></script>
 <script src="assets/views/certificates.js"></script>
 <script src="assets/views/settings.js"></script>
+<script src="assets/views/logs.js"></script>
 <script src="assets/views/docs.js"></script>
 </body>
 </html>
