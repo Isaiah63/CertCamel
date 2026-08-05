@@ -36,8 +36,35 @@ $script:LibDir       = Join-Path $script:Root 'lib'
 $script:AcmeState    = Join-Path $script:Root 'acme-state'
 $script:CertsDir     = Join-Path $script:Root 'certs'
 $script:JobsDir      = Join-Path $script:Root 'jobs'
+$script:SweepFile    = Join-Path $script:JobsDir 'renew-due-sweep.json'
 
 $script:SettingsVersion = 2
+
+# The scheduled tasks, in the order a person cares about them: what actually
+# renews first, then what only looks, then what only emails. Shared between
+# setup.ps1 (which registers them) and serve.ps1 (which reports on them) so the
+# two cannot drift apart - a task renamed in one place and not the other would
+# read as "not registered" on the page while working perfectly well.
+#
+# "level" is the distinction that matters when reading the Home page: only ONE
+# of these three can change anything about a live certificate.
+$script:ScheduledTaskNames = @(
+    @{ key = 'renew';  name = 'Cert Camel Renew'
+       script = 'renew-due.ps1'
+       label = 'Renew and deploy'
+       level = 'Issues certificates and pushes them to load balancers'
+       detail = "Renews only what the certificate authority says is due, deploys each one to its assigned load balancers, then verifies every node is really serving it." }
+    @{ key = 'check';  name = 'SSL Cert Check'
+       script = 'check-ssl.ps1'
+       label = 'Expiry check'
+       level = 'Read-only'
+       detail = "Re-reads the expiry date of every tracked host so the page is current. Never issues or deploys anything." }
+    @{ key = 'report'; name = 'Cert Camel Monthly Report'
+       script = 'monthly-report.ps1'
+       label = 'Monthly summary email'
+       level = 'Read-only'
+       detail = "Sends the summary email on the 1st. Registered as a daily task that does nothing on the other days, because there is no monthly trigger to reach for." }
+)
 
 # Certificate authorities are profiles, not a single global setting: a real
 # estate often keeps some certificates on a paid CA for policy reasons while
@@ -634,6 +661,128 @@ function Invoke-LogRetention {
             -Detail "trimmed $removed run log file(s), $mb MB (keeping $($cfg.retentionDays) days / $($cfg.maxSizeMb) MB)"
     }
     return @{ removed = $removed; freedMb = [math]::Round($freed / 1mb, 2) }
+}
+
+function Get-AutomationStatus {
+    <#
+      What the Windows scheduler actually has registered for this folder.
+
+      Read through the Schedule.Service COM object rather than the ScheduledTasks
+      cmdlets. Measured on the three task names: Get-ScheduledTask plus
+      Get-ScheduledTaskInfo takes ~2200 ms, this takes ~150 ms for strictly more
+      information. The cmdlets are CIM-backed and pay for it.
+
+      Three outcomes that must not be conflated, because the response to each is
+      different:
+
+        registered = $false   nothing was ever set up here
+        enabled    = $false   set up, then switched off
+        available  = $false   the scheduler could not be read at all
+
+      Reporting the third as "off" would be a lie in the dangerous direction -
+      it would say automation is not running when it may well be.
+    #>
+
+    $out = @{ available = $true; error = $null; tasks = @() }
+
+    $folder = $null
+    try {
+        $svc = New-Object -ComObject 'Schedule.Service'
+        $svc.Connect()
+        $folder = $svc.GetFolder('\')
+    }
+    catch {
+        $out.available = $false
+        $out.error = ($_.Exception.Message -split "`n")[0].Trim()
+        # Still list the tasks, so the page can name what it cannot see.
+        foreach ($def in $script:ScheduledTaskNames) {
+            $out.tasks += @{
+                key = $def.key; name = $def.name; label = $def.label
+                level = $def.level; detail = $def.detail
+                registered = $false; enabled = $false; state = 'unknown'
+                nextRun = $null; lastRun = $null; lastResult = $null
+                schedule = $null; pathMatches = $true; commandPath = $null
+            }
+        }
+        return $out
+    }
+
+    # 1 disabled, 2 queued, 3 ready, 4 running.
+    $stateNames = @{ 0 = 'unknown'; 1 = 'disabled'; 2 = 'queued'; 3 = 'ready'; 4 = 'running' }
+
+    foreach ($def in $script:ScheduledTaskNames) {
+        $entry = @{
+            key = $def.key; name = $def.name; label = $def.label
+            level = $def.level; detail = $def.detail
+            registered = $false; enabled = $false; state = 'not registered'
+            nextRun = $null; lastRun = $null; lastResult = $null
+            schedule = $null; pathMatches = $true; commandPath = $null
+        }
+
+        $task = $null
+        try { $task = $folder.GetTask($def.name) } catch { }
+
+        if ($task) {
+            $entry.registered = $true
+            try { $entry.enabled = [bool]$task.Enabled } catch { }
+            try { $entry.state = $stateNames[[int]$task.State] } catch { $entry.state = 'unknown' }
+            try { if ($task.NextRunTime -and $task.NextRunTime.Year -gt 1999) { $entry.nextRun = $task.NextRunTime.ToString('o') } } catch { }
+            try { if ($task.LastRunTime -and $task.LastRunTime.Year -gt 1999) { $entry.lastRun = $task.LastRunTime.ToString('o') } } catch { }
+            try { $entry.lastResult = [int]$task.LastTaskResult } catch { }
+
+            try {
+                $d = $task.Definition
+
+                # The trigger's StartBoundary carries the time of day for a daily
+                # trigger. Reported as the raw boundary; the page formats it.
+                foreach ($tr in $d.Triggers) {
+                    if ($tr.StartBoundary) { $entry.schedule = [string]$tr.StartBoundary; break }
+                }
+
+                # Which script is really being run. The task stores an ABSOLUTE
+                # path, so copying this folder leaves the task pointing at the
+                # old one - renewal silently stops and the first symptom is an
+                # expiry warning weeks later. Worth catching on sight.
+                foreach ($a in $d.Actions) {
+                    if (-not $a.Arguments) { continue }
+                    $m = [regex]::Match([string]$a.Arguments, '-File\s+"?([^"]+)"?\s*$')
+                    if ($m.Success) {
+                        $entry.commandPath = $m.Groups[1].Value.Trim()
+                        $expected = Join-Path $script:Root $def.script
+                        try {
+                            $entry.pathMatches = ([IO.Path]::GetFullPath($entry.commandPath) -eq [IO.Path]::GetFullPath($expected))
+                        }
+                        catch { $entry.pathMatches = $false }
+                        break
+                    }
+                }
+            }
+            catch { }
+        }
+
+        $out.tasks += $entry
+    }
+
+    return $out
+}
+
+function Get-RenewalForecast {
+    <#
+      The last sweep's per-certificate verdict, as recorded by renew-due.ps1.
+
+      Nothing is computed here. renew-due.ps1 already works this out properly -
+      with the right ACME server selected, through the supported Posh-ACME API -
+      and now writes it to jobs/renew-due-sweep.json. Recomputing it in the
+      server would mean importing Posh-ACME into the long-lived listener, which
+      serve.ps1 deliberately does not do.
+    #>
+
+    if (-not (Test-Path $script:SweepFile)) { return $null }
+
+    # ReadAllText, not Get-Content: Get-Content attaches PSPath/PSDrive
+    # NoteProperties, and this object is handed straight to ConvertTo-Json.
+    try { return ([IO.File]::ReadAllText($script:SweepFile) | ConvertFrom-Json) }
+    catch { return $null }
 }
 
 function Write-SecretAuditLog {
