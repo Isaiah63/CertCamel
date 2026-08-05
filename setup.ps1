@@ -15,9 +15,22 @@ $domainSeed  = Join-Path $root 'domains.example.txt'
 $checker     = Join-Path $root 'check-ssl.ps1'
 $tracker     = Join-Path $root 'ssl-tracker.html'
 $launcher    = Join-Path $root 'Open Tracker.bat'
-$taskName    = 'SSL Cert Check'
 
 . (Join-Path $root 'acme-lib.ps1')
+
+# Task names come from the shared map in acme-lib.ps1 rather than being spelled
+# out here. They used to be literals in both this file and nothing else; now
+# serve.ps1 reports on the same tasks, and a name changed in one place but not
+# the other would show as "not registered" on the Home page while the task ran
+# perfectly well.
+function Get-SetupTaskName {
+    param([string]$Key)
+    $def = @($script:ScheduledTaskNames) | Where-Object { $_.key -eq $Key }
+    if (-not $def) { throw "No scheduled task is defined for '$Key'." }
+    return $def.name
+}
+
+$taskName = Get-SetupTaskName 'check'
 
 Write-Host ""
 Write-Host "  SSL Certificate Expiry Tracker - setup" -ForegroundColor Cyan
@@ -147,7 +160,7 @@ if ($answer -match '^[Yy]') {
 # 6. Unattended renewal (optional, and deliberately opt-in)
 # --------------------------------------------------------------------------- #
 
-$renewTask   = 'Cert Camel Renew'
+$renewTask   = Get-SetupTaskName 'renew'
 $renewScript = Join-Path $root 'renew-due.ps1'
 
 Write-Host ""
@@ -208,7 +221,7 @@ if ($wantRenew -match '^[Yy]') {
 # nothing is simpler to get right than reaching for the CIM trigger types the
 # cmdlet does not expose.
 
-$reportTask   = 'Cert Camel Monthly Report'
+$reportTask   = Get-SetupTaskName 'report'
 $reportScript = Join-Path $root 'monthly-report.ps1'
 
 Write-Host ""

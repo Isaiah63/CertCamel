@@ -1208,6 +1208,36 @@ function Invoke-Route {
             return
         }
 
+        '^/api/automation$' {
+            if ($Request.Method -ne 'GET') { Send-Error $Stream 405 'Use GET.'; return }
+
+            # Its own endpoint rather than part of /api/state: the state load
+            # runs on boot and after every job, and there is no reason to put
+            # 200 ms of scheduler lookup on that path for a panel only Home
+            # draws.
+            $forecast = Get-RenewalForecast
+
+            Send-Json $Stream @{
+                automation = (Get-AutomationStatus)
+                forecast   = $forecast
+                folder     = $script:Root
+            }
+            return
+        }
+
+        '^/api/forecast$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+
+            # -WhatIfOnly is the existing, documented dry run: it works out what
+            # WOULD renew and stops. Nothing is issued and no load balancer is
+            # touched. No -ResultPath, so renew-due.ps1 writes its verdicts to
+            # the shared sweep file the panel reads.
+            $id = Start-ChildJob -Kind 'forecast' -ScriptArgs @(
+                (Join-Path $PSScriptRoot 'renew-due.ps1'), '-WhatIfOnly')
+            Send-Json $Stream @{ jobId = $id }
+            return
+        }
+
         '^/api/logs$' {
             if ($Request.Method -ne 'GET') { Send-Error $Stream 405 'Use GET.'; return }
 
