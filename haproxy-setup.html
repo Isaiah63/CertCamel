@@ -16,10 +16,13 @@
 <style>
 :root{
   color-scheme:light;
-  --bg:#f5f6f9; --glow-1:rgba(99,102,241,.14); --glow-2:rgba(168,85,247,.12);
-  --surface:rgba(255,255,255,.72); --surface-solid:#fff;
-  --border:rgba(17,24,39,.09); --border-strong:rgba(17,24,39,.16);
-  --text:#0b0d12; --muted:#4d5666; --faint:#8a93a4;
+  /* Soft grey rather than white: pure #fff panels on a near-white ground put
+     most of the screen at maximum brightness with nothing to rest on. --faint
+     darkened with it - at #8a93a4 it failed AA on the background. */
+  --bg:#e9ebf1; --glow-1:rgba(99,102,241,.14); --glow-2:rgba(168,85,247,.12);
+  --surface:rgba(255,255,255,.62); --surface-solid:#f7f8fb;
+  --border:rgba(17,24,39,.11); --border-strong:rgba(17,24,39,.18);
+  --text:#0b0d12; --muted:#4d5666; --faint:#6b7484;
   --accent:#6366f1; --accent-2:#a855f7;
   --amber:#b45309; --amber-bg:rgba(245,158,11,.10);
   --green:#15803d; --green-bg:rgba(34,197,94,.10);
