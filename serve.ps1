@@ -29,6 +29,14 @@ $ErrorActionPreference = 'Stop'
 
 New-TrackerDirectories
 
+# Everything the server itself does is a person at the page.
+$script:RunLogSource = 'ui'
+
+# Trim run logs once at startup. Doing it here rather than on a timer keeps the
+# single-threaded listener free, and a server that has just been started is
+# exactly when nobody is waiting on it.
+try { [void](Invoke-LogRetention -Settings (Get-TrackerSettings)) } catch { }
+
 # --------------------------------------------------------------------------- #
 # Access control
 # --------------------------------------------------------------------------- #
@@ -367,6 +375,7 @@ function Get-StateResponse {
                 deploymentFailure  = @{ enabled = [bool]$settings.alerts.deploymentFailure.enabled }
                 monthlySummary     = @{ enabled = [bool]$settings.alerts.monthlySummary.enabled }
             }
+            logs = (Get-LogSettings -Settings $settings)
         }
         catalog       = $catalogOut
         targetCatalog = $targetCatalogOut
@@ -629,7 +638,31 @@ function Invoke-SaveSettings {
         }
     }
 
+    # Retention lives here too, so changing the limits takes effect on save
+    # rather than at the next restart.
+    if ($Payload.PSObject.Properties['logs'] -and $null -ne $Payload.logs) {
+        $days = 90; $mb = 200
+        if ($Payload.logs.PSObject.Properties['retentionDays'] -and $Payload.logs.retentionDays) { $days = [int]$Payload.logs.retentionDays }
+        if ($Payload.logs.PSObject.Properties['maxSizeMb']     -and $Payload.logs.maxSizeMb)     { $mb   = [int]$Payload.logs.maxSizeMb }
+        if ($days -lt 1)    { $days = 1 }
+        if ($mb   -lt 1)    { $mb   = 1 }
+        if ($days -gt 3650) { $days = 3650 }
+        if ($mb   -gt 51200){ $mb   = 51200 }
+        $settings.logs = @{ retentionDays = $days; maxSizeMb = $mb }
+    }
+
     Save-TrackerSettings -Settings $settings
+
+    # Which sections were actually present in the payload, so the trail says
+    # what changed rather than just "settings saved" on every keystroke of a
+    # save. Never the values - some of them are credentials.
+    $touched = @()
+    foreach ($k in @('contact','cas','providers','targets','alerts','logs')) {
+        if ($Payload.PSObject.Properties[$k] -and $null -ne $Payload.$k) { $touched += $k }
+    }
+    Write-AuditEvent -Event 'settings' -Object ($touched -join ', ') -Outcome 'ok' `
+        -Detail "settings saved$(if ($touched.Count) { '' } else { ' (no sections present)' })"
+
     return @{ ok = $true }
 }
 
@@ -653,15 +686,24 @@ function Start-ChildJob {
     }
 
     $id = [Guid]::NewGuid().ToString('n').Substring(0, 12)
-    $log = Join-Path $script:JobsDir "$id.log"
-    $err = Join-Path $script:JobsDir "$id.err"
+
+    # Named for when and what, not for a random id. The old <guid>.log told you
+    # nothing without opening it, which made a folder of them unreadable and
+    # made history effectively lost once the in-memory job registry was gone.
+    # The child does NOT also self-log: its stdout is redirected here, and two
+    # writers on one file would interleave badly.
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHHmmssZ')
+    $log = Join-Path $script:JobsDir "$stamp-$Kind.log"
+    $err = Join-Path $script:JobsDir "$stamp-$Kind.err"
     $res = Join-Path $script:JobsDir "$id.result.json"
 
     # Start-Process refuses to point both streams at one file, so stderr gets
     # its own and the reader stitches them together.
     New-Item -ItemType File -Path $log -Force | Out-Null
 
-    $argString = ConvertTo-ArgumentString (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File') + $ScriptArgs)
+    # Everything started from here was started by a person at the page, which is
+    # what the audit trail records as the source.
+    $argString = ConvertTo-ArgumentString (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File') + $ScriptArgs + @('-Source', 'ui'))
 
     $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argString `
         -WindowStyle Hidden -PassThru `
@@ -1030,6 +1072,10 @@ function Invoke-Route {
             $settings.certs[$certKey].targets = @($store)
 
             Save-TrackerSettings -Settings $settings
+            Write-AuditEvent -Event 'assign' -Object $certKey -Outcome 'ok' `
+                -Detail $(if (@($store).Count) {
+                    "assigned to $(@($store | ForEach-Object { if ($_ -is [string]) { $_ } else { "$($_.id) (with overrides)" } }) -join ', ')"
+                } else { 'assignment cleared' })
             Send-Json $Stream @{ ok = $true; certId = $certKey; targets = @($store) }
             return
         }
@@ -1056,6 +1102,8 @@ function Invoke-Route {
             $settings.certs[$certKey].caId = $wanted
 
             Save-TrackerSettings -Settings $settings
+            Write-AuditEvent -Event 'ca' -Object $certKey -Outcome 'ok' `
+                -Detail $(if ($wanted) { "issuer pinned to '$wanted'" } else { 'issuer set to follow the default' })
             Send-Json $Stream @{ ok = $true; certId = $certKey; caId = $wanted }
             return
         }
@@ -1075,6 +1123,9 @@ function Invoke-Route {
             $settings.certs[$certKey].external = $wanted
 
             Save-TrackerSettings -Settings $settings
+            Write-AuditEvent -Event 'external' -Object $certKey -Outcome 'ok' `
+                -Detail $(if ($wanted) { 'marked as renewed by another system - will never be issued from here' }
+                          else         { 'brought back under Cert Camel - will be issued from here again' })
             Send-Json $Stream @{ ok = $true; certId = $certKey; external = $wanted }
             return
         }
@@ -1154,6 +1205,154 @@ function Invoke-Route {
             if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
             $id = Start-ChildJob -Kind 'check' -ScriptArgs @((Join-Path $PSScriptRoot 'check-ssl.ps1'))
             Send-Json $Stream @{ jobId = $id }
+            return
+        }
+
+        '^/api/logs$' {
+            if ($Request.Method -ne 'GET') { Send-Error $Stream 405 'Use GET.'; return }
+
+            $settings = Get-TrackerSettings
+
+            # Listed from the FILESYSTEM, not from the in-memory job registry.
+            # That registry is lost on restart, which is why history used to
+            # become unreachable the moment the server was restarted even though
+            # the files were sitting there the whole time.
+            $runs = @()
+            if (Test-Path $script:JobsDir) {
+                $runs = @(Get-ChildItem $script:JobsDir -File -Filter '*.log' -ErrorAction SilentlyContinue |
+                          Sort-Object LastWriteTime -Descending | Select-Object -First 200 | ForEach-Object {
+                    # "2026-08-05T032000Z-renew-due.log" -> kind and time.
+                    $kind = 'run'
+                    if ($_.BaseName -match '^\d{4}-\d{2}-\d{2}T\d{6}Z-(?<k>.+)$') { $kind = $Matches.k }
+                    @{ name = $_.Name; kind = $kind
+                       at = $_.LastWriteTime.ToString('o'); bytes = $_.Length }
+                })
+            }
+
+            $auditBytes = 0
+            $auditLines = 0
+            if (Test-Path $script:AuditFile) {
+                $auditBytes = (Get-Item $script:AuditFile).Length
+                # Shared read: a job appending right now must not make this
+                # report zero entries. Only the count leaves here, so the
+                # Get-Content NoteProperty trap does not apply - but the lock does.
+                try {
+                    $fs = [IO.File]::Open($script:AuditFile, 'Open', 'Read', 'ReadWrite')
+                    try {
+                        $sr = New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8)
+                        $auditLines = @($sr.ReadToEnd() -split "`r?`n" | Where-Object { $_ -ne '' }).Count
+                        $sr.Dispose()
+                    }
+                    finally { $fs.Dispose() }
+                }
+                catch { }
+            }
+            $archives = @(Get-ChildItem $script:Root -File -Filter 'audit-*.log' -ErrorAction SilentlyContinue |
+                          Sort-Object Name -Descending | ForEach-Object { @{ name = $_.Name; bytes = $_.Length } })
+
+            # Count what the size cap actually measures - every trimmable file in
+            # the folder - not just the .log files listed above. The page reports
+            # this against the limit, so summing a different set would show a
+            # figure that never quite matches the one doing the trimming.
+            #
+            # Summed by hand: Measure-Object -Property reads object PROPERTIES,
+            # and these are hashtable KEYS, which is not the same thing in 5.1.
+            $totalBytes = 0
+            Get-ChildItem $script:JobsDir -File -ErrorAction SilentlyContinue |
+                Where-Object { ($_.Extension -in @('.log', '.err')) -or ($_.Name -like '*.result.json') } |
+                ForEach-Object { $totalBytes += $_.Length }
+
+            Send-Json $Stream @{
+                runs      = @($runs)
+                audit     = @{ lines = $auditLines; bytes = $auditBytes; archives = @($archives) }
+                retention = (Get-LogSettings -Settings $settings)
+                totalBytes = $totalBytes
+            }
+            return
+        }
+
+        '^/api/logs/run/(?<name>[^/]+)$' {
+            if ($Request.Method -ne 'GET') { Send-Error $Stream 405 'Use GET.'; return }
+
+            # A name from the client used to build a path: the exact shape that
+            # needs a whitelist AND a resolve check, same as /api/download and
+            # the assets route.
+            $name = [string]$Matches.name
+            if ($name -notmatch '^[A-Za-z0-9._\-]{1,120}$' -or $name -match '\.\.' -or
+                ($name -notlike '*.log' -and $name -notlike '*.err')) {
+                Send-Error $Stream 400 'Invalid log name.'
+                return
+            }
+
+            $full = $null
+            try { $full = [IO.Path]::GetFullPath((Join-Path $script:JobsDir $name)) } catch { }
+            $rootFull = [IO.Path]::GetFullPath($script:JobsDir).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+            if (-not $full -or -not $full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase) -or
+                -not (Test-Path -LiteralPath $full -PathType Leaf)) {
+                Send-Error $Stream 404 'No such log.'
+                return
+            }
+
+            # Shared read/write: a run in progress still has this file open.
+            $text = ''
+            try {
+                $fs = [IO.File]::Open($full, 'Open', 'Read', 'ReadWrite')
+                try { $sr = New-Object IO.StreamReader($fs); $text = $sr.ReadToEnd(); $sr.Dispose() }
+                finally { $fs.Dispose() }
+            }
+            catch { Send-Error $Stream 500 "Could not read that log: $($_.Exception.Message)"; return }
+
+            Send-Json $Stream @{ name = $name; content = $text }
+            return
+        }
+
+        '^/api/logs/audit$' {
+            if ($Request.Method -ne 'GET') { Send-Error $Stream 405 'Use GET.'; return }
+
+            $wantEvent = Get-QueryValue -Query $Request.Query -Name 'event'
+            $file = $script:AuditFile
+
+            # An archive may be requested by name; same guard as the run logs.
+            $archive = Get-QueryValue -Query $Request.Query -Name 'archive'
+            if ($archive) {
+                if ($archive -notmatch '^audit-[0-9\-]{1,32}\.log$') { Send-Error $Stream 400 'Invalid archive name.'; return }
+                $file = Join-Path $script:Root $archive
+            }
+
+            if (-not (Test-Path $file)) { Send-Json $Stream @{ lines = @(); truncated = $false; total = 0 }; return }
+
+            # ReadAllLines, NOT Get-Content - see the note under /api/domains
+            # below. These strings go straight into Send-Json, and Get-Content's
+            # PSDrive NoteProperty turns that into an unbounded walk of session
+            # state that wedges this single-threaded server. Shared read as well,
+            # because a job may be appending to the audit log right now.
+            $all = @()
+            try {
+                $fs = [IO.File]::Open($file, 'Open', 'Read', 'ReadWrite')
+                try {
+                    $sr = New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8)
+                    $all = @($sr.ReadToEnd() -split "`r?`n" | Where-Object { $_ -ne '' })
+                    $sr.Dispose()
+                }
+                finally { $fs.Dispose() }
+            }
+            catch { Send-Error $Stream 500 "Could not read the audit log: $($_.Exception.Message)"; return }
+
+            if ($wantEvent) {
+                # The event column is the fourth whitespace-separated field.
+                $all = @($all | Where-Object { ($_ -split '\s+')[3] -eq $wantEvent })
+            }
+
+            # Newest last in the file; hand back the tail, and say when it was cut
+            # rather than silently showing a partial picture. `total` is the count
+            # BEFORE trimming - reporting the trimmed count would make a truncated
+            # view look complete.
+            $max   = 500
+            $total = $all.Count
+            $truncated = ($total -gt $max)
+            if ($truncated) { $all = @($all | Select-Object -Last $max) }
+
+            Send-Json $Stream @{ lines = @($all); truncated = $truncated; total = $total }
             return
         }
 
