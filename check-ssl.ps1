@@ -20,7 +20,10 @@ param(
 
     # How many hosts to check at once. These are idle socket waits rather than
     # CPU work, so the useful number is well above the core count.
-    [int]$Concurrency = 12
+    [int]$Concurrency = 12,
+
+    [string]$RunLogPath,
+    [string]$Source = 'task'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +32,13 @@ $root       = $PSScriptRoot
 $domainList = Join-Path $root 'domains.txt'
 $outFile    = Join-Path $root 'ssl-data.js'
 $tmpFile    = "$outFile.tmp"
+
+# This script is otherwise standalone - the monitoring half needs nothing
+# installed, which is a property worth keeping. acme-lib is only dot-sourced for
+# the run log and audit trail: it defines functions and a few paths, costs about
+# 100ms, and pulls in nothing external (Posh-ACME is loaded on demand elsewhere).
+. (Join-Path $root 'acme-lib.ps1')
+[void](Start-RunLog -Kind 'check' -Path $RunLogPath -Source $Source)
 
 # --------------------------------------------------------------------------- #
 # Read the domain list
@@ -458,3 +468,14 @@ if ($expired -eq 0 -and $expiring -eq 0 -and $failed -eq 0) {
 Write-Host ""
 Write-Host "  Wrote ssl-data.js - open ssl-tracker.html to view." -ForegroundColor Cyan
 Write-Host ""
+
+# The console output above is a coloured, progress-bar UI rather than a log, so
+# the run log gets the summary instead of a transcript - that is the part with
+# any value after the fact, and teeing the rest would write carriage returns and
+# ANSI-shaped noise into a file nobody could read.
+$summary = "checked $(@($results).Count) host(s): $expired expired, $expiring expiring within 30 days, $failed unreachable"
+Write-RunLog "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] [info] $summary"
+Write-AuditEvent -Event 'check' -Object 'domains.txt' `
+    -Outcome $(if ($expired -gt 0 -or $failed -gt 0) { 'warn' } else { 'ok' }) -Detail $summary
+
+try { [void](Invoke-LogRetention -Settings (Get-TrackerSettings)) } catch { }

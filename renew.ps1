@@ -48,12 +48,22 @@ param(
     # is not expressible on a command line, so "renew and push nothing" stays
     # -NoDeploy - one flag, one meaning, rather than an empty array quietly
     # meaning something different from an absent one.
-    [string[]]$TargetList
+    [string[]]$TargetList,
+
+    # Where to write this run's narrative. serve.ps1 passes one so the page can
+    # tail the same file that is kept afterwards; run from a scheduled task with
+    # nothing passed, a self-describing name is generated instead.
+    [string]$RunLogPath,
+
+    # 'ui' or 'task' - recorded on every audit line, because whether a person or
+    # the scheduler made a change is usually the next question asked about it.
+    [string]$Source = 'cli'
 )
 
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'acme-lib.ps1')
+[void](Start-RunLog -Kind 'renew' -Path $RunLogPath -Source $Source)
 
 # --------------------------------------------------------------------------- #
 # Logging
@@ -64,8 +74,9 @@ $ErrorActionPreference = 'Stop'
 
 function Write-Log {
     param([string]$Message, [string]$Level = 'info')
-    $stamp = (Get-Date).ToString('HH:mm:ss')
-    Write-Output "[$stamp] [$Level] $Message"
+    $line = "[$((Get-Date).ToString('HH:mm:ss'))] [$Level] $Message"
+    Write-Output $line
+    Write-RunLog $line     # so an unattended run leaves the same narrative behind
 }
 
 $outcome = @{
@@ -321,6 +332,14 @@ try {
             $entry.pem      = [IO.Path]::GetFileName($pemPath)
             $entry.files    = @($files | Select-Object -Unique)
             $entry.notAfter = $paCert.NotAfter.ToString('o')
+            # The serial is what identifies one specific issuance, so it is the
+            # thing worth recording in the audit trail - "renewed" without it
+            # cannot be matched against what a node is actually serving.
+            $entry.serial   = [string]$paCert.Thumbprint
+            try {
+                $issued = New-Object Security.Cryptography.X509Certificates.X509Certificate2 $paCert.CertFile
+                $entry.serial = $issued.SerialNumber
+            } catch { }
 
             Write-Log "$display issued." 'ok'
 
@@ -366,7 +385,8 @@ try {
                 # re-read the assignment, so a run-time override survives the hop
                 # between the two scripts.
                 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $deployScript `
-                    -Cert $certId -ResultPath $deployResult -TargetList @certTargets -CalledFromRenew 2>&1 |
+                    -Cert $certId -ResultPath $deployResult -TargetList @certTargets -CalledFromRenew `
+                    -Source $Source 2>&1 |
                   ForEach-Object { Write-Output $_ }
                 $deployOk = ($LASTEXITCODE -eq 0)
 
@@ -399,6 +419,13 @@ try {
 
         Send-RenewalOutcomeAlert -Settings $settings -DisplayName $display -Ok $entry.ok `
             -Deployed $entry.deployed -ErrorMessage $entry.error
+
+        # One audit line per certificate, not one per run: the question later is
+        # always "what happened to this certificate", never "what did run 7 do".
+        Write-AuditEvent -Event 'renew' -Object $display -Outcome $(if ($entry.ok) { 'ok' } else { 'fail' }) `
+            -Detail $(if ($entry.ok) {
+                "issued serial $($entry.serial), expires $(if ($entry.notAfter) { ([datetime]$entry.notAfter).ToString('yyyy-MM-dd') } else { 'unknown' })$(if ($null -eq $entry.deployed) { ', not deployed' } elseif ($entry.deployed) { ', deployed' } else { ', deployment incomplete' })"
+            } else { $entry.error })
 
         $outcome.results += $entry
         Save-Outcome
