@@ -74,6 +74,8 @@ $script:Mime = @{
     '.js'   = 'application/javascript; charset=utf-8'
     '.css'  = 'text/css; charset=utf-8'
     '.json' = 'application/json; charset=utf-8'
+    '.png'  = 'image/png'
+    '.svg'  = 'image/svg+xml'
     '.pem'  = 'application/x-pem-file'
     '.cer'  = 'application/x-x509-ca-cert'
     '.key'  = 'application/octet-stream'
