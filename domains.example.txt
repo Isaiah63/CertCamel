@@ -18,6 +18,15 @@
 # your DNS provider manages ends up on one certificate together. You do not
 # have to configure that - add the domain here and it follows.
 #
+#   - Listing "example.com" and "*.example.com" together is fine and expected.
+#     The zone then produces two certificates, and the apex goes on the
+#     WILDCARD one - it has to, because *.example.com does not match a bare
+#     example.com. The other certificate leaves the apex out on purpose: two
+#     certificates cannot both serve one name, the exact match would win, and
+#     the loser would silently never appear.
+#     Both names stay watched either way. This only decides which certificate
+#     carries which name, and nothing here needs changing for it.
+#
 # This file is the shipped example. "First Time Setup.bat" copies it to
 # domains.txt, which is yours and is never committed or overwritten.
 

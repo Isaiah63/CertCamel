@@ -134,6 +134,13 @@
       'next one; lines before the first header are Uncategorized. "#" starts a comment. ' +
       'Certificates are grouped by DNS zone, so a new hostname joins the right certificate on ' +
       'its own - no other setup needed here.'));
+    // The one rule that is not self-evident from the file. Reaches people who
+    // already have a domains.txt and so never see the shipped sample's header.
+    card.appendChild(el('p', 'hint',
+      'Listing a domain and its wildcard together (example.com and *.example.com) is fine. ' +
+      'The apex goes on the wildcard certificate, because *.example.com does not match a bare ' +
+      'example.com — the other certificate leaves it out so the two never compete for one name. ' +
+      'Both stay watched.'));
 
     var ta = document.createElement('textarea');
     ta.className = 'domains-text';
@@ -292,6 +299,24 @@
       if (c.deferredNames && c.deferredNames.length) {
         covers.appendChild(el('div', 'mini', 'Not included: ' + c.deferredNames.join(', ')));
       }
+      // Deliberately its own line, not folded into "Not included". That one is a
+      // warning - the live certificate has names this renewal would drop. This
+      // is the opposite: the name IS covered, by the sibling wildcard, on
+      // purpose.
+      if (c.apexOnWildcard) {
+        covers.appendChild(el('div', 'mini', c.zone + ' is on the wildcard certificate for this zone'));
+      }
+      // The rule has changed what will be issued, but the certificate on disk
+      // predates it and still carries the moved name - so it is still competing
+      // for it wherever it is deployed.
+      if (c.staleNames && c.staleNames.length) {
+        var stale = el('div', 'mini warnline',
+          'Issued copy still carries ' + c.staleNames.join(', ') + ' — renew to apply');
+        stale.title = 'The certificate currently on disk was issued before this zone gained a wildcard. ' +
+                      'Until it is renewed it still claims that name, and whichever certificate HAProxy ' +
+                      'matches first will serve it.';
+        covers.appendChild(stale);
+      }
       tr.appendChild(covers);
 
       var caCell = el('td');
@@ -407,7 +432,23 @@
     (dep.last.targets || []).forEach(function(t){
       (t.nodes || []).forEach(function(n){
         var pushed = n.push && n.push.ok;
-        var served = (n.verify || []).length ? (n.verify || []).every(function(v){ return v.ok; }) : null;
+        var checks = n.verify || [];
+        // Mirrors deploy.ps1's pass rule exactly. A node is green on evidence -
+        // an identity probe that matched the serial - not on the absence of
+        // complaints. A contested COVERAGE probe (another certificate that also
+        // covers a shared name is winning it) is a fact about the config, not a
+        // failure, so it must not paint the node red; anything else unmatched
+        // still does.
+        var hardFailed = checks.filter(function(v){
+          return !v.ok && !(v.contested && v.role === 'coverage');
+        }).length;
+        var proved = checks.filter(function(v){ return v.ok && v.role === 'identity'; }).length;
+
+        var served;
+        if (!checks.length)                    { served = null; }        // not verified
+        else if (hardFailed === 0 && proved)   { served = true; }
+        else                                   { served = false; }
+
         var cls = (pushed && served === true) ? 'good' : (pushed && served === null) ? 'warn' : 'bad';
         var pip = el('span', 'pip ' + cls, n.name);
         var why = [];
@@ -417,8 +458,10 @@
             ? 'crt-list: ' + (n.crtList.action === 'added' ? 'appended and loaded' : 'already referenced')
             : 'crt-list failed: ' + (n.crtList.error || 'not referenced'));
         }
-        (n.verify || []).forEach(function(v){
-          why.push(v.sni + ': ' + (v.ok ? 'serving it, ' + v.daysRemaining + ' days left' : (v.error || 'not serving it')));
+        checks.forEach(function(v){
+          if (v.ok)             { why.push(v.sni + ': serving it, ' + v.daysRemaining + ' days left'); }
+          else if (v.contested) { why.push(v.sni + ': contested - ' + (v.error || 'another certificate covers this name')); }
+          else                  { why.push(v.sni + ': ' + (v.error || 'not serving it')); }
         });
         pip.title = why.join('\n');
         wrap.appendChild(pip);
