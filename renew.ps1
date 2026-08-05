@@ -348,7 +348,17 @@ try {
                 $entry.deployed = $null
             }
             else {
-                Write-Log "Deploying $display to $($certTargets -join ', ')..."
+                # Labels, not ids. A group's id is fixed at creation and is often
+                # a leftover from whatever it was first called, while the label is
+                # the name the operator actually maintains - and every other line
+                # in the deploy log already uses the label. Falls back to the id
+                # for a group that has since been deleted, which is the one case
+                # where the raw id is the more useful thing to print.
+                $targetNames = @($certTargets | ForEach-Object {
+                    $tp = Get-TargetProfile -Settings $settings -TargetId $_
+                    if ($tp -and $tp.label) { $tp.label } else { "$_ (no longer configured)" }
+                })
+                Write-Log "Deploying $display to $($targetNames -join ', ')..."
                 $deployScript = Join-Path $PSScriptRoot 'deploy.ps1'
                 $deployResult = Join-Path $script:JobsDir "renew-deploy-$certId.json"
 
