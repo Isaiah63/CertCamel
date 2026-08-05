@@ -81,6 +81,38 @@ loaded it` versus `already referenced` — and a certificate that got appended o
 disk but never picked up by the running process fails the node loudly instead
 of surfacing as an unexplained verification failure.
 
+Rather than typing that path, press **Discover** on the group: it asks each node
+which frontends terminate TLS and offers the ones every node agrees on, filling
+in the crt-list and port from what they report. A frontend present on only some
+of the nodes is shown as *partial* rather than offered — a pair configured
+differently is worth fixing before you deploy to it. Discovery is strictly
+read-only; Cert Camel writes certificate storage and crt-list entries, never a
+bind line.
+
+### One group, several frontends
+
+A group answers *"which nodes, and what credentials"*. A crt-list answers
+*"where is this certificate referenced"*. Those are different questions, so an
+assignment can override the group's placement settings for one certificate:
+
+```json
+"certs": {
+  "wildcard.example.com": {
+    "targets": [ { "id": "office", "crtList": "/etc/haproxy/crt-list-wild.txt" } ]
+  },
+  "example.com": { "targets": [ "office" ] }
+}
+```
+
+Both certificates go to the same pair of nodes with the same credentials, but
+land in different frontends. Set it from the **Deployed** cell — tick a group,
+open *Overrides for this certificate*, and leave anything blank to inherit. A
+bare id stays a bare id, so nothing changes shape until you pin something.
+
+> Overrides cover placement (`crtList`, `verifyPort`, `remoteName`), never
+> credentials — those belong to the group, and the API refuses an override that
+> names one.
+
 ### Setting it up
 
 Settings → **Load balancers** → add a group. One entry per set of nodes that
@@ -363,6 +395,22 @@ shop.example.com
 
 That produces a second, independent certificate containing `*.example.com`
 **and** `example.com`, with its own row, Renew button and `.pem`.
+
+**The apex goes on the wildcard, and comes off the other certificate.** It has
+to be on the wildcard — `*.example.com` does not match a bare `example.com` — so
+leaving it on both would put one name on two certificates of equal specificity,
+where only one can ever serve it. HAProxy would match whichever it indexed
+first and the loser would silently never appear. So in the example above, the
+first certificate covers `www.` and `shop.` only, and the row says so.
+
+Nothing to configure, and **do not delete the apex line from `domains.txt`** to
+achieve it: a line there means both "watch this name" and "put it on the SAN
+certificate", and removing it would stop the name being monitored. Both names
+stay watched either way.
+
+A certificate issued before this rule existed still carries the apex until it is
+renewed, so its row and its deploy log say *"still carries example.com — renew
+to apply"* until you do.
 
 The wildcard is **never** merged into the certificate covering your explicit
 names, and there is no setting to merge them. Some routers — OpenShift among
