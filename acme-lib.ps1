@@ -1888,6 +1888,52 @@ function Get-HAProxyCertificates {
     return @($names)
 }
 
+function Get-HAProxyFrontends {
+    <#
+      Which frontends this node terminates TLS on, and for each: the port it
+      binds and the crt-list (or single crt) it loads certificates from.
+
+      Strictly read-only, and that boundary is the point. Cert Camel writes
+      certificate storage and crt-list entries, never a bind line and never a
+      frontend, so it can sit alongside whatever config management owns
+      haproxy.cfg. This exists so the operator picks a frontend from a list
+      instead of retyping a path and a port that the node already knows - the
+      entire class of typo that the filename-rewrite warning exists to catch.
+
+      Frontends with no TLS bind are skipped: there is nothing to deploy a
+      certificate to.
+    #>
+    param([string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion, [switch]$InsecureTls)
+
+    $out = @()
+    $frontends = Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                    -Path "/$ApiVersion/services/haproxy/configuration/frontends" -InsecureTls:$InsecureTls
+
+    foreach ($fe in @($frontends)) {
+        $name = [string]$fe.name
+        if (-not $name) { continue }
+
+        $binds = @()
+        try {
+            $binds = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                        -Path "/$ApiVersion/services/haproxy/configuration/frontends/$([Uri]::EscapeDataString($name))/binds" `
+                        -InsecureTls:$InsecureTls)
+        }
+        catch { continue }   # a frontend whose binds cannot be read is not a usable target
+
+        foreach ($b in $binds) {
+            if (-not $b.ssl) { continue }
+            $out += @{
+                frontend = $name
+                port     = $(if ($b.port) { [int]$b.port } else { $null })
+                crtList  = [string]$b.crt_list
+                crt      = [string]$b.crt
+            }
+        }
+    }
+    return @($out)
+}
+
 function Get-NormalisedStorageName {
     # The Data Plane API's own rewrite: interior dots become underscores, the
     # extension is kept. "www.example.com.pem" -> "www_example_com.pem".
