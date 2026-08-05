@@ -28,6 +28,10 @@ $script:ZonesFile    = Join-Path $script:Root 'zones.json'
 $script:AlertStateFile = Join-Path $script:Root 'alert-state.json'
 $script:DomainsFile  = Join-Path $script:Root 'domains.txt'
 $script:SecretAuditFile = Join-Path $script:Root 'secrets-audit.log'
+$script:AuditFile    = Join-Path $script:Root 'audit.log'
+# Rotation, not deletion: see Invoke-LogRetention for why the audit trail is
+# exempt from the size cap that governs run logs.
+$script:AuditMaxBytes = 5mb
 $script:LibDir       = Join-Path $script:Root 'lib'
 $script:AcmeState    = Join-Path $script:Root 'acme-state'
 $script:CertsDir     = Join-Path $script:Root 'certs'
@@ -271,6 +275,9 @@ function New-DefaultSettings {
         targets     = @()
         certs       = @{}
         alerts      = New-DefaultAlertSettings
+        # Run-log retention. The audit trail is not governed by these - see
+        # Invoke-LogRetention for why.
+        logs        = @{ retentionDays = 90; maxSizeMb = 200 }
     }
 }
 
@@ -418,6 +425,217 @@ function Save-SecretStore {
     Move-Item -Path $tmp -Destination $script:SecretsFile -Force
 }
 
+# --------------------------------------------------------------------------- #
+# Run logs and the audit trail
+# --------------------------------------------------------------------------- #
+# Two different things, deliberately kept apart:
+#
+#   run log    the narrative of one run. What a person reads when something
+#              went wrong. Verbose, disposable, governed by retention.
+#   audit log  one line per state change, append-only, never auto-deleted.
+#              What answers "who changed what, when, and did it work".
+#
+# Before this existed the scheduled tasks wrote NOTHING - they launch with
+# -WindowStyle Hidden and no redirection, so the runs nobody watches were the
+# only ones with no record at all.
+
+$script:RunLogPath   = $null
+$script:RunLogSource = 'cli'
+$script:SecretMasks  = $null
+
+function Get-SecretMasks {
+    <#
+      Plaintext secret values, read once per run, so a log line can never carry
+      one even if some future change starts echoing more than it should.
+
+      Nothing currently leaks - that was verified before any of this was built -
+      so this is a guard against tomorrow rather than a fix for today. The values
+      are already resident during a run (the Data Plane API password is used on
+      every push), so holding them costs no exposure that did not already exist.
+    #>
+    if ($null -ne $script:SecretMasks) { return $script:SecretMasks }
+
+    $masks = @()
+    try {
+        $store = Get-SecretStore
+        foreach ($k in @($store.Keys)) {
+            $v = ConvertFrom-SecureStringPlain $store[$k]
+            # Very short values would mask harmless text everywhere.
+            if ($v -and $v.Length -ge 8) { $masks += $v }
+        }
+    }
+    catch { }   # unreadable store is not a reason to refuse to log
+
+    $script:SecretMasks = @($masks)
+    return $script:SecretMasks
+}
+
+function Protect-LogLine {
+    param([string]$Line)
+    if (-not $Line) { return $Line }
+    foreach ($m in (Get-SecretMasks)) {
+        if ($Line.Contains($m)) { $Line = $Line.Replace($m, '[redacted]') }
+    }
+    return $Line
+}
+
+function Start-RunLog {
+    <#
+      Open the run log for this process. serve.ps1 passes a path so the page can
+      tail the same file it will keep; a scheduled task passes nothing and gets a
+      self-describing name, which is also what makes the folder readable - the
+      old GUID filenames said nothing about what they were without opening them.
+    #>
+    param([string]$Kind, [string]$Path, [string]$Source = 'cli')
+
+    if (-not (Test-Path $script:JobsDir)) {
+        New-Item -ItemType Directory -Path $script:JobsDir -Force | Out-Null
+    }
+
+    if ($Path) { $script:RunLogPath = $Path }
+    else {
+        $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHHmmssZ')
+        $script:RunLogPath = Join-Path $script:JobsDir "$stamp-$Kind.log"
+    }
+    $script:RunLogSource = $Source
+    return $script:RunLogPath
+}
+
+function Write-RunLog {
+    param([string]$Line)
+    if (-not $script:RunLogPath) { return }
+    try {
+        [IO.File]::AppendAllText($script:RunLogPath, (Protect-LogLine $Line) + "`r`n", [Text.Encoding]::UTF8)
+    }
+    catch { }   # a logging failure must never be why a renewal fails
+}
+
+function Write-AuditEvent {
+    <#
+      One line per state change. Fixed columns so it stays greppable by eye and
+      parseable by anything else:
+
+        when · who · source · event · object · outcome · detail
+
+      "who" is the Windows user, because in an assessment that is the answer to
+      the question. "source" separates ui from task - whether a person or the
+      scheduler made this change is usually the next thing asked.
+
+      Never carries a secret VALUE. Key names only, and everything goes through
+      the same redaction the run log uses.
+    #>
+    param(
+        [string]$Event,
+        [string]$Object,
+        [ValidateSet('ok','fail','warn','info')][string]$Outcome = 'ok',
+        [string]$Detail = '',
+        [string]$Source
+    )
+
+    if (-not $Source) { $Source = $script:RunLogSource }
+
+    # PadRight widens a short value but never truncates a long one, so a name
+    # that overruns its column pushes the rest of ITS line along and leaves every
+    # other line still lined up. Losing characters from a hostname to keep the
+    # columns pretty would be the wrong trade in a record.
+    $line = '{0}  {1}  {2}  {3}  {4}  {5}  {6}' -f `
+        (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'),
+        $env:USERNAME.PadRight(12),
+        $Source.PadRight(4),
+        $Event.PadRight(8),
+        $(if ($Object) { $Object } else { '-' }).PadRight(24),
+        $Outcome.PadRight(4),
+        (Protect-LogLine $Detail)
+
+    try {
+        # Rotate rather than truncate. The archive is kept - see the retention
+        # note about why this file is not subject to the size cap.
+        if ((Test-Path $script:AuditFile) -and (Get-Item $script:AuditFile).Length -gt $script:AuditMaxBytes) {
+            $archive = Join-Path $script:Root ("audit-{0}.log" -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss'))
+            Move-Item -LiteralPath $script:AuditFile -Destination $archive -Force
+        }
+        [IO.File]::AppendAllText($script:AuditFile, $line + "`r`n", [Text.Encoding]::UTF8)
+    }
+    catch { }
+}
+
+function Get-LogSettings {
+    <#
+      Retention, with defaults that keep a useful amount without growing without
+      limit. Both are user-adjustable under Settings > General.
+    #>
+    param([hashtable]$Settings)
+
+    $days = 90
+    $mb   = 200
+    if ($Settings -and $Settings.ContainsKey('logs') -and $Settings.logs) {
+        if ($Settings.logs.ContainsKey('retentionDays') -and $Settings.logs.retentionDays) { $days = [int]$Settings.logs.retentionDays }
+        if ($Settings.logs.ContainsKey('maxSizeMb')     -and $Settings.logs.maxSizeMb)     { $mb   = [int]$Settings.logs.maxSizeMb }
+    }
+    if ($days -lt 1) { $days = 1 }
+    if ($mb   -lt 1) { $mb   = 1 }
+    return @{ retentionDays = $days; maxSizeMb = $mb }
+}
+
+function Invoke-LogRetention {
+    <#
+      Trim RUN logs, oldest first, by age then by total size - whichever bites
+      first. Every trim is itself an audit event, so the trail can account for
+      its own gaps rather than just having them.
+
+      The audit log is deliberately NOT subject to this. Deleting audit records
+      to reclaim disk is precisely what an assessor would object to, and a silent
+      exception would be worse than a stated one: it rotates to audit-<stamp>.log
+      and those archives are kept. If a retention policy genuinely requires audit
+      expiry, that wants to be its own explicit setting, not a side effect of a
+      disk cap.
+    #>
+    param([hashtable]$Settings)
+
+    if (-not (Test-Path $script:JobsDir)) { return @{ removed = 0; freedMb = 0 } }
+
+    $cfg   = Get-LogSettings -Settings $Settings
+    $limit = (Get-Date).AddDays(-1 * $cfg.retentionDays)
+    $removed = 0
+    $freed   = 0
+
+    # Result JSON keyed by certificate (deploy-<id>.json, renew-due-<id>.json) is
+    # current state rather than history - the page reads it to show the last
+    # outcome - so it is never trimmed. Only dated run artifacts are.
+    $isTrimmable = {
+        param($f)
+        ($f.Extension -in @('.log', '.err')) -or ($f.Name -like '*.result.json')
+    }
+
+    $files = @(Get-ChildItem $script:JobsDir -File -ErrorAction SilentlyContinue |
+               Where-Object { & $isTrimmable $_ } | Sort-Object LastWriteTime)
+
+    foreach ($f in $files) {
+        if ($f.LastWriteTime -ge $limit) { continue }
+        $sz = $f.Length
+        try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $removed++; $freed += $sz } catch { }
+    }
+
+    $remaining = @(Get-ChildItem $script:JobsDir -File -ErrorAction SilentlyContinue |
+                   Where-Object { & $isTrimmable $_ } | Sort-Object LastWriteTime)
+    $total = ($remaining | Measure-Object -Property Length -Sum).Sum
+    if (-not $total) { $total = 0 }
+    $cap = $cfg.maxSizeMb * 1mb
+
+    foreach ($f in $remaining) {
+        if ($total -le $cap) { break }
+        $sz = $f.Length
+        try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $removed++; $freed += $sz; $total -= $sz } catch { }
+    }
+
+    if ($removed -gt 0) {
+        $mb = [math]::Round($freed / 1mb, 2)
+        Write-AuditEvent -Event 'retention' -Object 'jobs' -Outcome 'info' `
+            -Detail "trimmed $removed run log file(s), $mb MB (keeping $($cfg.retentionDays) days / $($cfg.maxSizeMb) MB)"
+    }
+    return @{ removed = $removed; freedMb = [math]::Round($freed / 1mb, 2) }
+}
+
 function Write-SecretAuditLog {
     <#
       A persistent, append-only record of every secret a settings save removes,
@@ -434,6 +652,14 @@ function Write-SecretAuditLog {
     param([string]$Category, [string[]]$Keys)
 
     if (-not $Keys -or -not @($Keys).Count) { return }
+
+    # Now one line in the main trail rather than a file of its own, so a
+    # credential disappearing sits in the same timeline as the settings save
+    # that caused it. secrets-audit.log is still appended to as well: it
+    # predates the trail, someone may already be watching it, and this is the
+    # last record anyone should have to go looking for twice.
+    Write-AuditEvent -Event 'secret' -Object ($Keys -join ', ') -Outcome 'warn' `
+        -Detail "removed $(@($Keys).Count) stored credential(s) - $Category"
 
     $line = "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] pruned $(@($Keys).Count) secret(s) ($Category): $($Keys -join ', ')"
     try {
