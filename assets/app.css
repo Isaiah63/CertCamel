@@ -9,13 +9,18 @@
      put most of the screen at maximum brightness with nothing to rest on. The
      grey keeps a slight indigo bias so it belongs to the accent rather than
      reading as an unconsidered default.
-     --faint went with it: at #8a93a4 it sat at 2.86:1 on the background, which
-     failed AA outright and was well below the dark theme's equivalent. It is
-     now roughly at parity with dark. */
+
+     --faint clears 4.5:1 on every ground it actually lands on, in BOTH themes -
+     page, card, and the group-header band. It used to be #8a93a4 here, which
+     was 2.86:1 on the background: a plain AA failure on text carrying renewal
+     times and deployment targets. The values are the lightest that pass, so the
+     text/muted/faint hierarchy stays as wide as it can while still being
+     readable. Anything that would sit on a semantic tint uses --muted instead;
+     see .pill .k. */
   --bg:#e9ebf1; --glow-1:rgba(99,102,241,.14); --glow-2:rgba(168,85,247,.12);
   --surface:rgba(255,255,255,.62); --surface-solid:#f7f8fb;
   --border:rgba(17,24,39,.11); --border-strong:rgba(17,24,39,.18);
-  --text:#0b0d12; --muted:#4d5666; --faint:#6b7484;
+  --text:#0b0d12; --muted:#4d5666; --faint:#606875;
   --accent:#6366f1; --accent-2:#a855f7;
   --amber:#b45309; --amber-bg:rgba(245,158,11,.10);
   --green:#15803d; --green-bg:rgba(34,197,94,.10);
@@ -35,7 +40,7 @@
   --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
   --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
   --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
-  --text:#f2f3f6; --muted:#aab3c5; --faint:#6b7486;
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#808a9c;
   --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
   --green:#4ade80; --green-bg:rgba(34,197,94,.11);
   --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
@@ -48,7 +53,7 @@
   --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
   --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
   --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
-  --text:#f2f3f6; --muted:#aab3c5; --faint:#6b7486;
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#808a9c;
   --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
   --green:#4ade80; --green-bg:rgba(34,197,94,.11);
   --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
@@ -180,7 +185,10 @@ h2 .rule{flex:1; height:1px; background:linear-gradient(90deg,var(--border),tran
 .pills{display:flex; flex-wrap:wrap; gap:.6rem; margin:0 0 1.3rem;}
 .pill{flex:1 1 12rem; border:1px solid var(--border); border-radius:var(--radius); padding:.85rem 1rem;
   background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);}
-.pill .k{font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); font-weight:700;}
+/* --muted, not --faint. A tile's label is what makes its number mean anything,
+   and on the tinted tiles (.good/.hot/.bad) the coloured ground pushed faint
+   under AA. Both reasons point the same way. */
+.pill .k{font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:700;}
 .pill .val{font-size:1.5rem; font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin:.15rem 0;}
 .pill .sub{font-size:.78rem; color:var(--muted);}
 .pill.hot{border-color:var(--amber); background:var(--amber-bg);}
@@ -489,7 +497,9 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 .svc{display:flex; align-items:baseline; justify-content:space-between; gap:.9rem;
   font-size:.76rem; padding:.16rem 0;}
 .svc .n{color:var(--muted); min-width:0;}
-.svc .v{color:var(--faint); white-space:nowrap; font-variant-numeric:tabular-nums;}
+/* The time a service runs is the answer, not an aside - and this sits on the
+   tile's coloured ground, where faint does not clear AA. */
+.svc .v{color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums;}
 
 .mini{font-size:.78rem; color:var(--faint); margin:.6rem 0 0;}
 /* A .mini line that is telling you to do something, rather than just adding
