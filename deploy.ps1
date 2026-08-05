@@ -192,31 +192,47 @@ try {
             $pem = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($pemPath))
 
             # --- which targets -------------------------------------------- #
-            $targetIds = @()
+            # Bindings, not bare ids: an assignment may carry per-certificate
+            # overrides (which crt-list, which port), so the group it names is
+            # only half the answer.
+            $bindings = @()
             if ($settings.certs -and $settings.certs.ContainsKey($certId)) {
-                $targetIds = Get-CertTargetIds -CertConfig $settings.certs[$certId]
+                $bindings = Get-CertTargetBindings -CertConfig $settings.certs[$certId]
             }
             # A run-time selection replaces the stored assignment outright rather
             # than filtering it, so a newly added group can be deployed to before
-            # anyone has got round to assigning it.
-            if ($TargetList -and @($TargetList).Count) { $targetIds = @($TargetList) }
+            # anyone has got round to assigning it. Picked at run time means no
+            # stored overrides to carry, so the group's own values apply.
+            if ($TargetList -and @($TargetList).Count) {
+                $bindings = @(@($TargetList) | ForEach-Object { @{ id = $_; overrides = @{} } })
+            }
 
-            if (-not $targetIds.Count) { throw "No deployment target is assigned to this certificate." }
+            if (-not $bindings.Count) { throw "No deployment target is assigned to this certificate." }
 
-            foreach ($tid in $targetIds) {
+            foreach ($binding in $bindings) {
+                $tid = $binding.id
                 $target = Get-TargetProfile -Settings $settings -TargetId $tid
                 if (-not $target) { Write-Log "Target '$tid' is no longer configured - skipping." 'warn'; continue }
 
                 $tResult = @{ targetId = $tid; label = $target.label; ok = $false; nodes = @() }
 
+                # Credentials stay group-level on purpose: they describe how to
+                # reach the nodes, which is the one thing a per-certificate
+                # override has no business changing.
                 $user     = Get-TargetArg -Target $target -Name 'user'
                 $password = Get-TargetSecret -TargetId $tid -Name 'password'
                 $insecure = [bool](Get-TargetArg -Target $target -Name 'insecureTls' -Default $false)
-                $port     = [int](Get-TargetArg -Target $target -Name 'verifyPort' -Default 443)
 
-                $remoteName = Get-TargetArg -Target $target -Name 'remoteName' -Default "$certId.pem"
-                $remoteName = $remoteName.Replace('{certId}', $certId)
-                $crtListPath = [string](Get-TargetArg -Target $target -Name 'crtList' -Default '')
+                # Placement settings resolve through the binding first.
+                $port     = [int](Resolve-TargetSetting -Target $target -Binding $binding -Name 'verifyPort' -Default 443)
+
+                $remoteName = Resolve-TargetSetting -Target $target -Binding $binding -Name 'remoteName' -Default "$certId.pem"
+                $remoteName = ([string]$remoteName).Replace('{certId}', $certId)
+                $crtListPath = [string](Resolve-TargetSetting -Target $target -Binding $binding -Name 'crtList' -Default '')
+
+                if (@($binding.overrides.Keys).Count) {
+                    Write-Log "  (this certificate overrides $(@($binding.overrides.Keys) -join ', ') for this group)"
+                }
 
                 Write-Log "Target: $($target.label)  ->  $remoteName"
 

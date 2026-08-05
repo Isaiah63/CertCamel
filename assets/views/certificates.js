@@ -544,6 +544,14 @@
       none.appendChild(p);
       box.appendChild(none);
     } else {
+      // What this certificate has already pinned for each group, so reopening
+      // the dialog shows the overrides rather than silently dropping them.
+      var boundOverrides = {};
+      if (mode === 'assign' && certIds.length === 1) {
+        var depNow = ((CC.state && CC.state.deployment) || {})[certIds[0]] || {};
+        (depNow.bindings || []).forEach(function(b){ boundOverrides[b.id] = b.overrides || {}; });
+      }
+
       groups.forEach(function(g){
         var f = el('div', 'field');
         var lab = el('label', 'check');
@@ -557,6 +565,46 @@
         txt.appendChild(el('span', 'mini', '  ' + ((g.nodes || []).map(function(n){ return n.name; }).join(', ') || 'no nodes')));
         lab.appendChild(txt);
         f.appendChild(lab);
+
+        // Per-certificate overrides, assign mode only. A group answers "which
+        // nodes and what credentials"; a crt-list answers "where is this
+        // certificate referenced" - so one pair of nodes can front two
+        // frontends without defining the nodes twice.
+        if (mode === 'assign' && certIds.length === 1) {
+          var ov = boundOverrides[g.id] || {};
+          var hasOv = Object.keys(ov).length > 0;
+
+          var det = document.createElement('details');
+          det.className = 'pick-advanced';
+          det.open = hasOv;                       // already pinned: show it
+          var sum = document.createElement('summary');
+          sum.textContent = hasOv ? 'Overrides for this certificate (set)' : 'Overrides for this certificate';
+          det.appendChild(sum);
+
+          // Inherited values shown as placeholders, so blank plainly means
+          // "whatever the group says" rather than "empty".
+          [['crtList', 'crt-list path'], ['verifyPort', 'Verify port'], ['remoteName', 'Certificate filename']]
+            .forEach(function(pair){
+              var key = pair[0], label = pair[1];
+              var wrap = el('div', 'field');
+              wrap.appendChild(el('label', null, label));
+              var inp = document.createElement('input');
+              inp.type = 'text';
+              inp.className = 'pick-ov';
+              inp.setAttribute('data-target', g.id);
+              inp.setAttribute('data-key', key);
+              inp.autocomplete = 'off';
+              inp.value = (ov[key] !== undefined && ov[key] !== null) ? String(ov[key]) : '';
+              var inherited = (g.args && g.args[key] !== undefined && g.args[key] !== null && g.args[key] !== '')
+                ? String(g.args[key]) : '';
+              inp.placeholder = inherited ? ('inherits ' + inherited) : 'inherits the group setting';
+              wrap.appendChild(inp);
+              det.appendChild(wrap);
+            });
+
+          f.appendChild(det);
+        }
+
         box.appendChild(f);
       });
     }
@@ -573,24 +621,48 @@
     s.textContent = text || '';
   }
 
+  // Bare ids by default. A target only becomes an object when this certificate
+  // actually pins something for it, so a settings file grows objects exactly
+  // where someone asked for one and stays readable everywhere else.
   function pickedTargets(){
     return Array.prototype.slice.call(document.querySelectorAll('#pick-targets .pick-target'))
       .filter(function(c){ return c.checked; })
-      .map(function(c){ return c.value; });
+      .map(function(c){
+        var id = c.value;
+        var overrides = {};
+        Array.prototype.slice.call(document.querySelectorAll('#pick-targets .pick-ov'))
+          .filter(function(i){ return i.getAttribute('data-target') === id; })
+          .forEach(function(i){
+            var v = i.value.trim();
+            if (v) { overrides[i.getAttribute('data-key')] = v; }
+          });
+        if (!Object.keys(overrides).length) { return id; }
+        overrides.id = id;
+        return overrides;
+      });
+  }
+
+  // Renew and Deploy send a plain id list - they are choosing WHERE to run now,
+  // not editing what is stored, and the backend takes ids there.
+  function pickedTargetIds(){
+    return pickedTargets().map(function(t){ return (typeof t === 'string') ? t : t.id; });
   }
 
   function confirmPicker(){
-    var chosen = pickedTargets();
-
     if (pickMode === 'assign') {
+      // Assign is the only mode that edits what is stored, so it is the only
+      // one that sends overrides.
       setPickStatus('Saving...');
-      api('POST', '/api/cert/' + encodeURIComponent(pickCerts[0]) + '/targets', {targets: chosen}, function(err){
+      api('POST', '/api/cert/' + encodeURIComponent(pickCerts[0]) + '/targets',
+          {targets: pickedTargets()}, function(err){
         if (err) { setPickStatus(err, 'bad'); return; }
         closePicker();
         CC.loadState();
       });
       return;
     }
+
+    var chosen = pickedTargetIds();
 
     if (pickMode === 'deploy' && !chosen.length) {
       setPickStatus('Pick at least one load balancer, or cancel.', 'bad');

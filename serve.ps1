@@ -305,15 +305,23 @@ function Get-StateResponse {
     $deployOut = @{}
     foreach ($c in @($grouping.certs)) {
         $assigned = @()
+        $bindings = @()
         if ($settings.certs -and $settings.certs.ContainsKey($c.certId)) {
-            $assigned = Get-CertTargetIds -CertConfig $settings.certs[$c.certId]
+            $bindings = Get-CertTargetBindings -CertConfig $settings.certs[$c.certId]
+            $assigned = @($bindings | ForEach-Object { $_.id })
         }
         $last = $null
         $lastFile = Join-Path $script:JobsDir "deploy-$($c.certId).json"
         if (Test-Path $lastFile) {
             try { $last = (Get-Content $lastFile -Raw -Encoding UTF8) | ConvertFrom-Json } catch { }
         }
-        $deployOut[$c.certId] = @{ targets = $assigned; last = $last }
+        # "targets" stays a flat id list so nothing that already reads it has to
+        # change; "bindings" carries the overrides alongside it.
+        $deployOut[$c.certId] = @{
+            targets = $assigned
+            bindings = @($bindings | ForEach-Object { @{ id = $_.id; overrides = $_.overrides } })
+            last = $last
+        }
     }
 
     return @{
@@ -935,16 +943,60 @@ function Invoke-Route {
             if ($payload -and $payload.PSObject.Properties['targets']) { $wanted = @($payload.targets) }
 
             $known = @($settings.targets | ForEach-Object { $_.id })
+
+            # An entry is either a bare id (inherit everything from the group, the
+            # only shape that used to exist) or an object with per-certificate
+            # overrides. Stored in whichever shape it arrived in, so a settings
+            # file only grows objects where someone actually asked for one.
+            $store = @()
             foreach ($w in $wanted) {
-                if ($known -notcontains [string]$w) { Send-Error $Stream 400 "Unknown deployment target '$w'."; return }
+                $id = $null
+                $ov = @{}
+
+                if ($w -is [string]) { $id = [string]$w }
+                elseif ($w -and $w.PSObject.Properties['id']) {
+                    $id = [string]$w.id
+                    foreach ($p in $w.PSObject.Properties) {
+                        if ($p.Name -eq 'id') { continue }
+                        if ($null -eq $p.Value -or "$($p.Value)" -eq '') { continue }   # blank clears the override
+                        $ov[$p.Name] = $p.Value
+                    }
+                }
+
+                if (-not $id) { Send-Error $Stream 400 'A deployment target entry has no id.'; return }
+                if ($known -notcontains $id) { Send-Error $Stream 400 "Unknown deployment target '$id'."; return }
+
+                # Overrides may only name settings the target type actually has,
+                # and never a secret - a credential belongs to the group, not to
+                # one certificate's assignment.
+                if ($ov.Keys.Count) {
+                    $tp = Get-TargetProfile -Settings $settings -TargetId $id
+                    $catalog = $(if ($tp -and $script:TargetCatalog.ContainsKey($tp.type)) { $script:TargetCatalog[$tp.type] } else { $null })
+                    $allowed = @()
+                    if ($catalog) { $allowed = @($catalog.Args | Where-Object { -not $_.Secret } | ForEach-Object { $_.Name }) }
+                    foreach ($k in @($ov.Keys)) {
+                        if ($allowed -notcontains $k) {
+                            Send-Error $Stream 400 "'$k' is not an overridable setting for target '$id'."
+                            return
+                        }
+                    }
+                }
+
+                if ($ov.Keys.Count) {
+                    $entry = @{ id = $id }
+                    foreach ($k in $ov.Keys) { $entry[$k] = $ov[$k] }
+                    $store += $entry
+                } else {
+                    $store += $id
+                }
             }
 
             if (-not $settings.certs) { $settings.certs = @{} }
             if (-not $settings.certs.ContainsKey($certKey)) { $settings.certs[$certKey] = @{} }
-            $settings.certs[$certKey].targets = @($wanted)
+            $settings.certs[$certKey].targets = @($store)
 
             Save-TrackerSettings -Settings $settings
-            Send-Json $Stream @{ ok = $true; certId = $certKey; targets = @($wanted) }
+            Send-Json $Stream @{ ok = $true; certId = $certKey; targets = @($store) }
             return
         }
 
