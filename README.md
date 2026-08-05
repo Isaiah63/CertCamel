@@ -692,25 +692,67 @@ nothing installed. Renewal adds [Posh-ACME](https://poshac.me), downloaded into
 `lib\` inside this folder rather than installed system-wide — no admin rights at
 any point.
 
-## The scheduled task
+## The scheduled tasks
 
-- **Name:** `SSL Cert Check`
-- **Runs:** daily at 09:00, as the current user, hidden window
-- **Catch-up:** runs as soon as possible if the PC was off (`StartWhenAvailable`)
+Three, all optional, all registered by `First Time Setup.bat`, all running as
+the current user in a hidden window with `StartWhenAvailable` so they catch up
+after the PC has been off. Only **one of the three can change anything**:
 
-It only re-checks expiry; it does not renew anything unattended.
+| Task | Runs | What that run does |
+|---|---|---|
+| `Cert Camel Renew` | daily 03:20 | Renews what the CA says is due, deploys each one, verifies every node is serving it |
+| `SSL Cert Check` | daily 09:00 | Re-reads expiry dates. Never issues or deploys |
+| `Cert Camel Monthly Report` | daily 08:00 | Emails a summary on the 1st; does nothing on other days |
+
+03:20 rather than the top of the hour because ACME rate limits are per-CA and
+shared by everyone, and every naive scheduler piles up on the hour.
 
 ```powershell
-# Run it right now
-Start-ScheduledTask -TaskName "SSL Cert Check"
+# Run one right now
+Start-ScheduledTask -TaskName "Cert Camel Renew"
 
 # Turn it off / back on
-Disable-ScheduledTask -TaskName "SSL Cert Check"
-Enable-ScheduledTask  -TaskName "SSL Cert Check"
+Disable-ScheduledTask -TaskName "Cert Camel Renew"
+Enable-ScheduledTask  -TaskName "Cert Camel Renew"
 
 # Remove it completely
-Unregister-ScheduledTask -TaskName "SSL Cert Check" -Confirm:$false
+Unregister-ScheduledTask -TaskName "Cert Camel Renew" -Confirm:$false
+
+# See what would renew, without renewing anything
+powershell -ExecutionPolicy Bypass -File .\renew-due.ps1 -WhatIfOnly
 ```
+
+### The Automation panel on Home
+
+The Home page reports what the scheduler actually has registered, so none of the
+above has to be taken on trust. Per task: whether it is set up, whether it is
+switched on, when it next runs, and what that run is allowed to do.
+
+Below that, the renewal forecast — when each certificate is next due, and what
+happens afterwards:
+
+```
+camelnuggets.com     renews Oct 4, 2026   → deploys to lb-prod
+*.camelnuggets.com   renews Oct 3, 2026   → no load balancer assigned, so it will not deploy
+```
+
+Dates come from the CA's own ARI renewal window, not from a threshold we picked,
+and they can move — the CA can pull every client's window forward during a mass
+revocation. They are rechecked nightly. **Preview what would renew** runs
+`renew-due.ps1 -WhatIfOnly` to refresh them on demand; it issues nothing and
+touches no load balancer.
+
+Three things the panel is there to catch, none of which anything else notices:
+
+- **A certificate with no load balancer assigned.** It will renew, and the new
+  certificate will sit on disk. "Automation is on" reads as more reassuring than
+  it should for such a certificate.
+- **A task pointing at another folder.** The task stores an absolute path, so
+  copying this folder leaves the old copy scheduled. Renewal silently stops and
+  the first symptom is an expiry warning weeks later.
+- **The scheduler being unreadable**, which is reported as exactly that rather
+  than as "off" — the second would be a lie in the direction that gets
+  certificates expired.
 
 ## Files
 
