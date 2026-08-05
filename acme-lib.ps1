@@ -1296,9 +1296,39 @@ function Get-CertificateGroups {
         $zoneInfo = $(if ($g) { $g } else { $wildcardZones[$zone] })
 
         # --- the certificate kinds this zone produces --------------------- #
+        #
+        # The apex belongs to the wildcard whenever a zone has one. Both
+        # certificates would otherwise carry it - the wildcard because it must
+        # (*.example.com does not match example.com) and the SAN certificate
+        # because the operator listed the apex in domains.txt, which is the
+        # normal way to use this tool. That puts ONE name on TWO certificates
+        # with equal specificity, where only one can ever serve it: HAProxy
+        # picks by exact SNI match and the loser silently never appears. It also
+        # made verification report a perfectly good wildcard deployment as
+        # failed, because the apex was the name being probed.
+        #
+        # Subdomains overlapping between the two is harmless by comparison - an
+        # exact match always beats a wildcard, so the winner is predictable.
+        #
+        # This is deliberately not something the operator fixes by editing
+        # domains.txt. A line there means two things at once, "watch this name"
+        # and "put it on the SAN certificate", and they want the first without
+        # the second. Deleting the line would drop it from monitoring instead,
+        # which is worse. check-ssl.ps1 reads domains.txt directly and never
+        # calls this function, so what is watched is unaffected either way.
         $kinds = @()
         if ($g -and @($g.names).Count) {
-            $kinds += @{ kind = 'san'; id = $zone; display = $zone; names = @($g.names) }
+            $snames = @($g.names)
+            if ($wantsWildcard) { $snames = @($snames | Where-Object { $_ -ne $zone }) }
+
+            # The guard matters: a zone listing only its apex plus a wildcard
+            # now yields the wildcard alone, rather than an empty SAN order.
+            if (@($snames).Count) {
+                $kinds += @{
+                    kind = 'san'; id = $zone; display = $zone; names = $snames
+                    apexOnWildcard = [bool]$wantsWildcard
+                }
+            }
         }
         if ($wantsWildcard) {
             # "*" is not legal in a Windows filename, so the identifier used for
@@ -1354,11 +1384,38 @@ function Get-CertificateGroups {
             $notAfter = $null
             if ($g -and $g.notAfter) { $notAfter = $g.notAfter.ToString('o') }
 
+            # The apex rule changes what gets ISSUED, not what is already on
+            # disk. Until this certificate is renewed, the old one still carries
+            # the apex and still contests it in HAProxy - which looks exactly
+            # like the bug the rule was written to prevent. Say so on the row
+            # rather than letting someone rediscover it during a deployment.
+            #
+            # Only parsed for a certificate the rule actually affects, so the
+            # common case pays nothing.
+            $staleNames = @()
+            if ($k.ContainsKey('apexOnWildcard') -and $k.apexOnWildcard -and (Test-Path $pemPath)) {
+                try {
+                    $leafDer = @(Read-PemBlocks -Text ([IO.File]::ReadAllText($pemPath)) |
+                                 Where-Object { $_.Label -eq 'CERTIFICATE' -and $_.Der })[0]
+                    if ($leafDer) {
+                        $issued = New-Object Security.Cryptography.X509Certificates.X509Certificate2 (,$leafDer.Der)
+                        foreach ($sanName in @(Get-CertificateSanNames -Certificate $issued)) {
+                            if (@($names) -notcontains $sanName) { $staleNames += $sanName }
+                        }
+                    }
+                }
+                catch { }   # unreadable is not worth failing a page load over
+            }
+
             $out += [pscustomobject]@{
                 certId        = $k.id
                 displayName   = $k.display
                 kind          = $k.kind
                 zone          = $zone
+                # True when this zone's wildcard owns the apex, so the UI can
+                # explain why it is absent here rather than looking like a loss.
+                apexOnWildcard = [bool]$(if ($k.ContainsKey('apexOnWildcard')) { $k.apexOnWildcard } else { $false })
+                staleNames     = @($staleNames)
                 providerId    = $zoneInfo.providerId
                 providerLabel = $zoneInfo.providerLabel
                 plugin        = $zoneInfo.plugin
@@ -2082,6 +2139,73 @@ function Get-RsaModulusFromKeyDer {
     catch { return $null }
 }
 
+function Get-CertificateSanNames {
+    <#
+      Every DNS name a certificate covers, lower-cased and de-duplicated.
+
+      .NET Framework has no typed SAN extension class (that arrived in .NET 7),
+      so the extension is formatted to text and parsed. The label on each line is
+      LOCALISED - "DNS Name=" in English, something else elsewhere - so match on
+      the value after the "=" rather than on the label, then keep only values
+      shaped like hostnames. That drops IP, email and URI entries, and any label
+      wording we did not anticipate.
+
+      check-ssl.ps1 carries its own copy of this on purpose: it runs the parse
+      inside a runspace, which cannot see functions defined out here.
+    #>
+    param($Certificate)
+
+    $found = @()
+    if (-not $Certificate) { return $found }
+    $ext = $Certificate.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }
+    if (-not $ext) { return $found }
+
+    foreach ($line in (($ext.Format($true)) -split "`r?`n")) {
+        if ($line -notmatch '=\s*(?<v>\S+)\s*$') { continue }
+        $v = $Matches.v.Trim().TrimEnd('.').ToLowerInvariant()
+        if ($v -match '^(\*\.)?([a-z0-9]([a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,}$' -and $found -notcontains $v) {
+            $found += $v
+        }
+    }
+    return $found
+}
+
+function Test-NameCoveredBySans {
+    <#
+      Would a TLS client accept this certificate for this name? Matches RFC 6125
+      wildcard rules, which are narrower than people expect and are the whole
+      reason the apex keeps causing trouble:
+
+        *.example.com  matches  a.example.com
+        *.example.com  does NOT match  example.com        (no label to consume)
+        *.example.com  does NOT match  a.b.example.com    (one label only)
+
+      Used to tell "someone else's certificate is winning this name" (a
+      configuration fact) apart from "this node is serving something that has
+      nothing to do with the name I asked for" (genuinely broken).
+    #>
+    param([string[]]$Sans, [string]$Name)
+
+    if (-not $Name) { return $false }
+    $n = $Name.Trim().TrimEnd('.').ToLowerInvariant()
+
+    foreach ($s in @($Sans)) {
+        $san = ([string]$s).Trim().TrimEnd('.').ToLowerInvariant()
+        if (-not $san) { continue }
+        if ($san -eq $n) { return $true }
+
+        if ($san.StartsWith('*.')) {
+            $suffix = $san.Substring(1)          # ".example.com"
+            if (-not $n.EndsWith($suffix)) { continue }
+            # Exactly one label may be consumed, so what precedes the suffix must
+            # not itself contain a dot.
+            $label = $n.Substring(0, $n.Length - $suffix.Length)
+            if ($label -and $label.IndexOf('.') -lt 0) { return $true }
+        }
+    }
+    return $false
+}
+
 function Test-CertificateBundle {
     <#
       Validate a combined PEM before it goes anywhere. Returns a result object
@@ -2144,18 +2268,7 @@ function Test-CertificateBundle {
     # an intermediate, so a single-certificate bundle is almost always a mistake.
     Add-Check 'chain included' ($certs.Count -ge 2) "$($certs.Count - 1) intermediate(s)"
 
-    $sans = @()
-    $ext = $leaf.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }
-    if ($ext) {
-        foreach ($line in (($ext.Format($true)) -split "`r?`n")) {
-            if ($line -match '=\s*(?<v>\S+)\s*$') {
-                $v = $Matches.v.Trim().TrimEnd('.').ToLowerInvariant()
-                if ($v -match '^(\*\.)?([a-z0-9]([a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,}$' -and $sans -notcontains $v) {
-                    $sans += $v
-                }
-            }
-        }
-    }
+    $sans = @(Get-CertificateSanNames -Certificate $leaf)
     $result.names = @($sans)
 
     if ($ExpectedNames.Count) {
@@ -2284,6 +2397,10 @@ function Test-ServedCertificate {
         node = "${ConnectHost}:$Port"; sni = $SniName; ok = $false
         servedSerial = $null; expectedSerial = $ExpectedSerial
         notAfter = $null; daysRemaining = $null; issuer = $null; error = $null
+        # Set when a DIFFERENT certificate answered but legitimately covers this
+        # name. That is a fact about the configuration, not a failed deployment -
+        # see the classification note below.
+        contested = $false; servedSubject = $null; servedCovers = $false
     }
 
     try {
@@ -2294,11 +2411,31 @@ function Test-ServedCertificate {
         $out.notAfter      = $cert.NotAfter.ToString('o')
         $out.daysRemaining = [math]::Floor(($cert.NotAfter - (Get-Date)).TotalDays)
         $out.issuer        = $cert.Issuer
+        $out.servedSubject = $cert.Subject
 
         if ($ExpectedSerial) {
             $out.ok = ($cert.SerialNumber -eq $ExpectedSerial)
             if (-not $out.ok) {
-                $out.error = "serving serial $($cert.SerialNumber), expected $ExpectedSerial"
+                # Two very different situations produce a serial mismatch, and
+                # conflating them is what made a correct deployment report as a
+                # failure:
+                #
+                #   contested - the certificate being served ALSO covers this
+                #               name. Both are valid for it and only one can win
+                #               (an exact SNI match beats a wildcard). Nothing is
+                #               broken; the operator needs to know which won.
+                #   failed    - the certificate being served does not cover this
+                #               name at all, so the node is serving something
+                #               unrelated. That is genuinely wrong.
+                $out.servedCovers = Test-NameCoveredBySans `
+                                        -Sans (Get-CertificateSanNames -Certificate $cert) -Name $SniName
+                $out.contested = $out.servedCovers
+
+                if ($out.contested) {
+                    $out.error = "served by $($cert.Subject) (serial $($cert.SerialNumber)), which also covers this name"
+                } else {
+                    $out.error = "serving serial $($cert.SerialNumber), expected $ExpectedSerial"
+                }
             }
         } else {
             $out.ok = $true   # nothing to compare against; report what is served
