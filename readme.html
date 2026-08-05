@@ -564,6 +564,47 @@ expiry&rdquo; cannot hear that. A fixed threshold is only the fallback for a CA 
   are re-entered on that server rather than copied to it.</p>
 </div>
 
+<h3>The three tasks, and what each is allowed to do</h3>
+<p>All three are optional and registered by <code>First Time Setup.bat</code>. They run as you, in a
+hidden window, with <code>StartWhenAvailable</code> so they catch up after the PC has been off. Only
+<strong>one of the three can change anything</strong>:</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Task</th><th>Runs</th><th>What that run does</th></tr></thead>
+  <tbody>
+    <tr><td><code>Cert Camel Renew</code></td><td>daily 03:20</td><td>Renews what the CA says is due,
+    deploys each one, verifies every node is serving it</td></tr>
+    <tr><td><code>SSL Cert Check</code></td><td>daily 09:00</td><td>Re-reads expiry dates. Never
+    issues or deploys anything</td></tr>
+    <tr><td><code>Cert Camel Monthly Report</code></td><td>daily 08:00</td><td>Emails the summary on
+    the 1st; does nothing on the other days</td></tr>
+  </tbody>
+</table></div>
+<p>03:20 rather than the top of the hour because ACME rate limits are per-CA and shared by everyone,
+and the top of the hour is where every naive scheduler piles up.</p>
+
+<h3>The Automation panel on Home</h3>
+<p>None of the above has to be taken on trust. The Home page reads what the Windows scheduler
+actually has registered and reports, per task, whether it is set up, whether it is switched on, when
+it next runs, and what that run is allowed to do. Below that sits the renewal forecast:</p>
+<pre><code>camelnuggets.com     renews Oct 4, 2026   → deploys to lb-prod
+*.camelnuggets.com   renews Oct 3, 2026   → no load balancer assigned, so it will not deploy</code></pre>
+<p>Those dates are the CA&rsquo;s own ARI window, and they move &mdash; they are rechecked nightly.
+<strong>Preview what would renew</strong> refreshes them on demand by running the
+<code>-WhatIfOnly</code> dry run above; it issues nothing and touches no load balancer. The panel is
+read-only otherwise: it reports on the tasks, it does not administer them.</p>
+<div class="callout">
+  <div class="h">Three things it exists to catch</div>
+  <p><strong>A certificate with no load balancer assigned.</strong> It renews, and the new
+  certificate sits on disk. <code>renew.ps1</code> logs it and carries on, so &ldquo;automation is
+  on&rdquo; reads as more reassuring than it should for that certificate.</p>
+  <p><strong>A task pointing at another folder.</strong> The task stores an absolute path, so copying
+  this folder leaves the old copy scheduled. Renewal silently stops and the first symptom is an
+  expiry warning weeks later.</p>
+  <p><strong>The scheduler being unreadable</strong>, reported as exactly that rather than as
+  &ldquo;off&rdquo; &mdash; the second would be a lie in the direction that gets certificates
+  expired.</p>
+</div>
+
 <h2 id="alerts">13. Email alerts</h2>
 <p>Under Settings &gt; Alerts, four independently switchable alerts:</p>
 <div class="tablewrap"><table>
