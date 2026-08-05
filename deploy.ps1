@@ -50,16 +50,26 @@ param(
     # does not also send its own alert - renew.ps1 already sends one covering
     # both issuance and deployment together, and sending both would mean two
     # emails for one event.
-    [switch]$CalledFromRenew
+    [switch]$CalledFromRenew,
+
+    # See renew.ps1 - a path to write this run's narrative to, and whether a
+    # person or the scheduler started it.
+    [string]$RunLogPath,
+    [string]$Source = 'cli'
 )
 
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'acme-lib.ps1')
+# When renew.ps1 invokes this as its deploy step it hands over its own log, so
+# issuance and deployment read as one story in one file rather than two.
+[void](Start-RunLog -Kind 'deploy' -Path $RunLogPath -Source $Source)
 
 function Write-Log {
     param([string]$Message, [string]$Level = 'info')
-    Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [$Level] $Message"
+    $line = "[$((Get-Date).ToString('HH:mm:ss'))] [$Level] $Message"
+    Write-Output $line
+    Write-RunLog $line     # so an unattended run leaves the same narrative behind
 }
 
 $outcome = @{
@@ -414,6 +424,25 @@ try {
 
         $outcome.results += $entry
         Save-Outcome
+
+        # Per node, because "deployed" is not one fact - it is one per node, and
+        # a pair where only one node took the certificate is the exact situation
+        # this whole verification design exists to make visible.
+        $nodeSummary = @()
+        foreach ($t in @($entry.targets)) {
+            foreach ($n in @($t.nodes)) {
+                $checks = @($n.verify)
+                $hardFailed = @($checks | Where-Object { -not $_.ok -and -not ($_.contested -and $_.role -eq 'coverage') }).Count
+                $proved     = @($checks | Where-Object { $_.ok -and $_.role -eq 'identity' }).Count
+                $state = if (-not ($n.push -and $n.push.ok)) { 'push failed' }
+                         elseif (-not $checks.Count)         { 'pushed, not verified' }
+                         elseif ($hardFailed -eq 0 -and $proved) { 'serving' }
+                         else                                { 'not serving' }
+                $nodeSummary += "$($n.name) $state"
+            }
+        }
+        Write-AuditEvent -Event 'deploy' -Object $cert.displayName -Outcome $(if ($entry.ok) { 'ok' } else { 'fail' }) `
+            -Detail "$(if ($entry.preflight) { "serial $($entry.preflight.serial); " })$($nodeSummary -join ', ')$(if ($entry.error) { " - $($entry.error)" })"
 
         # A per-certificate copy of the outcome, so the page can show the last
         # known deployment state for each row without re-probing every node on
