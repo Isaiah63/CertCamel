@@ -299,6 +299,21 @@ shop.example.com
 <p>That line produces a second, independent certificate for the zone containing
 <code>*.example.com</code> <strong>and</strong> <code>example.com</code>. It gets its own row in the
 Certificates table, its own Renew button, and its own <code>.pem</code>.</p>
+<div class="callout note">
+  <div class="h">The apex goes on the wildcard, and comes off the other certificate</div>
+  <p>It has to be on the wildcard, since <code>*.example.com</code> does not match a bare
+  <code>example.com</code>. Leaving it on both would put one name on two certificates of equal
+  specificity, where only one can ever serve it &mdash; HAProxy matches whichever it indexed first
+  and the loser silently never appears. In the example above the first certificate therefore covers
+  <code>www.</code> and <code>shop.</code> only, and its row says so.</p>
+  <p><strong>Do not delete the apex line from <code>domains.txt</code> to achieve this.</strong> A
+  line there means two things at once &mdash; "watch this name" and "put it on the SAN certificate"
+  &mdash; and removing it would stop the name being monitored. Both names stay watched either way;
+  this only decides which certificate carries which.</p>
+  <p>A certificate issued before this rule existed still carries the apex until it is renewed, so
+  its row and its deploy log say <em>"still carries example.com &mdash; renew to apply"</em> until
+  you do.</p>
+</div>
 <p>The wildcard is <strong>never</strong> folded into the certificate covering your explicit names.
 That is deliberate rather than incidental: some routers &mdash; OpenShift among them &mdash; will not
 negotiate HTTP/2 against a wildcard certificate, so contaminating the explicit-name certificate would
@@ -458,6 +473,21 @@ is appended and hot-loaded. The deploy log says which happened per node (<code>a
 and the running process loaded it</code> versus <code>already referenced</code>), and an append the
 running process never picks up fails the node loudly rather than surfacing later as an unexplained
 verification failure.</p>
+<p>Rather than typing that path, press <strong>Discover</strong> on the group: it asks each node
+which frontends terminate TLS and offers the ones every node agrees on, filling in the crt-list and
+port from what they report. A frontend present on only some nodes shows as <em>partial</em> rather
+than being offered &mdash; a pair configured differently is worth fixing before deploying to it.
+Discovery is strictly read-only.</p>
+<h3>One group, several frontends</h3>
+<p>A group answers <em>which nodes, and what credentials</em>. A crt-list answers <em>where is this
+certificate referenced</em>. Those are different questions, so an assignment can override the
+group's placement settings for a single certificate &mdash; both certificates reaching the same
+pair with the same credentials, but landing in different frontends. Set it from the
+<strong>Deployed</strong> cell: tick a group, open <em>Overrides for this certificate</em>, and
+leave anything blank to inherit the group's value.</p>
+<p>Overrides cover placement (<code>crtList</code>, <code>verifyPort</code>,
+<code>remoteName</code>) and never credentials &mdash; those belong to the group, and the API
+refuses an override naming one.</p>
 <p><strong>Never configured the Data Plane API before?</strong> There is a step-by-step guide with the security details in <a href="haproxy-setup.html">Setting up the HAProxy Data Plane API</a>.</p>
 <h3>Setting it up</h3>
 <p><em>Settings &rarr; Load balancers</em> &rarr; add a group. One entry per set of nodes sharing
