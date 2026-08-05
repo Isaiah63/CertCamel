@@ -422,6 +422,38 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 .empty h3{margin:0 0 .5rem; font-size:1.05rem; color:var(--text);}
 .empty code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.85em;
   background:var(--surface-solid); border:1px solid var(--border); border-radius:6px; padding:.15rem .4rem;}
+/* Automation panel. One row per scheduled task: what it does on the left, its
+   schedule on the right. The state dot carries the same information as the
+   text beside it rather than replacing it - colour alone is not a status. */
+.autorow{display:flex; align-items:baseline; gap:.9rem; flex-wrap:wrap;
+  padding:.7rem 0; border-bottom:1px solid var(--border);}
+.autorow:last-of-type{border-bottom:none;}
+.autorow .who{flex:1 1 15rem; min-width:0;}
+.autorow .t{font-weight:700; font-size:.92rem;}
+.autorow .lvl{font-size:.76rem; color:var(--muted); margin-top:.15rem;}
+.autorow .when{flex:0 0 auto; text-align:right; font-size:.8rem; color:var(--muted);
+  font-variant-numeric:tabular-nums;}
+.autorow .when .next{display:block; color:var(--faint); font-size:.75rem;}
+.dot{display:inline-block; width:.5rem; height:.5rem; border-radius:50%; margin-right:.4rem;
+  background:var(--faint); vertical-align:middle;}
+.dot.on{background:var(--green);}
+.dot.off{background:var(--faint);}
+.dot.bad{background:var(--red);}
+.autostate{font-size:.78rem; font-weight:650; flex:0 0 auto;}
+.autostate.on{color:var(--green);}
+.autostate.off{color:var(--faint);}
+.autostate.bad{color:var(--red);}
+/* The forecast list, under a rule so it reads as a second thing rather than a
+   fourth task. */
+.forecast{margin-top:1.1rem; padding-top:1rem; border-top:1px solid var(--border);}
+.forecast > .t{font-size:.7rem; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--faint); font-weight:700; margin-bottom:.45rem;}
+.forecast .fc{display:flex; align-items:baseline; gap:.6rem; flex-wrap:wrap;
+  font-size:.84rem; padding:.28rem 0;}
+.forecast .fc .n{font-weight:650;}
+.forecast .fc .d{color:var(--muted); font-variant-numeric:tabular-nums;}
+.forecast .fc .warn{color:var(--amber); font-weight:600;}
+
 .mini{font-size:.78rem; color:var(--faint); margin:.6rem 0 0;}
 /* A .mini line that is telling you to do something, rather than just adding
    detail. Amber because it is a "this needs a renewal" nudge, not a fault. */

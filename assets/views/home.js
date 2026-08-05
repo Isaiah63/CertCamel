@@ -33,9 +33,12 @@
     host.appendChild(pillsBox);
     var alertsBox = el('div');
     host.appendChild(alertsBox);
+    var autoBox = el('div');
+    host.appendChild(autoBox);
     var activityBox = el('div');
     host.appendChild(activityBox);
 
+    renderAutomation(autoBox);
     renderActivity(activityBox);
 
     if (!hasData) {
@@ -312,6 +315,206 @@
   // A short, honest "recent activity": when the checker last ran, and the most
   // recently deployed certificates. Not a persisted activity log - there isn't
   // one - just what /api/state already knows.
+  // --- Automation ------------------------------------------------------------ //
+  // What the Windows scheduler actually has registered, and what the last sweep
+  // worked out about when each certificate is next due. Read-only: the panel
+  // reports, it does not administer.
+
+  function clockOf(iso){
+    // A trigger's StartBoundary carries a full date; only the time of day is
+    // meaningful for a daily trigger.
+    var d = new Date(iso);
+    if (isNaN(d)) { return null; }
+    return d.toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
+  }
+
+  function nextRunText(iso){
+    var d = new Date(iso);
+    if (isNaN(d)) { return ''; }
+    var mins = Math.round((d - new Date()) / 60000);
+    if (mins < 0)   { return 'overdue'; }
+    if (mins < 60)  { return 'in ' + mins + (mins === 1 ? ' minute' : ' minutes'); }
+    var hrs = Math.round(mins / 60);
+    if (hrs < 24)   { return 'in ' + hrs + (hrs === 1 ? ' hour' : ' hours'); }
+    return d.toLocaleString(undefined, {weekday:'short', hour:'numeric', minute:'2-digit'});
+  }
+
+  function taskRow(t){
+    var row = el('div', 'autorow');
+
+    var who = el('div', 'who');
+    who.appendChild(el('div', 't', t.label));
+    who.appendChild(el('div', 'lvl', t.level));
+    row.appendChild(who);
+
+    // The state word carries the meaning; the dot only repeats it. Colour on
+    // its own is not a status anyone can rely on.
+    var cls, word;
+    if (!t.registered)   { cls = 'off'; word = 'Not set up'; }
+    else if (!t.enabled) { cls = 'bad'; word = 'Disabled'; }
+    else if (t.state === 'running') { cls = 'on'; word = 'Running now'; }
+    else                 { cls = 'on'; word = 'On'; }
+
+    var st = el('div', 'autostate ' + cls);
+    st.appendChild(el('span', 'dot ' + cls));
+    st.appendChild(document.createTextNode(word));
+    row.appendChild(st);
+
+    var when = el('div', 'when');
+    if (t.registered && t.schedule) {
+      var clock = clockOf(t.schedule);
+      when.appendChild(document.createTextNode(clock ? 'daily ' + clock : 'scheduled'));
+      if (t.enabled && t.nextRun) {
+        when.appendChild(el('span', 'next', 'next ' + nextRunText(t.nextRun)));
+      }
+    } else if (!t.registered) {
+      when.appendChild(document.createTextNode('—'));
+    }
+    row.appendChild(when);
+
+    return row;
+  }
+
+  function renderAutomation(box){
+    api('GET', '/api/automation', null, function(err, res){
+      if (err || !res) { return; }   // a missing panel beats a broken page
+
+      var card = el('div', 'card');
+      var head = el('div', 'toolbar');
+      head.appendChild(el('h4', null, 'Automation'));
+      head.appendChild(el('span', 'spacer'));
+
+      var btn = el('button', 'btn sm', 'Preview what would renew');
+      btn.type = 'button';
+      btn.setAttribute('data-busy-disable', '');
+      btn.title = 'Works out what would renew and stops. Issues nothing, deploys nothing.';
+      btn.addEventListener('click', function(){
+        CC.runJob('Previewing what would renew', 'POST', '/api/forecast');
+      });
+      head.appendChild(btn);
+      card.appendChild(head);
+
+      var a = res.automation || {};
+
+      // "Could not read the scheduler" is not the same as "automation is off",
+      // and showing the second when the first is true would be a lie in the
+      // direction that gets certificates expired.
+      if (a.available === false) {
+        var c = el('div', 'callout note');
+        c.appendChild(el('div', 'h', 'Could not read the Windows scheduler'));
+        c.appendChild(el('p', null,
+          (a.error || 'The Task Scheduler service did not answer.') +
+          ' Automation may well still be running — this panel simply cannot see it.'));
+        card.appendChild(c);
+        box.appendChild(card);
+        return;
+      }
+
+      var tasks = a.tasks || [];
+      tasks.forEach(function(t){ card.appendChild(taskRow(t)); });
+
+      var renew = null;
+      tasks.forEach(function(t){ if (t.key === 'renew') { renew = t; } });
+
+      // A task pointing at a script somewhere else has silently stopped working
+      // on this folder. Nothing else in the tool notices.
+      tasks.forEach(function(t){
+        if (t.registered && t.pathMatches === false) {
+          var w = el('p', 'mini warnline');
+          w.textContent = '“' + t.name + '” runs a script in a different folder (' +
+            (t.commandPath || 'unknown path') + '). It is not driving this copy. ' +
+            'Run First Time Setup.bat to re-point it.';
+          card.appendChild(w);
+        }
+      });
+
+      if (renew && (!renew.registered || !renew.enabled)) {
+        var note = el('p', 'mini warnline');
+        note.textContent = renew.registered
+          ? 'Unattended renewal is registered but switched off. Nothing will renew on its own.'
+          : 'Unattended renewal is not set up. Nothing renews unless you do it from this page. ' +
+            'Run First Time Setup.bat to register it.';
+        card.appendChild(note);
+      }
+
+      card.appendChild(forecastBlock(res, renew));
+      box.appendChild(card);
+    });
+  }
+
+  // Which certificates renew when, and whether anything happens afterwards.
+  function forecastBlock(res, renew){
+    var wrap = el('div', 'forecast');
+    var f = res.forecast;
+    var state = CC.state || {};
+    var deployment = state.deployment || {};
+
+    function targetsFor(certId){
+      var d = deployment[certId];
+      return (d && d.targets) ? d.targets : [];
+    }
+    function targetLabel(id){
+      var found = id;
+      ((state.settings && state.settings.targets) || []).some(function(t){
+        if (t.id === id) { found = t.label || id; return true; }
+        return false;
+      });
+      return found;
+    }
+
+    if (!f || !f.considered || !f.considered.length) {
+      var p = el('p', 'mini');
+      p.textContent = 'No renewal forecast yet. The nightly run records one, or press ' +
+        '“Preview what would renew” to work it out now.';
+      wrap.appendChild(p);
+      return wrap;
+    }
+
+    wrap.appendChild(el('div', 't', 'Next renewal'));
+
+    var items = f.considered.slice().sort(function(x, y){
+      if (!x.renewAfter) { return 1; }
+      if (!y.renewAfter) { return -1; }
+      return new Date(x.renewAfter) - new Date(y.renewAfter);
+    });
+
+    items.forEach(function(c){
+      var line = el('div', 'fc');
+      line.appendChild(el('span', 'n', c.name || c.certId));
+
+      if (c.due) {
+        line.appendChild(el('span', 'warn', 'due now — ' + (c.reason || 'the CA says so')));
+      } else if (c.renewAfter) {
+        line.appendChild(el('span', 'd', 'renews ' + fmtDate(c.renewAfter)));
+      } else {
+        line.appendChild(el('span', 'd', 'renewal date not known yet'));
+      }
+
+      // Renewal and deployment are separate things. A certificate with nothing
+      // assigned renews and then sits on disk - renew.ps1 logs it and carries
+      // on, so "automation is on" reads as more reassuring than it should.
+      var tg = targetsFor(c.certId);
+      if (tg.length) {
+        line.appendChild(el('span', 'd', '→ deploys to ' +
+          tg.map(targetLabel).join(', ')));
+      } else {
+        line.appendChild(el('span', 'warn', '→ no load balancer assigned, so it will not deploy'));
+      }
+      wrap.appendChild(line);
+    });
+
+    var stamp = el('p', 'mini');
+    var when = f.finishedAt ? ago(f.finishedAt) : 'at an unknown time';
+    var how  = (f.mode === 'preview') ? 'a preview you ran' : 'the scheduled run';
+    var tail = (renew && renew.registered && renew.enabled)
+      ? ' Dates come from the certificate authority and can move; they are rechecked every night.'
+      : ' Nothing is scheduled to act on these dates.';
+    stamp.textContent = 'Worked out ' + when + ' by ' + how + '.' + tail;
+    wrap.appendChild(stamp);
+
+    return wrap;
+  }
+
   function renderActivity(box){
     var state = CC.state;
     if (!state || !state.deployment) { return; }
