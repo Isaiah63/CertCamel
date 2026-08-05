@@ -52,13 +52,23 @@ function Write-Log {
 
 $outcome = @{
     ok = $true; startedAt = (Get-Date).ToString('o')
+    # 'preview' means -WhatIfOnly: the verdicts are real, nothing was acted on.
+    # The page says which, so a forecast is never mistaken for work done.
+    mode = $(if ($WhatIfOnly) { 'preview' } else { 'run' })
     considered = @(); renewed = @(); error = $null
 }
 
 function Save-Outcome {
-    if (-not $ResultPath) { return }
+    # Falls back to a fixed path when no -ResultPath was given. Every night this
+    # script works out exactly when each certificate is next due - the CA's own
+    # ARI date - and until now threw all of it away, because the scheduled task
+    # passes no -ResultPath and this function returned here. Writing it by
+    # default means the Home page can answer "when will it renew?" without the
+    # task having to be re-registered to pass an argument.
+    $path = $ResultPath
+    if (-not $path) { $path = Join-Path $script:JobsDir 'renew-due-sweep.json' }
     $outcome.finishedAt = (Get-Date).ToString('o')
-    try { Write-TextFileAtomic -Path $ResultPath -Content ($outcome | ConvertTo-Json -Depth 10) } catch { }
+    try { Write-TextFileAtomic -Path $path -Content ($outcome | ConvertTo-Json -Depth 10) } catch { }
 }
 
 try {
@@ -101,7 +111,18 @@ try {
         try {
             $ca = Get-CaProfile -Settings $settings -CaId $cert.caId
             Set-PAServer -DirectoryUrl (Get-ActiveDirectoryUrl -Ca $ca) -ErrorAction Stop
-            $order = Get-PAOrder -Name $cert.names[0] -ErrorAction SilentlyContinue
+
+            # '*' is not a legal character in a Posh-ACME order name, and
+            # Get-PAOrder throws on it rather than returning nothing. New-PAOrder
+            # stores wildcards as '!' (New-PAOrder.ps1:120), so ask for the name
+            # it was actually filed under.
+            #
+            # Without this the throw was swallowed by the catch below, $order
+            # stayed null, and every wildcard silently fell through to the plain
+            # 30-day fallback - never using the CA's ARI window, and never
+            # reporting a renewal date at all.
+            $orderName = ([string]$cert.names[0]).Replace('*', '!')
+            $order = Get-PAOrder -Name $orderName -ErrorAction SilentlyContinue
         } catch { }
 
         if (-not $order) {
