@@ -627,6 +627,56 @@ the countdown is always right even if the checker hasn't run in a while.
 - Nothing here — domains, credentials, certificates — is committed to git, so
   the folder can be handed to someone else clean.
 
+## Logs and the audit trail
+
+The **Logs** page is read-only, and deliberately so — a page that could edit the
+record would not be worth much as a record. It shows two different things that
+are easy to confuse:
+
+**Run logs** (`jobs\`) are the narrative of one run: every ACME step, every push,
+every verification tier. Useful when something went wrong and you want to know
+where. Named for what they are and when they ran — `2026-08-05T032000Z-renew-due.log`.
+Scheduled runs write these too; before, the 03:20 renewal wrote nothing at all,
+which meant the runs nobody watches were the ones with no record.
+
+**The audit trail** (`audit.log`) is one line per state change, append-only:
+
+```
+when                  who    source  event     object            outcome  detail
+2026-08-05T09:47:25Z  ULTRA  task    renew     camelnuggets.com  ok       issued serial 05B3DC…, expires 2026-11-03
+2026-08-05T10:02:11Z  ULTRA  ui      settings  general, logs     ok       2 section(s) updated
+```
+
+`source` separates `ui` from `task` — whether a person or the scheduler made the
+change, which is usually the next thing asked about any given line. A scheduled
+sweep records itself even when nothing was due, so an empty stretch means
+"nothing needed doing" rather than "the scheduler stopped firing".
+
+**What is never recorded:** no credential value, no private key, no certificate
+body. Credential changes are logged by key *name* only (`fake-pair:password
+removed`), and every line goes through a redaction pass on the way in so a future
+debug line cannot leak one by accident.
+
+### Retention
+
+Under **Settings → General**, applied to run logs only:
+
+| | Default |
+|---|---|
+| Keep run logs for | 90 days |
+| Maximum log folder size | 200 MB |
+
+Whichever is reached first trims oldest-first. Per-certificate state files
+(`deploy-<id>.json`) are current state rather than history and are never trimmed.
+Every trim writes its own audit line, so the log accounts for its own gaps.
+
+**The audit trail is exempt from both limits.** It rotates to `audit-<stamp>.log`
+when large, and those archives are kept. Deleting audit records to reclaim disk
+is what an assessor would object to, and a silent exception would be worse than a
+stated one — so it is stated, on the page as well as here. If a retention policy
+genuinely requires audit expiry, that wants to be its own explicit setting rather
+than a side effect of a disk cap.
+
 ## Moving or sharing this folder
 
 Copy the folder anywhere and it works, with two exceptions worth knowing:
