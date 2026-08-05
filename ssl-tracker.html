@@ -56,7 +56,20 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
       </a>
     </div>
 
-    <div class="navgroup" id="navgroup-settings">
+    <div class="navgroup navgroup-divided">
+      <a class="navitem" href="#/logs" data-view="logs">
+        <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg></span>
+        <span class="navlabel">Logs</span>
+      </a>
+      <a class="navitem" href="#/docs" data-view="docs">
+        <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+        <span class="navlabel">Docs</span>
+      </a>
+    </div>
+
+    <!-- Settings last: it is where you go to change how the tool works, not
+         where you go day to day. The pages above are the daily ones. -->
+    <div class="navgroup navgroup-divided" id="navgroup-settings">
       <button class="navgroup-label navgroup-toggle" type="button" id="btn-settings-group"
               aria-expanded="true" aria-controls="settings-navitems">
         <span>Settings</span>
@@ -84,17 +97,6 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
         <span class="navlabel">Alerts</span>
       </a>
       </div>
-    </div>
-
-    <div class="navgroup navgroup-divided">
-      <a class="navitem" href="#/logs" data-view="logs">
-        <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg></span>
-        <span class="navlabel">Logs</span>
-      </a>
-      <a class="navitem" href="#/docs" data-view="docs">
-        <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
-        <span class="navlabel">Docs</span>
-      </a>
     </div>
 
     <div class="sidebar-foot">
