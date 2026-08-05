@@ -878,6 +878,40 @@ function Invoke-Route {
             return
         }
 
+        '^/api/targets/discover$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+
+            $wanted = $null
+            if ($payload -and $payload.PSObject.Properties['targetId']) { $wanted = [string]$payload.targetId }
+
+            $settings = Get-TrackerSettings
+            $results = @()
+            foreach ($t in @($settings.targets)) {
+                if ($wanted -and $t.id -ne $wanted) { continue }
+
+                $user     = Get-TargetArg -Target $t -Name 'user'
+                $password = Get-TargetSecret -TargetId $t.id -Name 'password'
+                $insecure = [bool](Get-TargetArg -Target $t -Name 'insecureTls' -Default $false)
+
+                foreach ($n in @($t.nodes)) {
+                    $r = @{ targetId = $t.id; targetLabel = $t.label; node = $n.name; url = $n.url
+                            ok = $false; frontends = @(); error = $null }
+                    try {
+                        $api = Get-DataPlaneApiVersion -BaseUrl $n.url -User $user -Password $password -InsecureTls:$insecure
+                        $r.frontends = @(Get-HAProxyFrontends -BaseUrl $n.url -User $user -Password $password `
+                                            -ApiVersion $api -InsecureTls:$insecure)
+                        $r.ok = $true
+                    }
+                    catch { $r.error = ($_.Exception.Message -split "`n")[0].Trim() }
+                    $results += $r
+                }
+            }
+
+            if (-not $results.Count) { Send-Error $Stream 400 'No deployment target to inspect.'; return }
+            Send-Json $Stream @{ ok = (@($results | Where-Object { -not $_.ok }).Count -eq 0); nodes = @($results) }
+            return
+        }
+
         '^/api/deploy$' {
             if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
 

@@ -382,6 +382,100 @@
     });
   }
 
+  // Ask the nodes what they actually have, instead of asking a person to retype
+  // it. Strictly read-only: this reads frontends and their binds and never
+  // writes config, so it is safe next to whatever manages haproxy.cfg.
+  function discoverTarget(card, resultBox){
+    var c = collectSettings();
+    if (c.error) { setStatus(c.error, 'bad'); return; }
+
+    // Save first, same reason Test does: the password lives in the encrypted
+    // store, so an unsaved card has no credential to connect with.
+    setStatus('Saving, then asking the nodes...');
+    resultBox.textContent = '';
+    api('POST', '/api/settings', c.payload, function(err){
+      if (err) { setStatus(err, 'bad'); return; }
+      api('POST', '/api/targets/discover', {targetId: card.getAttribute('data-tid')}, function(err2, res){
+        if (err2) { setStatus(err2, 'bad'); return; }
+
+        var nodes = (res && res.nodes) || [];
+        var failed = nodes.filter(function(n){ return !n.ok; });
+        if (failed.length) {
+          renderTestRows(resultBox, nodes.map(function(n){
+            return {node: n.node, url: n.url, ok: n.ok, error: n.error,
+                    apiVersion: null, certificates: []};
+          }));
+          setStatus(failed.length + ' of ' + nodes.length + ' node(s) could not be read.', 'bad');
+          return;
+        }
+
+        // Offer what every node agrees on. A frontend present on only one node
+        // of a pair is a configuration difference worth seeing, not something to
+        // quietly pick for someone.
+        var counts = {};
+        nodes.forEach(function(n){
+          (n.frontends || []).forEach(function(f){
+            var key = f.frontend + '|' + (f.port || '') + '|' + (f.crtList || f.crt || '');
+            counts[key] = (counts[key] || 0) + 1;
+            counts[key + '|obj'] = f;
+          });
+        });
+
+        var common = [], partial = [];
+        Object.keys(counts).forEach(function(k){
+          if (k.indexOf('|obj') >= 0) { return; }
+          (counts[k] === nodes.length ? common : partial).push(counts[k + '|obj']);
+        });
+
+        renderDiscovery(card, resultBox, common, partial, nodes.length);
+        var n = common.length;
+        setStatus(n ? (n + ' TLS frontend(s) found on every node.')
+                    : 'No TLS frontend is common to every node.', n ? 'good' : 'bad');
+      });
+    });
+  }
+
+  function renderDiscovery(card, container, common, partial, nodeCount){
+    container.textContent = '';
+    var box = el('div', 'testrows');
+
+    common.forEach(function(f){
+      var row = el('div', 'testrow');
+      row.appendChild(el('span', 'n', f.frontend));
+      row.appendChild(el('span', 'v ok', ':' + (f.port || '?')));
+      var d = el('span', 'd', f.crtList ? f.crtList : (f.crt ? f.crt + '  (single crt, not a list)' : 'no crt-list'));
+      row.appendChild(d);
+
+      // Only offer to fill in what Cert Camel can actually drive. A single
+      // "crt" bind can have its certificate replaced but nothing can be added
+      // to it, so there is no crt-list path to write.
+      if (f.crtList) {
+        var use = el('button', 'btn sm', 'Use this');
+        use.type = 'button';
+        use.addEventListener('click', function(){
+          var listInput = card.querySelector('input[data-arg="crtList"]');
+          var portInput = card.querySelector('input[data-arg="verifyPort"]');
+          if (listInput) { listInput.value = f.crtList; }
+          if (portInput && f.port) { portInput.value = f.port; }
+          setStatus('Filled in from ' + f.frontend + '. Press Save to keep it.', 'good');
+        });
+        row.appendChild(use);
+      }
+      box.appendChild(row);
+    });
+
+    partial.forEach(function(f){
+      var row = el('div', 'testrow');
+      row.appendChild(el('span', 'n', f.frontend));
+      row.appendChild(el('span', 'v bad', 'partial'));
+      row.appendChild(el('span', 'd',
+        'not on all ' + nodeCount + ' nodes — the pair is configured differently, which is worth fixing first'));
+      box.appendChild(row);
+    });
+
+    container.appendChild(box);
+  }
+
   function addTargetCard(t){
     var catalog = (CC.state && CC.state.targetCatalog) || {};
     var types = Object.keys(catalog).sort();
@@ -401,6 +495,10 @@
     test.type = 'button';
     test.title = 'Save these settings, then check every node in this group answers';
     headBtns.appendChild(test);
+    var disco = el('button', 'btn sm', 'Discover');
+    disco.type = 'button';
+    disco.title = 'Ask the nodes which frontends terminate TLS, and fill in the crt-list and port from what they report';
+    headBtns.appendChild(disco);
     var rm = el('button', 'btn sm', 'Remove');
     rm.type = 'button';
     rm.addEventListener('click', function(){ card.parentNode.removeChild(card); });
@@ -457,6 +555,7 @@
     var results = el('div');
     card.appendChild(results);
     test.addEventListener('click', function(){ testTarget(card.getAttribute('data-tid'), results); });
+    disco.addEventListener('click', function(){ discoverTarget(card, results); });
 
     document.getElementById('targets').appendChild(card);
   }
