@@ -122,10 +122,78 @@ function Get-CertTargetIds {
       no longer configured".)
     #>
     param($CertConfig)
+    return @(@(Get-CertTargetBindings -CertConfig $CertConfig) | ForEach-Object { $_.id })
+}
+
+function Get-CertTargetBindings {
+    <#
+      The same assignment read as { id; overrides } pairs.
+
+      An entry is either a bare id string - "use everything the group says", the
+      only shape that existed before and still the common one - or an object
+      carrying per-certificate overrides:
+
+          "targets": [ "office", { "id": "office", "crtList": "/etc/haproxy/wild.txt" } ]
+
+      That exists because a group answers "which nodes, and what credentials",
+      while a crt-list answers "where is this certificate referenced". Those are
+      different questions, and tying them together meant one group could only
+      ever manage one frontend; two frontends on the same pair required defining
+      the same nodes twice with duplicate credentials.
+
+      Same defensive parsing as before - PS 5.1's ConvertTo-Json unwraps a
+      one-element array to a bare scalar on every settings round-trip, so on
+      disk this field has been seen as an array, a lone string, and an empty
+      object. Anything that does not yield a usable id is dropped rather than
+      being allowed to reach a deployment as a phantom target.
+    #>
+    param($CertConfig)
 
     if (-not $CertConfig) { return @() }
     if ($CertConfig -is [hashtable] -and -not $CertConfig.ContainsKey('targets')) { return @() }
-    return @(@($CertConfig.targets) | Where-Object { ($_ -is [string]) -and $_ })
+
+    $out = @()
+    foreach ($t in @($CertConfig.targets)) {
+        if ($null -eq $t) { continue }
+
+        if ($t -is [string]) {
+            if ($t) { $out += @{ id = $t; overrides = @{} } }
+            continue
+        }
+
+        # Object form. Reached as a hashtable via ConvertTo-HashtableDeep, but
+        # tolerate PSCustomObject too so a hand-edited or freshly-parsed
+        # settings.json behaves the same either way.
+        $id = $null
+        $ov = @{}
+        if ($t -is [hashtable]) {
+            if ($t.ContainsKey('id')) { $id = [string]$t.id }
+            foreach ($k in $t.Keys) { if ($k -ne 'id') { $ov[$k] = $t[$k] } }
+        }
+        elseif ($t.PSObject -and $t.PSObject.Properties['id']) {
+            $id = [string]$t.id
+            foreach ($p in $t.PSObject.Properties) { if ($p.Name -ne 'id') { $ov[$p.Name] = $p.Value } }
+        }
+
+        if ($id) { $out += @{ id = $id; overrides = $ov } }
+    }
+    return $out
+}
+
+function Resolve-TargetSetting {
+    <#
+      One setting, resolved through the precedence that makes overrides useful:
+      what this certificate says for this group, then what the group says, then
+      the built-in default. Mirrors how a certificate's CA is already resolved,
+      so "pinned here, inherited from there" reads the same way throughout.
+    #>
+    param([hashtable]$Target, $Binding, [string]$Name, $Default = $null)
+
+    if ($Binding -and $Binding.overrides -and $Binding.overrides.ContainsKey($Name)) {
+        $v = $Binding.overrides[$Name]
+        if ($null -ne $v -and "$v" -ne '') { return $v }
+    }
+    return (Get-TargetArg -Target $Target -Name $Name -Default $Default)
 }
 
 # PowerShell 5.1 has no ConvertFrom-Json -AsHashtable, and PSCustomObject is
