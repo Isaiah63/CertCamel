@@ -30,6 +30,64 @@ function Get-SetupTaskName {
     return $def.name
 }
 
+function Register-CamelTask {
+    <#
+      Registers a task that runs WHETHER OR NOT ANYONE IS LOGGED ON.
+
+      Without an explicit principal, Register-ScheduledTask defaults to
+      LogonType Interactive - the task runs only while this user has a session.
+      On a workstation you log into daily that is invisible, and
+      StartWhenAvailable quietly papers over it. On a server, where nobody stays
+      logged in, it is silently fatal: the 03:20 renewal never fires, Task
+      Scheduler still reports "Ready", the history stays empty, and the first
+      symptom is an expired certificate.
+
+      S4U ("service for user") needs no stored password, but it does need the
+      "Log on as a batch job" right, which standard users do not hold. If
+      Windows refuses, fall back to the old behaviour rather than leaving
+      nothing registered at all - but say plainly what was given up.
+    #>
+    param(
+        [string]$Name,
+        $Action,
+        $Trigger,
+        $Settings,
+        [string]$Description
+    )
+
+    $userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+
+    try {
+        $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType S4U `
+            -RunLevel Limited -ErrorAction Stop
+        Register-ScheduledTask -TaskName $Name -Action $Action -Trigger $Trigger `
+            -Settings $Settings -Principal $principal -Description $Description `
+            -Force -ErrorAction Stop | Out-Null
+        return 'S4U'
+    }
+    catch {
+        # "Access is denied" is what this looks like unelevated. Register it the
+        # old way rather than leaving the user with no task at all.
+        Register-ScheduledTask -TaskName $Name -Action $Action -Trigger $Trigger `
+            -Settings $Settings -Description $Description -Force -ErrorAction Stop | Out-Null
+
+        # Said once, not once per task - three identical paragraphs would train
+        # people to skip past it, which is the opposite of the point.
+        if (-not $script:WarnedAboutLogonType) {
+            $script:WarnedAboutLogonType = $true
+            Write-Host ""
+            Write-Host "        Note: these tasks will only run while you are signed in." -ForegroundColor Yellow
+            Write-Host "        Windows refused 'run whether logged on or not' (Access is denied)," -ForegroundColor DarkGray
+            Write-Host "        which needs the 'Log on as a batch job' right. That is fine on a" -ForegroundColor DarkGray
+            Write-Host "        PC you sign into daily." -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "        On an always-on server it is not: nothing would renew while" -ForegroundColor DarkGray
+            Write-Host "        nobody is logged on. Re-run this as administrator there." -ForegroundColor DarkGray
+        }
+        return 'Interactive'
+    }
+}
+
 $taskName = Get-SetupTaskName 'check'
 
 Write-Host ""
@@ -139,9 +197,8 @@ if ($answer -match '^[Yy]') {
         $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
             -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
 
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
-            -Settings $settings -Description 'Checks SSL certificate expiry for the domains in domains.txt.' `
-            -Force | Out-Null
+        [void](Register-CamelTask -Name $taskName -Action $action -Trigger $trigger `
+            -Settings $settings -Description 'Checks SSL certificate expiry for the domains in domains.txt.')
 
         Write-Host ""
         Write-Host "        Registered. It will run daily at 9:00 AM." -ForegroundColor Green
@@ -194,9 +251,8 @@ if ($wantRenew -match '^[Yy]') {
             -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries `
             -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 
-        Register-ScheduledTask -TaskName $renewTask -Action $rAction -Trigger $rTrigger `
-            -Settings $rSettings -Description 'Renews certificates the CA reports as due, deploys them, and verifies each load balancer is serving them.' `
-            -Force | Out-Null
+        [void](Register-CamelTask -Name $renewTask -Action $rAction -Trigger $rTrigger `
+            -Settings $rSettings -Description 'Renews certificates the CA reports as due, deploys them, and verifies each load balancer is serving them.')
 
         Write-Host ""
         Write-Host "      Registered. Runs daily at 3:20 AM." -ForegroundColor Green
@@ -242,9 +298,8 @@ if ($wantReport -match '^[Yy]') {
         $mSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
             -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
 
-        Register-ScheduledTask -TaskName $reportTask -Action $mAction -Trigger $mTrigger `
-            -Settings $mSettings -Description 'Sends the monthly certificate summary email, if enabled under Settings > Alerts.' `
-            -Force | Out-Null
+        [void](Register-CamelTask -Name $reportTask -Action $mAction -Trigger $mTrigger `
+            -Settings $mSettings -Description 'Sends the monthly certificate summary email, if enabled under Settings > Alerts.')
 
         Write-Host ""
         Write-Host "      Registered. Checks daily at 8:00 AM; only sends on the 1st." -ForegroundColor Green
