@@ -704,6 +704,30 @@ after the PC has been off. Only **one of the three can change anything**:
 | `SSL Cert Check` | daily 09:00 | Re-reads expiry dates. Never issues or deploys |
 | `Cert Camel Monthly Report` | daily 08:00 | Emails a summary on the 1st; does nothing on other days |
 
+### Do they run when nobody is signed in?
+
+Only if setup could register them that way, and that needs administrator.
+
+Run `First Time Setup.bat` **as administrator** and the tasks are registered to
+run whether or not you are logged on. Run it normally and Windows refuses
+(*Access is denied*), so they fall back to running **only while you are signed
+in** — setup says so at the time.
+
+On a PC you use daily that is fine; `StartWhenAvailable` catches up whenever you
+next log in. **On an always-on server it is not fine at all**: nobody stays
+logged in, so the 03:20 renewal never fires. Task Scheduler still shows the task
+as "Ready" and its history stays empty, and the first thing you notice is an
+expired certificate. If you are installing on a server, elevate.
+
+To check an existing install:
+
+```powershell
+Get-ScheduledTask -TaskName "Cert Camel Renew" | Select-Object -Expand Principal
+```
+
+`LogonType` of `S4U` runs unattended. `Interactive` does not — re-run setup as
+administrator to fix it.
+
 03:20 rather than the top of the hour because ACME rate limits are per-CA and
 shared by everyone, and every naive scheduler piles up on the hour.
 
