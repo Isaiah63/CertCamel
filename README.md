@@ -887,3 +887,20 @@ generated, none committed:
   jobs\               renewal logs
   lib\                Posh-ACME
 ```
+
+## Status and licence
+
+**Cert Camel is beta software.** It issues real certificates from a real
+certificate authority and can push them to production load balancers. Try it
+against staging and a test host first — Settings → Certificate Authorities has a
+staging switch, and staging certificates do not count against rate limits.
+
+Licensed under the [MIT licence](LICENSE). In particular:
+
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND … IN NO EVENT
+> SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+> OTHER LIABILITY.
+
+You are responsible for what it does to your certificates and your load
+balancers. Read [the security notes](#security-notes) before pointing it at
+anything you care about.
