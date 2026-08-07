@@ -59,3 +59,8 @@ tests/
 # Windows junk
 desktop.ini
 Thumbs.db
+
+# Screenshots for the website. They belong to camelnuggets.com, not to the
+# tool - nothing in the app loads them, and committing them would add ~1.3 MB
+# to a download that is currently 244 KB.
+ScreenShots/
