@@ -403,6 +403,12 @@
       var when;
       if (!s.registered)  { when = 'not set up'; }
       else if (!s.enabled){ when = 'switched off'; }
+      else if (s.triggerType === 'boot') {
+        // A boot trigger still carries a StartBoundary - the moment it was
+        // registered - so formatting the time would claim it runs daily at
+        // whatever o'clock setup happened to be run.
+        when = 'at startup';
+      }
       else {
         var clock = clockOf(s.schedule);
         when = clock ? 'daily ' + clock : 'scheduled';

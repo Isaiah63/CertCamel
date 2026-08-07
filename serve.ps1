@@ -7,20 +7,31 @@
   Served over loopback it can, so this hosts the same page plus a small JSON API
   behind it.
 
-  Started by "Open Tracker.bat". Close that window to stop the server.
+  Started by "Open Tracker.bat", or by the Cert Camel service when one is
+  installed. Close that window to stop an interactive server.
 
-  Deliberately TcpListener rather than HttpListener: HttpListener needs a
-  "netsh http add urlacl" reservation or an elevated prompt on Windows, and
-  this bundle has never required admin. A loopback TcpListener needs neither.
+  Deliberately TcpListener rather than HttpListener. The original reason was
+  that HttpListener needs a "netsh http add urlacl" reservation or elevation,
+  and this bundle required no admin - that no longer holds, since installing a
+  service needs admin anyway. The reason it still holds: TLS here is an
+  SslStream wrap, so the tool can serve a certificate it issued itself, whereas
+  HTTP.sys binds by thumbprint and would need a netsh rebind after every
+  renewal. Same conclusion, different justification.
 #>
 
 [CmdletBinding()]
 param(
     # 0 means "let Windows pick a free port", which avoids colliding with
-    # whatever else is already listening.
+    # whatever else is already listening. The service is installed with an
+    # explicit port so it is predictable across restarts.
     [int]$Port = 0,
 
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+
+    # Running under the Service Control Manager: no console to print to, and no
+    # desktop to open a browser on. Also makes the diagnostics file the only
+    # record of anything going wrong.
+    [switch]$ServiceMode
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +42,66 @@ New-TrackerDirectories
 
 # Everything the server itself does is a person at the page.
 $script:RunLogSource = 'ui'
+
+# --------------------------------------------------------------------------- #
+# Diagnostics, for when there is no console to print to
+# --------------------------------------------------------------------------- #
+# Deliberately at the ROOT rather than in jobs\: Invoke-LogRetention only scans
+# jobs\, so keeping this outside it means retention can never try to delete a
+# file the server currently has open - which would fail into an empty catch and
+# retry silently forever. It carries its own rotation instead.
+
+$script:DiagFile    = Join-Path $PSScriptRoot 'server.log'
+$script:DiagMaxBytes = 2mb
+
+function Initialize-DiagLog {
+    try {
+        if ((Test-Path $script:DiagFile) -and (Get-Item $script:DiagFile).Length -gt $script:DiagMaxBytes) {
+            # One generation back is enough: this is a breadcrumb trail for "why
+            # did the service misbehave last night", not an audit record.
+            $old = Join-Path $PSScriptRoot 'server.1.log'
+            if (Test-Path $old) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
+            Move-Item -LiteralPath $script:DiagFile -Destination $old -Force -ErrorAction SilentlyContinue
+        }
+    }
+    catch { }
+}
+
+function Write-Diag {
+    <#
+      Says it on the console when there is one, and always writes it down.
+      Under the Service Control Manager Write-Host goes nowhere, so without the
+      file half the reason to look at a server would be missing.
+
+      The session token is stripped on the way to disk. The console is fine -
+      whoever is looking at it already has the token in their address bar - but
+      this file lives at the root with ordinary inherited permissions, next to
+      a session.json that is deliberately locked to three principals. Writing
+      the token here in clear would hand back exactly what that ACL protects.
+      Masked centrally rather than at each call site, so a line added later
+      cannot reintroduce the leak.
+    #>
+    param([string]$Message, [string]$Colour = 'Gray', [switch]$NoConsole)
+
+    if (-not $ServiceMode -and -not $NoConsole) {
+        Write-Host $Message -ForegroundColor $Colour
+    }
+    try {
+        # Two passes on purpose. The regex catches any ?t=... URL, including one
+        # belonging to a DIFFERENT instance read out of its session file, which
+        # an exact match on this process's token would sail straight past. The
+        # exact match then catches a bare token printed without the ?t= prefix.
+        $safe = [regex]::Replace($Message, '\?t=[0-9a-fA-F]{16,}', '?t=<withheld>')
+        if ($script:Token -and $safe.Contains($script:Token)) {
+            $safe = $safe.Replace($script:Token, '<withheld>')
+        }
+        $line = '[{0}] {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $safe.Trim()
+        [IO.File]::AppendAllText($script:DiagFile, $line + "`r`n", [Text.Encoding]::UTF8)
+    }
+    catch { }
+}
+
+Initialize-DiagLog
 
 # Trim run logs once at startup. Doing it here rather than on a timer keeps the
 # single-threaded listener free, and a server that has just been started is
@@ -63,6 +134,92 @@ function Test-Token {
         $diff = $diff -bor ([int]$script:Token[$i] -bxor [int]$Candidate[$i])
     }
     return ($diff -eq 0)
+}
+
+# --------------------------------------------------------------------------- #
+# Session file - how a headless server says where it is
+# --------------------------------------------------------------------------- #
+# Started from a console you read the URL off the screen. Started by the Service
+# Control Manager there is no screen, so the port and token would be lost the
+# moment the process began. This writes them down for "Open Tracker.bat".
+#
+# The token is still minted fresh every start rather than persisted. The only
+# cost is that a browser tab does not survive a restart - and a restart is a
+# reboot or a crash, after which you would reopen from the shortcut anyway.
+# Persisting it would turn a per-run secret into a standing one for the sake of
+# one click.
+
+$script:SessionFile = Join-Path $script:JobsDir 'session.json'
+
+function Set-SessionFileAcl {
+    <#
+      The file holds a token that grants full control of the API, so it must not
+      be world-readable on a multi-user server. Inheritance is switched off and
+      only SYSTEM, Administrators and the account running the server are put
+      back - the same people who can already read secrets.xml directly.
+    #>
+    param([string]$Path)
+
+    try {
+        $acl = Get-Acl -Path $Path
+        $acl.SetAccessRuleProtection($true, $false)   # explicit rules only
+        foreach ($r in @($acl.Access)) { [void]$acl.RemoveAccessRule($r) }
+
+        foreach ($who in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators',
+                           [Security.Principal.WindowsIdentity]::GetCurrent().Name)) {
+            try {
+                $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+                    $who, 'FullControl', 'Allow')))
+            }
+            catch { }   # a name that will not resolve must not stop the others
+        }
+        Set-Acl -Path $Path -AclObject $acl
+    }
+    catch { }
+}
+
+function Write-SessionFile {
+    param([int]$ActualPort, [string]$Url)
+
+    $payload = @{
+        url       = $Url
+        port      = $ActualPort
+        token     = $script:Token
+        pid       = $PID
+        service   = [bool]$ServiceMode
+        startedAt = (Get-Date).ToString('o')
+        folder    = $PSScriptRoot
+    }
+    try {
+        Write-TextFileAtomic -Path $script:SessionFile -Content ($payload | ConvertTo-Json)
+        Set-SessionFileAcl -Path $script:SessionFile
+    }
+    catch {
+        Write-Diag "Could not write the session file: $(($_.Exception.Message -split "`n")[0].Trim())" 'Yellow'
+    }
+}
+
+function Get-RunningInstance {
+    <#
+      Returns the live instance described by the session file, or $null.
+
+      Both parts matter: a stale file left by a crash names a pid that is gone,
+      and a pid that has been recycled onto some unrelated program would answer
+      nothing on the port. Requiring both keeps a leftover file from blocking a
+      legitimate start.
+    #>
+    if (-not (Test-Path $script:SessionFile)) { return $null }
+
+    $s = $null
+    try { $s = [IO.File]::ReadAllText($script:SessionFile) | ConvertFrom-Json } catch { return $null }
+    if (-not $s -or -not $s.pid -or -not $s.port) { return $null }
+
+    try { $null = Get-Process -Id ([int]$s.pid) -ErrorAction Stop } catch { return $null }
+
+    $listening = @(Get-NetTCPConnection -State Listen -LocalPort ([int]$s.port) -ErrorAction SilentlyContinue)
+    if (-not $listening.Count) { return $null }
+
+    return $s
 }
 
 # --------------------------------------------------------------------------- #
@@ -1542,6 +1699,34 @@ function Invoke-Route {
 # Listen
 # --------------------------------------------------------------------------- #
 
+# A second server is never what anyone wants. It was previously harmless because
+# $Port = 0 handed each launch a different random port, so two instances simply
+# coexisted unnoticed; once the startup task pins a port they collide. Point at
+# the one already running instead of failing to bind.
+$existing = Get-RunningInstance
+
+# A hard kill - or a console window closed with the X - never runs a finally
+# block, so a session file naming a dead process is the normal case rather than
+# the exception. Clear it here so the folder does not accumulate stale tokens
+# for servers that stopped weeks ago.
+if (-not $existing -and (Test-Path $script:SessionFile)) {
+    try { Remove-Item -LiteralPath $script:SessionFile -Force -ErrorAction SilentlyContinue } catch { }
+}
+if ($existing) {
+    Write-Diag ""
+    Write-Diag "  Cert Camel is already running (pid $($existing.pid), port $($existing.port))." 'Yellow'
+    if ($existing.service) {
+        Write-Diag "  It was started at boot by the 'Cert Camel Server' task, so it survives sign-out." 'DarkGray'
+    }
+    Write-Diag "  Open it with:" 'DarkGray'
+    Write-Diag "  $($existing.url)" 'White'
+    Write-Diag ""
+    if (-not $NoBrowser -and -not $ServiceMode) {
+        try { Start-Process $existing.url } catch { }
+    }
+    exit 0
+}
+
 # IPAddress.Loopback, never IPAddress.Any: this must not be reachable from the
 # network, only from this machine.
 $listener = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, $Port)
@@ -1550,20 +1735,35 @@ $listener.Start()
 $actualPort = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
 $url = "http://127.0.0.1:$actualPort/?t=$script:Token"
 
-Write-Host ""
-Write-Host "  SSL Certificate Tracker" -ForegroundColor Cyan
-Write-Host "  $PSScriptRoot" -ForegroundColor DarkGray
-Write-Host ""
-Write-Host "  Listening on 127.0.0.1:$actualPort (this PC only)" -ForegroundColor Green
-Write-Host ""
-Write-Host "  If your browser did not open, paste this in:" -ForegroundColor DarkGray
-Write-Host "  $url" -ForegroundColor White
-Write-Host ""
-Write-Host "  Close this window to stop the server." -ForegroundColor DarkGray
-Write-Host ""
+# Written before anything is served, so the launcher can find a service that
+# started at boot with nobody watching.
+Write-SessionFile -ActualPort $actualPort -Url $url
 
-if (-not $NoBrowser) {
-    try { Start-Process $url } catch { Write-Host "  Could not open the browser automatically." -ForegroundColor Yellow }
+Write-Diag ""
+Write-Diag "  SSL Certificate Tracker" 'Cyan'
+Write-Diag "  $PSScriptRoot" 'DarkGray'
+Write-Diag ""
+Write-Diag "  Listening on 127.0.0.1:$actualPort (this PC only)" 'Green'
+
+if ($ServiceMode) {
+    # No console read this, and no desktop to open a browser on. The session
+    # file is the only way anyone finds the URL, so say where it is.
+    Write-Diag "  Running as a service. Open it with 'Open Tracker.bat'." 'DarkGray'
+    Write-Diag "  Session details: $script:SessionFile" 'DarkGray'
+}
+else {
+    Write-Diag ""
+    Write-Diag "  If your browser did not open, paste this in:" 'DarkGray'
+    Write-Diag "  $url" 'White'
+    Write-Diag ""
+    Write-Diag "  Close this window to stop the server." 'DarkGray'
+    Write-Diag ""
+}
+
+# Never in service mode: Start-Process on a URL from session 0 opens nothing a
+# person can see, and can sit there holding the start-up sequence.
+if (-not $NoBrowser -and -not $ServiceMode) {
+    try { Start-Process $url } catch { Write-Diag "  Could not open the browser automatically." 'Yellow' }
 }
 
 try {
@@ -1580,9 +1780,11 @@ try {
                 try { Invoke-Route -Request $request -Stream $stream }
                 catch {
                     # A handler blowing up must not take the server down with
-                    # it - report it and keep listening.
+                    # it - report it and keep listening. Through Write-Diag so
+                    # it survives having no console: under a service this file
+                    # is the only evidence anything went wrong.
                     $msg = ($_.Exception.Message -split "`n")[0].Trim()
-                    Write-Host "  ! $($request.Method) $($request.Path) -> $msg" -ForegroundColor Red
+                    Write-Diag "  ! $($request.Method) $($request.Path) -> $msg" 'Red'
                     try { Send-Error $stream 500 $msg } catch { }
                 }
             }
@@ -1596,4 +1798,11 @@ try {
 }
 finally {
     $listener.Stop()
+    # Clear the session file on the way out so the next start is not told a
+    # server is already running by a file describing a process that has gone.
+    # Get-RunningInstance also checks the pid is alive, so this is belt and
+    # braces - but a stale file naming a live-but-unrelated pid is exactly the
+    # confusion worth avoiding.
+    try { if (Test-Path $script:SessionFile) { Remove-Item -LiteralPath $script:SessionFile -Force } } catch { }
+    Write-Diag "  Server stopped." 'DarkGray'
 }

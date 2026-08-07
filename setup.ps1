@@ -7,6 +7,19 @@
   Run it by double-clicking "First Time Setup.bat".
 #>
 
+[CmdletBinding()]
+param(
+    # Re-register the existing scheduled tasks so they run whether or not
+    # anyone is signed in, then exit. No prompts, no downloads, no certificate
+    # check.
+    #
+    # Exists because the repair otherwise means walking the entire interactive
+    # setup - domains, the Posh-ACME prompt, a full check run, then three Y/N
+    # questions - which is a lot of ceremony for a ten-second fix, and is
+    # exactly why it is easy to miss that setup needed administrator.
+    [switch]$RepairTasks
+)
+
 $ErrorActionPreference = 'Stop'
 
 $root        = $PSScriptRoot
@@ -89,6 +102,63 @@ function Register-CamelTask {
 }
 
 $taskName = Get-SetupTaskName 'check'
+
+# --------------------------------------------------------------------------- #
+# -RepairTasks: fix the principals and get out
+# --------------------------------------------------------------------------- #
+# Re-registers each EXISTING task with its own action, trigger and settings
+# preserved, changing only the principal. Deliberately not rebuilt from
+# scratch: whatever schedule or limits are already there stay exactly as they
+# are, and a task that was never registered is not conjured into being.
+
+if ($RepairTasks) {
+    Write-Host ""
+    Write-Host "  Cert Camel - repair scheduled tasks" -ForegroundColor Cyan
+    Write-Host ""
+
+    $elevated = (New-Object Security.Principal.WindowsPrincipal(
+        [Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $elevated) {
+        Write-Host "  This needs administrator." -ForegroundColor Yellow
+        Write-Host "  Right-click 'First Time Setup.bat' and choose Run as administrator," -ForegroundColor DarkGray
+        Write-Host "  or run this from an elevated PowerShell." -ForegroundColor DarkGray
+        Write-Host ""
+        exit 1
+    }
+
+    $userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $fixed = 0; $already = 0; $missing = 0
+
+    foreach ($def in @($script:ScheduledTaskNames)) {
+        $t = Get-ScheduledTask -TaskName $def.name -ErrorAction SilentlyContinue
+        if (-not $t) {
+            Write-Host ("  {0,-28} not registered - skipped" -f $def.name) -ForegroundColor DarkGray
+            $missing++
+            continue
+        }
+        if ($t.Principal.LogonType -eq 'S4U' -or $t.Principal.LogonType -eq 'Password') {
+            Write-Host ("  {0,-28} already runs signed-out" -f $def.name) -ForegroundColor Green
+            $already++
+            continue
+        }
+        try {
+            $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType S4U -RunLevel Limited
+            Register-ScheduledTask -TaskName $def.name -Action $t.Actions -Trigger $t.Triggers `
+                -Settings $t.Settings -Principal $principal -Force -ErrorAction Stop | Out-Null
+            Write-Host ("  {0,-28} fixed" -f $def.name) -ForegroundColor Green
+            $fixed++
+        }
+        catch {
+            Write-Host ("  {0,-28} FAILED: {1}" -f $def.name, ($_.Exception.Message -split "`n")[0].Trim()) -ForegroundColor Red
+        }
+    }
+
+    Write-Host ""
+    Write-Host "  $fixed fixed, $already already correct, $missing not registered." -ForegroundColor Cyan
+    Write-Host ""
+    exit 0
+}
 
 Write-Host ""
 Write-Host "  SSL Certificate Expiry Tracker - setup" -ForegroundColor Cyan
@@ -313,6 +383,81 @@ if ($wantReport -match '^[Yy]') {
 } else {
     Write-Host ""
     Write-Host "      Skipped. Run monthly-report.ps1 by hand whenever you want one." -ForegroundColor Yellow
+}
+
+# --------------------------------------------------------------------------- #
+# 8. Keep the page running across reboots (server installs)
+# --------------------------------------------------------------------------- #
+# Offered only on Windows Server. On a PC you open the tracker when you want it
+# and close it when you are done, so a background copy is clutter; on a server
+# nobody is signed in to open anything.
+
+$isServer = $false
+try { $isServer = ([int](Get-CimInstance Win32_OperatingSystem).ProductType -ne 1) } catch { }
+
+$serverTask = Get-SetupTaskName 'server'
+$serverTaskExists = [bool](Get-ScheduledTask -TaskName $serverTask -ErrorAction SilentlyContinue)
+
+if ($isServer -or $serverTaskExists) {
+    Write-Host ""
+    Write-Host "  [+] Keep the page running" -ForegroundColor Cyan
+    Write-Host ""
+
+    if ($serverTaskExists) {
+        Write-Host "      Already installed: '$serverTask' starts the page at boot." -ForegroundColor Green
+        Write-Host ""
+        $keep = Read-Host "      Keep it? (Y/N)"
+        if ($keep -notmatch '^[Yy]') {
+            try {
+                $r = Uninstall-CamelServerTask
+                Write-Host ""
+                Write-Host "      Removed$(if ($r.stoppedRunning) { ', and stopped the running server' })." -ForegroundColor Yellow
+            }
+            catch {
+                Write-Host ""
+                Write-Host "      Could not remove it: $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+    }
+    else {
+        Write-Host "      Right now the page runs only while 'Open Tracker.bat' is open, and"
+        Write-Host "      stops when you sign out. On a server that means it is gone after"
+        Write-Host "      every reboot until somebody signs in and starts it again."
+        Write-Host ""
+        Write-Host "      This registers '$serverTask' to start it at boot instead. It stays"
+        Write-Host "      on 127.0.0.1 - reachable from this machine only, over RDP - and" -ForegroundColor DarkGray
+        Write-Host "      nothing is exposed to the network." -ForegroundColor DarkGray
+        Write-Host ""
+
+        $wantServer = Read-Host "      Start the page at boot? (Y/N)"
+        if ($wantServer -match '^[Yy]') {
+            $portAnswer = Read-Host "      Port [8787]"
+            $serverPort = 8787
+            if ($portAnswer -match '^\d+$' -and [int]$portAnswer -ge 1 -and [int]$portAnswer -le 65535) {
+                $serverPort = [int]$portAnswer
+            }
+            try {
+                $r = Install-CamelServerTask -Port $serverPort
+                Write-Host ""
+                Write-Host "      Registered. It starts at boot on 127.0.0.1:$serverPort." -ForegroundColor Green
+                Write-Host "      Start it now without rebooting:" -ForegroundColor DarkGray
+                Write-Host "        Start-ScheduledTask -TaskName '$serverTask'" -ForegroundColor DarkGray
+                Write-Host ""
+                Write-Host "      It lives in Task Scheduler, not services.msc - a scheduled task" -ForegroundColor DarkGray
+                Write-Host "      needs no stored password, where a Windows service would have to" -ForegroundColor DarkGray
+                Write-Host "      keep yours and would break when it next changed." -ForegroundColor DarkGray
+            }
+            catch {
+                Write-Host ""
+                Write-Host "      Could not register it: $(($_.Exception.Message -split "`n")[0].Trim())" -ForegroundColor Red
+                Write-Host "      Registering it to run signed-out needs administrator." -ForegroundColor DarkGray
+            }
+        }
+        else {
+            Write-Host ""
+            Write-Host "      Skipped. Open the page with 'Open Tracker.bat' when you need it." -ForegroundColor Yellow
+        }
+    }
 }
 
 # --------------------------------------------------------------------------- #
