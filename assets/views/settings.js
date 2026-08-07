@@ -172,6 +172,20 @@
     });
   }
 
+  // Recipients arrive as an array, but settings.json has been seen holding a
+  // bare string - and once held the literal "[object Object]", from an object
+  // stringified on the way in. Calling .join on that throws, which would take
+  // the whole Alerts panel down with it, so accept either shape and drop
+  // anything that is not a usable address rather than displaying wreckage.
+  function addressList(value){
+    var items = Array.isArray(value) ? value
+              : (typeof value === 'string' ? value.split(',') : []);
+    return items
+      .map(function(v){ return (typeof v === 'string' ? v : '').trim(); })
+      .filter(function(v){ return v && v.indexOf('@') !== -1; })
+      .join(', ');
+  }
+
   function field(card, cls, label, value, type, hint, placeholder){
     var f = el('div', 'field');
     f.appendChild(el('label', null, label));
@@ -887,7 +901,7 @@
     root.querySelector('.al-smtp-port').value = smtp.port || '';
     root.querySelector('.al-smtp-enc').value = smtp.encryption || 'starttls';
     root.querySelector('.al-smtp-from').value = smtp.from || '';
-    root.querySelector('.al-smtp-to').value = (smtp.to || []).join(', ');
+    root.querySelector('.al-smtp-to').value = addressList(smtp.to);
     var authBox = root.querySelector('.al-smtp-auth');
     authBox.checked = !!smtp.authRequired;
     root.querySelector('.al-auth-fields').classList.toggle('hidden', !authBox.checked);
