@@ -1701,14 +1701,22 @@ function Invoke-Route {
 
 # A second server is never what anyone wants. It was previously harmless because
 # $Port = 0 handed each launch a different random port, so two instances simply
-# coexisted unnoticed; once the service pins a port they collide. Point at the
-# one already running instead of failing to bind.
+# coexisted unnoticed; once the startup task pins a port they collide. Point at
+# the one already running instead of failing to bind.
 $existing = Get-RunningInstance
+
+# A hard kill - or a console window closed with the X - never runs a finally
+# block, so a session file naming a dead process is the normal case rather than
+# the exception. Clear it here so the folder does not accumulate stale tokens
+# for servers that stopped weeks ago.
+if (-not $existing -and (Test-Path $script:SessionFile)) {
+    try { Remove-Item -LiteralPath $script:SessionFile -Force -ErrorAction SilentlyContinue } catch { }
+}
 if ($existing) {
     Write-Diag ""
     Write-Diag "  Cert Camel is already running (pid $($existing.pid), port $($existing.port))." 'Yellow'
     if ($existing.service) {
-        Write-Diag "  It is running as the Cert Camel service, so it survives sign-out and reboots." 'DarkGray'
+        Write-Diag "  It was started at boot by the 'Cert Camel Server' task, so it survives sign-out." 'DarkGray'
     }
     Write-Diag "  Open it with:" 'DarkGray'
     Write-Diag "  $($existing.url)" 'White'
