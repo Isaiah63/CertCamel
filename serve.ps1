@@ -743,9 +743,17 @@ function Invoke-SaveSettings {
         $al   = $Payload.alerts
         $smtp = $(if ($al.PSObject.Properties['smtp']) { $al.smtp } else { $null })
 
+        # Must look like an address, not merely be non-empty. settings.json has
+        # been found holding the literal string "[object Object]" here - an
+        # object stringified somewhere on the way in, then round-tripped by
+        # every save afterwards. [string] on an object always produces
+        # SOMETHING, so "is it non-empty" was never going to catch it. Requiring
+        # an @ costs nothing and makes the bad value unstorable.
         $toList = @()
         if ($smtp -and $smtp.PSObject.Properties['to']) {
-            $toList = @(@($smtp.to) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+            $toList = @(@($smtp.to) |
+                ForEach-Object { ([string]$_).Trim() } |
+                Where-Object { $_ -and $_.Contains('@') -and $_ -notmatch '^\[object' })
         }
 
         $expiryOn  = [bool]($al.PSObject.Properties['expiry']            -and $al.expiry.enabled)

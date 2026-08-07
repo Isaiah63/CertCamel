@@ -386,7 +386,7 @@
 
     var t = el('div', 'pill auto ' + cls);
     var head = el('div', 'autohead');
-    head.appendChild(el('span', 'k', 'Automation'));
+    head.appendChild(el('span', 'k', 'Automation Scripts'));
     head.appendChild(el('span', 'val', word));
     t.appendChild(head);
 

@@ -66,7 +66,9 @@ $script:ScheduledTaskNames = @(
        detail = "Sends the summary email on the 1st. Registered as a daily task that does nothing on the other days, because there is no monthly trigger to reach for." }
     @{ key = 'server'; name = 'Cert Camel Server'
        script = 'serve.ps1'
-       label = 'Web page at startup'
+       # Just "Web page": the Home tile prints the label and the schedule side
+       # by side, so a label ending in "at startup" said it twice.
+       label = 'Web page'
        level = 'Read-only'
        detail = "Keeps this page running so it survives sign-out and reboots. Optional - without it the page runs only while you have 'Open Tracker.bat' open. Serving the page changes nothing on its own." }
 )
