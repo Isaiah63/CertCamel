@@ -64,6 +64,11 @@ $script:ScheduledTaskNames = @(
        label = 'Monthly summary email'
        level = 'Read-only'
        detail = "Sends the summary email on the 1st. Registered as a daily task that does nothing on the other days, because there is no monthly trigger to reach for." }
+    @{ key = 'server'; name = 'Cert Camel Server'
+       script = 'serve.ps1'
+       label = 'Web page at startup'
+       level = 'Read-only'
+       detail = "Keeps this page running so it survives sign-out and reboots. Optional - without it the page runs only while you have 'Open Tracker.bat' open. Serving the page changes nothing on its own." }
 )
 
 # Certificate authorities are profiles, not a single global setting: a real
@@ -701,7 +706,7 @@ function Get-AutomationStatus {
                 level = $def.level; detail = $def.detail
                 registered = $false; enabled = $false; state = 'unknown'
                 nextRun = $null; lastRun = $null; lastResult = $null
-                schedule = $null; pathMatches = $true; commandPath = $null
+                schedule = $null; triggerType = $null; pathMatches = $true; commandPath = $null
             }
         }
         return $out
@@ -716,7 +721,7 @@ function Get-AutomationStatus {
             level = $def.level; detail = $def.detail
             registered = $false; enabled = $false; state = 'not registered'
             nextRun = $null; lastRun = $null; lastResult = $null
-            schedule = $null; pathMatches = $true; commandPath = $null
+            schedule = $null; triggerType = $null; pathMatches = $true; commandPath = $null
         }
 
         $task = $null
@@ -735,7 +740,18 @@ function Get-AutomationStatus {
 
                 # The trigger's StartBoundary carries the time of day for a daily
                 # trigger. Reported as the raw boundary; the page formats it.
+                # Type 8 is TASK_TRIGGER_BOOT, 2 is TASK_TRIGGER_DAILY. A boot
+                # trigger still carries a StartBoundary - the moment it was
+                # registered - so reporting only the time would render "daily
+                # 3:47 PM" for something that actually runs at startup.
                 foreach ($tr in $d.Triggers) {
+                    if (-not $entry.triggerType) {
+                        $entry.triggerType = switch ([int]$tr.Type) {
+                            8       { 'boot' }
+                            2       { 'daily' }
+                            default { 'other' }
+                        }
+                    }
                     if ($tr.StartBoundary) { $entry.schedule = [string]$tr.StartBoundary; break }
                 }
 
@@ -764,6 +780,91 @@ function Get-AutomationStatus {
     }
 
     return $out
+}
+
+function Install-CamelServerTask {
+    <#
+      Keeps the page running across sign-out and reboots.
+
+      A startup scheduled task rather than a Windows service, deliberately. A
+      service would have to run as SOMEBODY, and the only account that can
+      decrypt secrets.xml is the one that saved it - so the Service Control
+      Manager would have to store that account's password, which breaks every
+      time the password rotates and is the sort of thing a security review
+      objects to. S4U needs no password at all and reaches DPAPI perfectly well
+      (verified). The cost is that it lives in Task Scheduler rather than
+      services.msc, which the docs point out.
+
+      Requires elevation for S4U, exactly like the other three tasks.
+    #>
+    param(
+        [int]$Port = 8787,
+        [switch]$WhatIfOnly
+    )
+
+    $def = @($script:ScheduledTaskNames) | Where-Object { $_.key -eq 'server' }
+    if (-not $def) { throw "No 'server' entry in the scheduled task map." }
+
+    $serve = Join-Path $script:Root 'serve.ps1'
+    if (-not (Test-Path $serve)) { throw "serve.ps1 is missing from $script:Root." }
+
+    $argLine = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Port {1} -ServiceMode' -f $serve, $Port
+    $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argLine
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+
+    # ExecutionTimeLimit 0 is the one that matters: the default is PT72H, so a
+    # process meant to run forever would be killed after three days - while the
+    # renewal tasks carried on working, which is a baffling way to fail.
+    # RestartCount covers a crash; IgnoreNew stops a retrigger stacking a second
+    # copy on top of the first.
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+        -MultipleInstances IgnoreNew
+
+    if ($WhatIfOnly) {
+        return @{ name = $def.name; port = $Port; command = "powershell.exe $argLine"; installed = $false }
+    }
+
+    $userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType S4U -RunLevel Limited
+    Register-ScheduledTask -TaskName $def.name -Action $action -Trigger $trigger `
+        -Settings $settings -Principal $principal `
+        -Description 'Keeps the Cert Camel page running so it survives sign-out and reboots.' `
+        -Force -ErrorAction Stop | Out-Null
+
+    return @{ name = $def.name; port = $Port; command = "powershell.exe $argLine"; installed = $true }
+}
+
+function Uninstall-CamelServerTask {
+    <#
+      Removes the startup task and stops the running server, so "undo" really
+      undoes it rather than leaving something listening until the next reboot.
+    #>
+    $def = @($script:ScheduledTaskNames) | Where-Object { $_.key -eq 'server' }
+    $removed = $false
+    $stopped = $false
+
+    if (Get-ScheduledTask -TaskName $def.name -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $def.name -Confirm:$false -ErrorAction Stop
+        $removed = $true
+    }
+
+    # The task going away does not stop a server already running under it.
+    $session = Join-Path $script:JobsDir 'session.json'
+    if (Test-Path $session) {
+        try {
+            $s = [IO.File]::ReadAllText($session) | ConvertFrom-Json
+            if ($s.service -and $s.pid) {
+                Stop-Process -Id ([int]$s.pid) -Force -ErrorAction SilentlyContinue
+                $stopped = $true
+            }
+        }
+        catch { }
+        try { Remove-Item -LiteralPath $session -Force -ErrorAction SilentlyContinue } catch { }
+    }
+
+    return @{ removed = $removed; stoppedRunning = $stopped }
 }
 
 function Get-RenewalForecast {

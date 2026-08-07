@@ -31,8 +31,14 @@ audit-*.log
 certs/
 acme-state/
 
-# Renewal logs. Useful locally, noise in a repository.
+# Renewal logs, and the session file naming the current port and token.
 jobs/
+
+# The server's own diagnostics. Deliberately outside jobs\ so log retention -
+# which only scans jobs\ - can never try to delete a file the running server
+# has open. It rotates itself one generation.
+server.log
+server.1.log
 
 # Posh-ACME, fetched by First Time Setup rather than vendored into the repo.
 lib/
