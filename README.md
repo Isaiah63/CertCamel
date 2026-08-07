@@ -236,8 +236,11 @@ monthly trigger to reach for instead. `First Time Setup.bat` can register it.
 - Windows, with **Windows PowerShell 5.1** (ships with Windows) and .NET 4.7.1+
 - API access to your DNS provider — Cloudflare, DNS Made Easy and NS1 are wired
   up; adding another is a catalog entry, not new code
-- No admin rights at any point. Monitoring needs nothing installed; renewal
-  fetches [Posh-ACME](https://poshac.me) into `lib\` inside this folder
+- No admin rights to monitor or renew. Nothing is installed system-wide; renewal
+  fetches [Posh-ACME](https://poshac.me) into `lib\` inside this folder.
+  Administrator is needed only for the two things that genuinely require it:
+  registering tasks that run while you are signed out, and starting the page at
+  boot on a server
 
 ## Quick start
 
@@ -703,6 +706,57 @@ after the PC has been off. Only **one of the three can change anything**:
 | `Cert Camel Renew` | daily 03:20 | Renews what the CA says is due, deploys each one, verifies every node is serving it |
 | `SSL Cert Check` | daily 09:00 | Re-reads expiry dates. Never issues or deploys |
 | `Cert Camel Monthly Report` | daily 08:00 | Emails a summary on the 1st; does nothing on other days |
+
+### Keeping the page running (server installs)
+
+Normally Cert Camel runs while `Open Tracker.bat` is open and stops when you sign
+out. On a server that means it is gone after every reboot until somebody signs in
+and starts it again.
+
+Run `First Time Setup.bat` **as administrator** on a Windows Server and it offers
+to register a fourth task, `Cert Camel Server`, which starts the page at boot:
+
+| | |
+|---|---|
+| Listens on | `127.0.0.1:8787` — this machine only, reached over RDP |
+| Survives | sign-out, and reboots |
+| Exposed to the network | **nothing** |
+
+It stays on loopback deliberately. Reaching it from another machine needs TLS, a
+password and a network ACL, none of which exist yet — so this phase does not
+pretend to offer it.
+
+**Why a scheduled task and not a Windows service?** A service has to run as some
+account, and the only one that can decrypt `secrets.xml` is the account that
+saved it — so Windows would have to store that account's password, which breaks
+the moment the password changes. A scheduled task using S4U stores no password at
+all. The cost is that it lives in Task Scheduler rather than `services.msc`.
+
+```powershell
+# Start it now rather than waiting for a reboot
+Start-ScheduledTask -TaskName "Cert Camel Server"
+
+# Stop the running page (the task restarts it at next boot)
+Get-Content .\jobs\session.json | ConvertFrom-Json | ForEach-Object { Stop-Process -Id $_.pid }
+
+# Remove it entirely
+Unregister-ScheduledTask -TaskName "Cert Camel Server" -Confirm:$false
+```
+
+Once it is running, `Open Tracker.bat` stops starting a second copy — it finds
+the one already running and just opens your browser at it.
+
+**If you change which account it runs as, it breaks.** `secrets.xml` is encrypted
+with DPAPI, which is bound to one Windows account: a different account cannot
+decrypt it, so DNS automation and load-balancer pushes start failing while
+everything else looks fine. Re-enter the credentials under Settings as the new
+account if you ever move it.
+
+Two files appear once it runs. `jobs\session.json` records the current port and
+token so the launcher can find it — it is locked to SYSTEM, Administrators and
+the account running the server, because that token grants full use of the API.
+`server.log` is the page's own diagnostics, which is the only place errors go
+when there is no console; it rotates itself and never contains the token.
 
 ### Do they run when nobody is signed in?
 
