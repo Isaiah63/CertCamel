@@ -133,7 +133,169 @@
       'The audit trail is deliberately not covered by either limit. It records who changed what and ' +
       'when, and deleting that to reclaim disk is the opposite of what it is for — it rotates to a ' +
       'dated file instead, and the older files are kept.'));
+
+    p.appendChild(buildAddressSection());
     return p;
+  }
+
+  // --- Tracker address ---------------------------------------------------------- //
+  /* Serving this page over HTTPS. Off unless asked for, because someone looking
+     at Cert Camel for the first time has no DNS credential and no wish to change
+     their network — they should be able to open it and look.
+
+     Four preconditions, each reported on its own row rather than collapsed into
+     one "ready" flag. They fail in four different places — a DNS credential, a
+     certificate, another program holding a port, and a file only administrators
+     can write — and a single red cross would send someone hunting through all
+     four. */
+
+  function buildAddressSection(){
+    var wrap = el('div');
+    wrap.appendChild(el('h4', null, 'Tracker address'));
+    wrap.appendChild(el('p', 'hint',
+      'By default this page is served over plain HTTP at 127.0.0.1 on whichever port is free — ' +
+      'nothing to set up, and it never leaves this PC. Give it a name Cert Camel already holds a ' +
+      'certificate for and it will serve itself over HTTPS instead, using a certificate it issued.'));
+
+    var on = el('label', 'check');
+    var box = document.createElement('input');
+    box.type = 'checkbox'; box.id = 'set-web-https';
+    on.appendChild(box);
+    on.appendChild(el('span', null, 'Serve this page over HTTPS'));
+    wrap.appendChild(on);
+
+    var fields = el('div', 'hidden');
+    fields.id = 'set-web-fields';
+
+    var grid = el('div', 'fields');
+    var hf = el('div', 'field');
+    hf.appendChild(el('label', null, 'Hostname'));
+    var hi = document.createElement('input');
+    hi.type = 'text'; hi.id = 'set-web-host'; hi.autocomplete = 'off';
+    hi.placeholder = 'tracker.example.com';
+    hf.appendChild(hi);
+    hf.appendChild(el('p', 'hint', 'One name, not a wildcard. It resolves to 127.0.0.1 through this machine’s hosts file — no public DNS record is needed or wanted.'));
+    grid.appendChild(hf);
+
+    var pf = el('div', 'field');
+    pf.appendChild(el('label', null, 'Port'));
+    var pi = document.createElement('input');
+    pi.type = 'number'; pi.min = '1'; pi.max = '65535'; pi.id = 'set-web-port'; pi.autocomplete = 'off';
+    pi.placeholder = '8787';
+    pf.appendChild(pi);
+    pf.appendChild(el('p', 'hint', 'Fixed, not chosen at random like the default — a name is no use on a port that moves every launch.'));
+    grid.appendChild(pf);
+    fields.appendChild(grid);
+
+    var actions = el('div', 'page-actions');
+    var check = el('button', 'btn', 'Check');
+    check.type = 'button';
+    check.addEventListener('click', function(){ runPreflight(true); });
+    actions.appendChild(check);
+    fields.appendChild(actions);
+
+    var rows = el('div', 'addrcheck');
+    rows.id = 'set-web-check';
+    fields.appendChild(rows);
+
+    fields.appendChild(el('p', 'hint',
+      'The hostname is published to public Certificate Transparency logs the moment a certificate ' +
+      'covers it, whether or not it has a DNS record. That is how CT works for every certificate ' +
+      'from every authority — worth knowing before picking a name you would rather not advertise.'));
+
+    wrap.appendChild(fields);
+
+    box.addEventListener('change', function(){
+      fields.classList.toggle('hidden', !box.checked);
+      if (box.checked) { runPreflight(false); }
+    });
+    return wrap;
+  }
+
+  function addrRow(label, ok, detail){
+    var r = el('div', 'addrrow' + (ok ? ' ok' : ''));
+    r.appendChild(el('span', 'addrmark', ok ? '✓' : '•'));
+    r.appendChild(el('span', 'addrlabel', label));
+    r.appendChild(el('span', 'addrdetail', detail || ''));
+    return r;
+  }
+
+  function runPreflight(loud){
+    var host = document.getElementById('set-web-host').value.trim();
+    var port = parseInt(document.getElementById('set-web-port').value, 10);
+    var out  = document.getElementById('set-web-check');
+    if (!out) { return; }
+    if (!host) { out.textContent = ''; if (loud) { setStatus('Enter a hostname first.', 'bad'); } return; }
+
+    out.textContent = '';
+    out.appendChild(el('p', 'hint', 'Checking…'));
+
+    api('POST', '/api/web/preflight', {hostname: host, port: isNaN(port) ? 0 : port}, function(err, r){
+      out.textContent = '';
+      if (err) { out.appendChild(el('p', 'hint bad', err)); return; }
+
+      out.appendChild(addrRow('DNS zone', r.zone.ok, r.zone.detail));
+
+      var certRow = addrRow('Certificate', r.certificate.ok, r.certificate.detail);
+      // Only offer the domains.txt entry when nothing already covers the name.
+      // Adding one for a name a wildcard covers would pull it off that wildcard
+      // and onto the zone's other certificate, which is strictly worse.
+      if (!r.certificate.covered && r.zone.ok && !r.certificate.watched) {
+        var add = el('button', 'btn sm', 'Add to domains.txt');
+        add.type = 'button';
+        add.addEventListener('click', function(){
+          add.disabled = true;
+          api('POST', '/api/web/domains', {hostname: r.hostname, port: r.port}, function(e2, res){
+            add.disabled = false;
+            if (e2) { setStatus(e2, 'bad'); return; }
+            setStatus(res.changed
+              ? 'Added ' + res.entry + ' to domains.txt. Renew it from the Certificates page — that takes a few minutes while DNS propagates.'
+              : res.note, 'good');
+            runPreflight(false);
+          });
+        });
+        certRow.appendChild(add);
+      } else if (r.certificate.watched && !r.certificate.covered) {
+        certRow.appendChild(el('span', 'addrnote', 'already in domains.txt — renew it from the Certificates page'));
+      }
+      out.appendChild(certRow);
+
+      out.appendChild(addrRow('Port', r.portCheck.ok, r.portCheck.detail));
+
+      var hostsRow = addrRow('Hosts file', r.hosts.ok, r.hosts.detail);
+      if (!r.hosts.ok) {
+        var line = '127.0.0.1\t' + r.hostname;
+        if (r.elevated) {
+          var write = el('button', 'btn sm', 'Add it');
+          write.type = 'button';
+          write.addEventListener('click', function(){
+            write.disabled = true;
+            api('POST', '/api/web/hosts', {hostname: r.hostname}, function(e3){
+              write.disabled = false;
+              if (e3) { setStatus(e3, 'bad'); return; }
+              setStatus('Added to the hosts file.', 'good');
+              runPreflight(false);
+            });
+          });
+          hostsRow.appendChild(write);
+        } else {
+          hostsRow.appendChild(el('span', 'addrnote', 'needs administrator — add this line yourself:'));
+          var code = el('code', null, '127.0.0.1  ' + r.hostname);
+          hostsRow.appendChild(code);
+        }
+        // No port on this line, ever. The hosts file has no port field: a
+        // "name:8787" entry does not error, it simply never matches, and the
+        // name then fails to resolve with nothing to explain why.
+        void line;
+      }
+      out.appendChild(hostsRow);
+
+      if (loud) {
+        setStatus(r.ready
+          ? 'Ready. Save, then restart the tracker to serve over HTTPS.'
+          : 'Not ready yet — see the rows above.', r.ready ? 'good' : '');
+      }
+    });
   }
 
   // --- Certificate Authorities -------------------------------------------------- //
@@ -837,6 +999,17 @@
     if (isNaN(logDays) || logDays < 1) { return {error: 'Log retention needs a number of days, at least 1.'}; }
     if (isNaN(logMb)   || logMb   < 1) { return {error: 'The maximum log folder size needs to be at least 1 MB.'}; }
 
+    var webOn   = document.getElementById('set-web-https').checked;
+    var webHost = document.getElementById('set-web-host').value.trim().toLowerCase().replace(/\.$/, '');
+    var webPort = parseInt(document.getElementById('set-web-port').value, 10);
+    if (isNaN(webPort)) { webPort = 0; }
+    if (webOn) {
+      if (!webHost) { return {error: 'HTTPS needs a hostname for the tracker.'}; }
+      if (webPort < 1 || webPort > 65535) {
+        return {error: 'HTTPS needs a fixed port. A hostname is no use on a port that changes every launch.'};
+      }
+    }
+
     return {
       payload: {
         contact:     document.getElementById('set-contact').value.trim(),
@@ -845,7 +1018,8 @@
         providers:   providers,
         targets:     targets,
         alerts:      alertsResult ? alertsResult.value : null,
-        logs:        {retentionDays: logDays, maxSizeMb: logMb}
+        logs:        {retentionDays: logDays, maxSizeMb: logMb},
+        web:         {https: webOn, hostname: webHost, port: webPort}
       }
     };
   }
@@ -880,6 +1054,15 @@
     document.getElementById('set-contact').value = s.contact || '';
     document.getElementById('set-log-days').value = (s.logs && s.logs.retentionDays) || 90;
     document.getElementById('set-log-mb').value   = (s.logs && s.logs.maxSizeMb) || 200;
+
+    var w = s.web || {};
+    var webBox = document.getElementById('set-web-https');
+    webBox.checked = !!w.https;
+    document.getElementById('set-web-host').value = w.hostname || '';
+    document.getElementById('set-web-port').value = w.port || '';
+    document.getElementById('set-web-fields').classList.toggle('hidden', !webBox.checked);
+    document.getElementById('set-web-check').textContent = '';
+    if (webBox.checked) { runPreflight(false); }
 
     var caHost = document.getElementById('cas');
     caHost.textContent = '';

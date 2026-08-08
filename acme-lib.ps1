@@ -611,6 +611,45 @@ function Get-LogSettings {
     return @{ retentionDays = $days; maxSizeMb = $mb }
 }
 
+function Get-WebSettings {
+    <#
+      How the tracker page itself is served: plain HTTP on whatever port Windows
+      hands out, or HTTPS under a name this tool holds a certificate for.
+
+      Off by default, and that matters more than it looks. Someone evaluating
+      Cert Camel against other tools has no DNS credential, no domain in mind
+      and no intention of touching their network - they double-click and look.
+      HTTPS is for the install that has already pointed the tool at a DNS
+      provider, so it is opt-in and never a first-run prompt.
+
+      port 0 means "let Windows pick a free one". That is right for a page
+      opened from a shortcut and wrong the moment the address carries a name:
+      a name is worthless on a port that moves every launch, and the domains.txt
+      entry that watches it would be probing last week's port.
+    #>
+    param([hashtable]$Settings)
+
+    $out = @{ https = $false; hostname = ''; port = 0 }
+
+    if ($Settings -and $Settings.ContainsKey('web') -and $Settings.web) {
+        $w = $Settings.web
+        if ($w.ContainsKey('hostname') -and $w.hostname) {
+            $out.hostname = ([string]$w.hostname).Trim().TrimEnd('.').ToLowerInvariant()
+        }
+        if ($w.ContainsKey('port') -and $w.port) { $out.port = [int]$w.port }
+        if ($w.ContainsKey('https'))             { $out.https = [bool]$w.https }
+    }
+
+    if ($out.port -lt 0 -or $out.port -gt 65535) { $out.port = 0 }
+
+    # HTTPS with no name or no fixed port is not a state worth honouring: it
+    # would pin nothing and then fail the handshake on every request. Fall back
+    # to plain HTTP rather than serving something broken.
+    if ($out.https -and (-not $out.hostname -or -not $out.port)) { $out.https = $false }
+
+    return $out
+}
+
 function Invoke-LogRetention {
     <#
       Trim RUN logs, oldest first, by age then by total size - whichever bites
@@ -2796,6 +2835,396 @@ function Test-NameCoveredBySans {
         }
     }
     return $false
+}
+
+# --------------------------------------------------------------------------- #
+# The tracker's own address
+# --------------------------------------------------------------------------- #
+# Serving this page over HTTPS needs three unrelated things to be true: a
+# certificate that covers the name, the name resolving to this machine, and a
+# port that does not move between launches. They are checked and reported
+# separately because they fail differently, and only the first is Cert Camel's
+# own doing - the other two are the operator's machine.
+
+# Posh-ACME's default PFX password. renew.ps1 never passes -PfxPass, so this is
+# what every .pfx in certs\ is sealed with.
+#
+# Not a secret in any useful sense: cert.key sits unencrypted in the same
+# folder, so anyone who can read the .pfx can already read the key without it.
+# It is here because the loader has to supply something, not because it is
+# holding anything shut.
+$script:PfxPassword = 'poshacme'
+
+function Find-CertificateForHost {
+    <#
+      Which certificate on disk would a browser accept for this name?
+
+      Deliberately reads cert.cer - the public certificate - and never the
+      .pfx. Opening a PFX makes Windows materialise the private key into a key
+      container on disk, and doing that once per folder just to answer a
+      question would leave key material behind for certificates we are not even
+      going to serve. Only the server loads a PFX, once, for the one it picked.
+
+      An exact SAN match beats a wildcard, because that is the order a TLS
+      client resolves them in - if both exist, the exact one is what would
+      actually be served, so it is the one to report.
+    #>
+    param([string]$HostName)
+
+    $wanted = ([string]$HostName).Trim().TrimEnd('.').ToLowerInvariant()
+    if (-not $wanted) { return $null }
+    if (-not (Test-Path $script:CertsDir)) { return $null }
+
+    $best = $null
+
+    foreach ($dir in @(Get-ChildItem -LiteralPath $script:CertsDir -Directory -ErrorAction SilentlyContinue)) {
+        $cer = Join-Path $dir.FullName 'cert.cer'
+        $pfx = Join-Path $dir.FullName 'fullchain.pfx'
+
+        # fullchain, not cert.pfx: the intermediate has to go down the wire or
+        # clients without it cached cannot build a path to the root.
+        if (-not (Test-Path $cer) -or -not (Test-Path $pfx)) { continue }
+
+        try {
+            $c = New-Object Security.Cryptography.X509Certificates.X509Certificate2 (,[IO.File]::ReadAllBytes($cer))
+        }
+        catch { continue }
+
+        $sans = @(Get-CertificateSanNames -Certificate $c)
+        if (-not (Test-NameCoveredBySans -Sans $sans -Name $wanted)) { continue }
+
+        $match = @{
+            certId   = $dir.Name
+            pfx      = $pfx
+            subject  = $c.Subject
+            notAfter = $c.NotAfter
+            sans     = $sans
+            exact    = [bool](@($sans) -contains $wanted)
+            expired  = ($c.NotAfter -lt (Get-Date))
+        }
+
+        if (-not $best) { $best = $match; continue }
+
+        # Exact wins outright. Between two of the same kind, the one that lasts
+        # longer - a just-renewed certificate should displace the one it replaced
+        # if both somehow still sit on disk.
+        if ($match.exact -and -not $best.exact) { $best = $match }
+        elseif ($match.exact -eq $best.exact -and $match.notAfter -gt $best.notAfter) { $best = $match }
+    }
+
+    return $best
+}
+
+function Get-HostsFilePath {
+    # Via SystemDirectory rather than a hardcoded C:\Windows: the system drive
+    # is not always C, and on a server it frequently is not.
+    return (Join-Path ([Environment]::SystemDirectory) 'drivers\etc\hosts')
+}
+
+function Get-HostsEntry {
+    <#
+      Does the hosts file already point this name at loopback?
+
+      Returns @{ present; address; line } so the caller can tell "not there at
+      all" from "there, but aimed somewhere else" - the second being far more
+      confusing to hit and worth saying out loud.
+    #>
+    param([string]$HostName)
+
+    $out = @{ present = $false; address = ''; line = '' }
+    $wanted = ([string]$HostName).Trim().TrimEnd('.').ToLowerInvariant()
+    if (-not $wanted) { return $out }
+
+    $path = Get-HostsFilePath
+    if (-not (Test-Path $path)) { return $out }
+
+    try { $lines = [IO.File]::ReadAllLines($path) } catch { return $out }
+
+    foreach ($line in $lines) {
+        $t = ([string]$line).Trim()
+        if (-not $t -or $t.StartsWith('#')) { continue }
+
+        # address then one or more names, any run of whitespace between them.
+        $parts = @($t -split '\s+' | Where-Object { $_ })
+        if ($parts.Count -lt 2) { continue }
+
+        $names = @($parts[1..($parts.Count - 1)] | ForEach-Object { $_.TrimEnd('.').ToLowerInvariant() })
+        if ($names -contains $wanted) {
+            $out.present = $true
+            $out.address = $parts[0]
+            $out.line    = $t
+            return $out
+        }
+    }
+    return $out
+}
+
+function Add-HostsEntry {
+    <#
+      Point a name at loopback in the hosts file. Needs administrator - the file
+      is writable only by them, which is the whole reason this cannot be done
+      quietly on the operator's behalf.
+
+      The hosts file has NO port field. "name:8787" here does not error, it
+      simply never matches anything, and the name then fails to resolve with no
+      clue as to why - so the port belongs in the URL and in domains.txt, never
+      in this line.
+    #>
+    param([string]$HostName, [string]$Address = '127.0.0.1')
+
+    $wanted = ([string]$HostName).Trim().TrimEnd('.').ToLowerInvariant()
+    if (-not $wanted) { throw "No hostname given." }
+
+    $existing = Get-HostsEntry -HostName $wanted
+    if ($existing.present) {
+        if ($existing.address -eq $Address) { return @{ ok = $true; changed = $false; line = $existing.line } }
+        throw "$wanted is already in the hosts file pointing at $($existing.address). Remove that line first - two entries for one name is not a state worth guessing at."
+    }
+
+    $path = Get-HostsFilePath
+
+    # Appended, never rewritten. This file belongs to the machine and may carry
+    # entries that matter to things far outside this tool; the only safe edit is
+    # one that adds a line and touches nothing else.
+    $text = ''
+    if (Test-Path $path) { $text = [IO.File]::ReadAllText($path) }
+    if ($text -and -not $text.EndsWith("`n")) { $text += "`r`n" }
+
+    $line = "$Address`t$wanted"
+    $text += "`r`n# Added by Cert Camel - the tracker page's own address.`r`n$line`r`n"
+
+    # Straight to the file: hosts has no atomic-replace story worth having, and
+    # a temp-file swap would drop whatever ACL and ownership it carries.
+    [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))
+
+    return @{ ok = $true; changed = $true; line = $line }
+}
+
+function Add-TrackerDomainEntry {
+    <#
+      Put the tracker's own name in domains.txt so it is watched and renewed
+      like anything else, under its own [Tracker] category so it reads as a
+      separate block rather than appearing in the middle of someone's
+      production list.
+
+      The port goes ON the line. Without it the checker probes 443 at the
+      loopback address the hosts entry just created, finds nothing listening,
+      and reports the tracker as down - in its own list, which is a memorably
+      confusing way to start.
+
+      Categories are display only. Renewal groups by DNS zone regardless, so
+      this decides where the entry SHOWS, never which certificate it lands on.
+    #>
+    param([string]$HostName, [int]$Port, [string]$Category = 'Tracker')
+
+    $wanted = ([string]$HostName).Trim().TrimEnd('.').ToLowerInvariant()
+    if (-not $wanted) { throw "No hostname given." }
+    if ($Port -lt 1 -or $Port -gt 65535) { throw "Port $Port is not a usable port." }
+
+    $entry = "${wanted}:$Port"
+    $text  = ''
+    if (Test-Path $script:DomainsFile) {
+        $text = [IO.File]::ReadAllText($script:DomainsFile, [Text.Encoding]::UTF8)
+    }
+
+    # Already listed under any category and on any port - leave it alone. This
+    # file is hand-edited, and a second line for a name it already carries is
+    # worse than doing nothing.
+    foreach ($line in ($text -split "`r?`n")) {
+        $t = ([string]$line).Trim()
+        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith('[')) { continue }
+        $name = ($t -split ':')[0].Trim().TrimEnd('.').ToLowerInvariant()
+        if ($name -eq $wanted) {
+            return @{ ok = $true; changed = $false; entry = $t
+                      note = "already in domains.txt as '$t'" }
+        }
+    }
+
+    if ($text -and -not $text.EndsWith("`n")) { $text += "`r`n" }
+
+    if ($text -match '(?m)^\s*\[' + [regex]::Escape($Category) + '\]\s*$') {
+        # The category exists already: append under it rather than opening a
+        # second block with the same name.
+        $text = [regex]::Replace(
+            $text,
+            '(?m)^(\s*\[' + [regex]::Escape($Category) + '\]\s*)$',
+            ('$1' + "`r`n" + $entry),
+            1)
+    }
+    else {
+        $text += "`r`n[$Category]`r`n$entry`r`n"
+    }
+
+    Write-TextFileAtomic -Path $script:DomainsFile -Content $text
+
+    return @{ ok = $true; changed = $true; entry = $entry }
+}
+
+function Test-Elevated {
+    return (New-Object Security.Principal.WindowsPrincipal(
+        [Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-TrackerAddressStatus {
+    <#
+      The four preconditions for serving this page under a name, each answered
+      separately.
+
+      They are reported rather than enforced as one boolean because they fail in
+      completely different places - a DNS credential, a certificate, another
+      program holding a port, and a file only administrators can write - and
+      "HTTPS did not work" tells nobody which of those to go and fix.
+
+      Read-only. Nothing here writes anything.
+    #>
+    param(
+        [string]$HostName,
+        [int]$Port,
+        [hashtable]$Settings,
+        $ZoneCache,
+        # The port this server is on right now, so "in use" can tell another
+        # program apart from ourselves already sitting on it.
+        [int]$CurrentPort = 0
+    )
+
+    $name = ([string]$HostName).Trim().TrimEnd('.').ToLowerInvariant()
+
+    $out = @{
+        hostname = $name
+        port     = $Port
+        elevated = [bool](Test-Elevated)
+        ready    = $false
+        zone        = @{ ok = $false; detail = 'No hostname given.'; zone = ''; provider = '' }
+        certificate = @{ ok = $false; detail = ''; certId = ''; notAfter = $null
+                         exact = $false; covered = $false; watched = $false }
+        portCheck   = @{ ok = $false; detail = '' }
+        hosts       = @{ ok = $false; detail = ''; line = ''; address = '' }
+    }
+
+    if (-not $name) { return $out }
+
+    if ($name.StartsWith('*.')) {
+        $out.zone.detail = 'A wildcard cannot be the address of a web page - give it one name.'
+        return $out
+    }
+    if ($name -notmatch '^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$') {
+        $out.zone.detail = "'$name' is not a valid hostname."
+        return $out
+    }
+
+    # --- zone: can any configured DNS credential issue for this name? -------- #
+    # Checked FIRST and before anything is written. Cert Camel discovers what it
+    # can renew by asking each provider what zones it can see, so a credential
+    # scoped to one zone cannot issue for a name in another however plausible
+    # that name looks. Finding that out later means a domains.txt entry that can
+    # never renew.
+    $zones = @()
+    if ($ZoneCache -and $ZoneCache.zones) { $zones = @($ZoneCache.zones) }
+
+    if (-not $zones.Count) {
+        $out.zone.detail = 'No DNS zones known yet. Add a DNS provider under Settings, then refresh the zone list.'
+    }
+    else {
+        $match = Resolve-HostZone -HostName $name -Zones $zones
+        if ($match) {
+            $out.zone.ok       = $true
+            $out.zone.zone     = $match.zone
+            $out.zone.provider = $match.providerLabel
+            $out.zone.detail   = "$($match.zone) - managed by $($match.providerLabel)"
+        }
+        else {
+            $guess = Get-FallbackZone -HostName $name
+            $out.zone.detail = "No configured DNS credential manages $guess. If that zone is in the same account, the API token may be scoped to a single zone - widen it and refresh the zone list."
+        }
+    }
+
+    # --- certificate: does one on disk already cover the name? --------------- #
+    $cert = Find-CertificateForHost -HostName $name
+    if ($cert) {
+        $out.certificate.ok       = -not $cert.expired
+        $out.certificate.covered  = $true
+        $out.certificate.certId   = $cert.certId
+        $out.certificate.notAfter = $cert.notAfter.ToString('o')
+        $out.certificate.exact    = $cert.exact
+        if ($cert.expired) {
+            $out.certificate.detail = "$($cert.certId) covers this name but expired on $($cert.notAfter.ToString('d MMM yyyy'))."
+        }
+        elseif ($cert.exact) {
+            $out.certificate.detail = "$($cert.certId), valid to $($cert.notAfter.ToString('d MMM yyyy'))"
+        }
+        else {
+            # Covered by a wildcard. Worth saying which, because it also means
+            # this name does NOT need a domains.txt entry - adding one would pull
+            # it off the wildcard and onto the zone's other certificate.
+            $out.certificate.detail = "covered by the $($cert.certId) wildcard, valid to $($cert.notAfter.ToString('d MMM yyyy')) - no domains.txt entry needed"
+        }
+    }
+    else {
+        $out.certificate.detail = 'Not issued yet. Adding it to domains.txt and renewing takes a few minutes.'
+    }
+
+    # Is it already watched? Only interesting when no wildcard covers it.
+    if (Test-Path $script:DomainsFile) {
+        try {
+            foreach ($line in ([IO.File]::ReadAllText($script:DomainsFile, [Text.Encoding]::UTF8) -split "`r?`n")) {
+                $t = ([string]$line).Trim()
+                if (-not $t -or $t.StartsWith('#') -or $t.StartsWith('[')) { continue }
+                if ((($t -split ':')[0].Trim().TrimEnd('.').ToLowerInvariant()) -eq $name) {
+                    $out.certificate.watched = $true
+                    break
+                }
+            }
+        } catch { }
+    }
+
+    # --- port ---------------------------------------------------------------- #
+    if ($Port -lt 1 -or $Port -gt 65535) {
+        $out.portCheck.detail = 'Pick a port. A name is no use on a port that changes every launch.'
+    }
+    elseif ($Port -eq $CurrentPort) {
+        $out.portCheck.ok = $true
+        $out.portCheck.detail = "$Port - already in use by this server"
+    }
+    else {
+        $holder = $null
+        try {
+            $conn = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)[0]
+            if ($conn) { $holder = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue }
+        } catch { }
+        if ($holder) {
+            $out.portCheck.detail = "$Port is held by $($holder.ProcessName) (pid $($holder.Id))."
+        }
+        else {
+            $out.portCheck.ok = $true
+            $out.portCheck.detail = "$Port is free"
+        }
+    }
+
+    # --- hosts file ---------------------------------------------------------- #
+    # No public A record is wanted or needed: DNS-01 validation reads a TXT
+    # record and never connects to the host, and resolvers routinely refuse to
+    # return loopback answers anyway (dnsmasq's rebind protection among them),
+    # so a public record pointing at 127.0.0.1 would work in some places and
+    # silently fail in others.
+    $entry = Get-HostsEntry -HostName $name
+    if ($entry.present -and $entry.address -eq '127.0.0.1') {
+        $out.hosts.ok      = $true
+        $out.hosts.address = $entry.address
+        $out.hosts.line    = $entry.line
+        $out.hosts.detail  = 'points at 127.0.0.1'
+    }
+    elseif ($entry.present) {
+        $out.hosts.address = $entry.address
+        $out.hosts.line    = $entry.line
+        $out.hosts.detail  = "already in the hosts file, but pointing at $($entry.address)."
+    }
+    else {
+        $out.hosts.detail = "not in $(Get-HostsFilePath)"
+    }
+
+    $out.ready = ($out.zone.ok -and $out.certificate.ok -and $out.portCheck.ok -and $out.hosts.ok)
+    return $out
 }
 
 function Test-CertificateBundle {
