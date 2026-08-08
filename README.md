@@ -269,6 +269,53 @@ and the server stops.
 Nothing is exposed to your network: the server binds to loopback only, and every
 request must carry a random token generated fresh each time it starts.
 
+### Serving the page over HTTPS
+
+Optional, off by default, and it needs a DNS provider already configured — so
+nothing about a first look at Cert Camel changes. **Settings → General → Tracker
+address** turns it on: give the page a hostname and a fixed port, and it serves
+itself over TLS using a certificate it issued.
+
+It stays on loopback. The hostname resolves to `127.0.0.1` through this
+machine's hosts file, and **no public DNS record is needed** — ACME's DNS-01
+validation only reads a `_acme-challenge` TXT record and never connects to the
+host. (A public record pointing at `127.0.0.1` would also work, and is the worse
+option: resolvers routinely refuse to return loopback answers — `dnsmasq
+--stop-dns-rebind` is on by default in a lot of router firmware — so it would
+resolve in some places and silently fail in others.)
+
+Four things have to be true, and the panel reports them separately because they
+fail in four different places:
+
+| | |
+|---|---|
+| **DNS zone** | A configured credential must manage the name's zone. A token scoped to one zone cannot issue for another, however plausible the name looks — check this before anything else |
+| **Certificate** | One on disk must cover the name. A wildcard you already hold counts, and then no `domains.txt` entry is wanted: adding one would pull the name off the wildcard and onto the zone's other certificate |
+| **Port** | Fixed, not the random free port used by default. A name is no use on a port that moves every launch |
+| **Hosts file** | `127.0.0.1  tracker.example.com`. Needs administrator, so the panel offers to write it or gives you the line. **No port on this line** — the hosts file has no port field, and `name:8787` there does not error, it just never matches |
+
+Two things worth knowing before you pick a name:
+
+- **The hostname becomes public.** Every certificate's SAN list is published to
+  Certificate Transparency logs, so `crt.sh` will list it the moment it is
+  issued — with or without a DNS record. That is true of every certificate from
+  every authority; skipping the DNS record buys resolution reliability, not
+  privacy.
+- **Certificates group by DNS zone.** Put the tracker on a name in a zone you
+  already renew and it joins that zone's certificate. Give it a zone of its own
+  and it gets a certificate of its own.
+
+If the certificate ever fails to *load* — missing file, unreadable key — the
+server says so and falls back to plain HTTP rather than refusing to start. An
+*expired* certificate is different and less serious: the browser still offers
+Advanced → Proceed, and because renewal runs from the scheduled task rather than
+from this page, the 03:20 run repairs it with nobody watching. `serve.ps1
+-NoTls` forces plain HTTP for the cases neither of those covers.
+
+The page never sends `Strict-Transport-Security`. It is a good header on a
+public site and a lockout waiting to happen here — it removes the
+click-through that is the recovery path for a local certificate problem.
+
 ## Day-to-day use
 
 | I want to... | Do this |

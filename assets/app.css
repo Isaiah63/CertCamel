@@ -447,6 +447,32 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 .status-line{font-size:.82rem; margin:1rem 0 0; min-height:1.2em;}
 .status-line.bad{color:var(--red);} .status-line.good{color:var(--green);}
 
+/* Tracker address: the four preconditions for serving this page under a name.
+   A grid rather than a table so each row's action button can sit on the end of
+   the detail column and wrap under it on a narrow window, instead of forcing a
+   fourth column that is empty on most rows. */
+.addrcheck{margin:.6rem 0 0;}
+.addrcheck:empty{margin:0;}
+.addrrow{display:grid; grid-template-columns:1.2rem 7rem 1fr; gap:.2rem .6rem;
+  align-items:baseline; font-size:.82rem; padding:.4rem 0;
+  border-bottom:1px solid var(--border);}
+.addrrow:last-child{border-bottom:none;}
+.addrmark{color:var(--faint); font-weight:800; text-align:center;}
+.addrrow.ok .addrmark{color:var(--green);}
+.addrlabel{color:var(--faint); font-size:.7rem; font-weight:700; letter-spacing:.05em;
+  text-transform:uppercase;}
+.addrdetail{color:var(--muted); word-break:break-word;}
+/* The action and the note belong to the detail column, not a column of their
+   own - most rows have neither. */
+.addrrow .btn,.addrnote,.addrrow code{grid-column:3;}
+.addrrow .btn{justify-self:start; margin-top:.35rem;}
+.addrnote{color:var(--faint); font-size:.78rem; margin-top:.2rem;}
+.addrrow code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.8rem; color:var(--text); margin-top:.25rem; padding:.2rem .5rem;
+  border:1px solid var(--border); border-radius:6px; background:var(--surface);
+  justify-self:start; user-select:all;}
+.hint.bad{color:var(--red);}
+
 /* Docs view */
 .doclist{display:flex; flex-direction:column; gap:.8rem; max-width:44rem;}
 .doclink{display:block; border:1px solid var(--border); border-radius:var(--radius); padding:1.1rem 1.3rem;
