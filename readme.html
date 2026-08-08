@@ -204,6 +204,50 @@ against it. Close that console window and the server stops.</p>
 random token generated fresh each launch. Loopback alone is not access control &mdash; anything
 else running on the machine can reach it, which is why the token exists.</p>
 
+<h3>Serving this page over HTTPS</h3>
+<p>Optional and off by default. It needs a DNS provider already set up, so nothing about a first
+look at Cert Camel changes &mdash; you can open it and explore with no credentials at all.
+<strong>Settings &rarr; General &rarr; Tracker address</strong> turns it on: give the page a
+hostname and a fixed port, and it serves itself over TLS using a certificate it issued.</p>
+<p>It stays on loopback. The name resolves to <code>127.0.0.1</code> through this machine&rsquo;s
+hosts file and <strong>no public DNS record is needed</strong> &mdash; DNS-01 validation reads a
+TXT record and never connects to the host. The panel checks four things separately, because they
+fail in four different places:</p>
+<ul>
+  <li><strong>DNS zone</strong> &mdash; a configured credential has to manage that zone. A token
+  scoped to one zone cannot issue for another however plausible the name looks, and finding that
+  out later means a <code>domains.txt</code> entry that can never renew.</li>
+  <li><strong>Certificate</strong> &mdash; one on disk has to cover the name. A wildcard you
+  already hold counts, and then no <code>domains.txt</code> entry is wanted: adding one would pull
+  the name off the wildcard and onto the zone&rsquo;s other certificate.</li>
+  <li><strong>Port</strong> &mdash; fixed, not the random free port used by default. A name is no
+  use on a port that moves every launch.</li>
+  <li><strong>Hosts file</strong> &mdash; <code>127.0.0.1&nbsp;&nbsp;tracker.example.com</code>.
+  Needs administrator, so the panel either writes it for you or gives you the line.
+  <strong>No port on that line</strong>: the hosts file has no port field, and
+  <code>name:8787</code> there does not error &mdash; it simply never matches, and the name then
+  fails to resolve with nothing to explain why.</li>
+</ul>
+<div class="callout note">
+  <div class="h">The hostname becomes public</div>
+  <p>Every certificate&rsquo;s SAN list goes to Certificate Transparency logs, so
+  <code>crt.sh</code> lists it the moment it is issued, with or without a DNS record. That is true
+  of every certificate from every authority &mdash; skipping the DNS record buys resolution
+  reliability, not privacy.</p>
+</div>
+<p><strong>Turning it on takes effect at the next start</strong> &mdash; the certificate is loaded
+once when the server starts, so saving cannot change a server already running. Restart it, then
+the URL becomes <code>https://&lt;name&gt;:&lt;port&gt;</code>. Plain HTTP on that port gets a
+<em>temporary</em> redirect to it, so an old bookmark still lands somewhere; temporary rather than
+permanent because a browser caches a permanent one, and turning HTTPS back off later would leave
+it redirecting to a scheme the server no longer speaks.</p>
+<p>If the certificate cannot be <em>loaded</em> at all the server says so and falls back to plain
+HTTP rather than refusing to start. An <em>expired</em> one is less serious: the browser still
+offers Advanced &rarr; Proceed, and renewal runs from the scheduled task rather than from this
+page, so the 03:20 run repairs it unattended. <code>serve.ps1 -NoTls</code> forces plain HTTP for
+anything neither of those covers. The page never sends <code>Strict-Transport-Security</code>
+&mdash; it would remove the click-through that is the way back in.</p>
+
 <h2 id="domains">2. Adding domains</h2>
 <p>Press <strong>Edit domains</strong> on the Certificates page &mdash; saving runs a fresh check
 automatically, so the new host shows up in the same gesture. (The file behind it is
@@ -656,7 +700,9 @@ but the 1st &mdash; the ScheduledTasks module has no clean monthly trigger to re
 
 <h2 id="security">14. Security</h2>
 <ul>
-  <li>The server listens on <code>127.0.0.1</code> only and requires a per-launch random token.</li>
+  <li>The server listens on <code>127.0.0.1</code> only and requires a per-launch random token.
+  That is still true with HTTPS turned on &mdash; the hostname resolves to loopback through the
+  hosts file and nothing binds to a network address.</li>
   <li>DNS credentials are encrypted with <strong>Windows DPAPI</strong> in <code>secrets.xml</code>,
   scoped to your Windows account on this machine. They are never written to
   <code>settings.json</code> and never sent back to the browser &mdash; the page is told only
