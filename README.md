@@ -764,6 +764,47 @@ after the PC has been off. Only **one of the three can change anything**:
 | `SSL Cert Check` | daily 09:00 | Re-reads expiry dates. Never issues or deploys |
 | `Cert Camel Monthly Report` | daily 08:00 | Emails a summary on the 1st; does nothing on other days |
 
+### Seeing and changing them
+
+They are ordinary Windows scheduled tasks — nothing about them is private to
+Cert Camel. Press **Win+R**, run `taskschd.msc` (or search "Task Scheduler" in
+Start), and click **Task Scheduler Library**. All of them sit in that root list,
+not in a subfolder.
+
+From there, right-click any of them for **Run**, **End**, **Disable** and
+**Properties**, where the Triggers tab holds the time. **The times are yours to
+change** — 03:20 is only a default, chosen because it is quiet and after most
+backup windows. Nothing in Cert Camel depends on those exact times.
+
+Worth turning on while you are in there: **Enable All Tasks History**, in the
+right-hand Actions pane. It is a global Windows setting and it is **off by
+default**, which means the History tab on every task is empty. That is exactly
+the wrong state to discover halfway through working out why something did not
+run.
+
+The Home page reads the schedule back out of Windows rather than assuming the
+defaults, so a time you change in Task Scheduler shows up there — which is the
+quickest way to confirm an edit took.
+
+Three things to know before you edit:
+
+- **Changing the monthly report's day does nothing.** It is registered as a
+  *daily* task that checks the date and exits on any day but the 1st, because
+  `New-ScheduledTaskTrigger` has no clean monthly trigger to reach for. Moving
+  it to the 5th just means it runs on the 5th and does nothing. Change its
+  *time* freely; the day is decided in the script.
+- **Watch the password checkbox.** The three unattended tasks are registered
+  S4U — *Run whether user is logged on or not* with **Do not store password**
+  ticked. If that box gets cleared while you are in Properties, Windows starts
+  storing a password instead, and the task breaks the next time that password
+  changes. `First Time Setup.bat -RepairTasks` (as administrator) puts the
+  principal back and **keeps whatever schedule you set** — it re-registers each
+  existing task with its own trigger and settings intact.
+- **The task stores an absolute path.** Move or rename this folder and the tasks
+  still point at the old one: renewal quietly stops and the first symptom is an
+  expiry warning weeks later. The Home page flags this when it sees it, but
+  re-running setup after a move is the fix.
+
 ### Keeping the page running (server installs)
 
 Normally Cert Camel runs while `Open Tracker.bat` is open and stops when you sign
