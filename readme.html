@@ -623,6 +623,44 @@ hidden window, with <code>StartWhenAvailable</code> so they catch up after the P
 <p>03:20 rather than the top of the hour because ACME rate limits are per-CA and shared by everyone,
 and the top of the hour is where every naive scheduler piles up.</p>
 
+<h3>Seeing and changing them</h3>
+<p>These are ordinary Windows scheduled tasks &mdash; nothing about them is private to Cert Camel.
+Press <strong>Win+R</strong>, run <code>taskschd.msc</code> (or search &ldquo;Task Scheduler&rdquo;
+in Start), and click <strong>Task Scheduler Library</strong>. All of them are in that root list,
+not in a subfolder. Right-click any one for <strong>Run</strong>, <strong>End</strong>,
+<strong>Disable</strong> and <strong>Properties</strong>, where the Triggers tab holds the
+time.</p>
+<p><strong>The times are yours to change.</strong> 03:20 is only a default. Nothing in Cert Camel
+depends on those exact times, and the Home page reads the schedule back out of Windows rather than
+assuming the defaults &mdash; so a time you change here shows up there, which is the quickest way
+to confirm the edit took.</p>
+<div class="callout note">
+  <div class="h">Turn on task history while you are in there</div>
+  <p><strong>Enable All Tasks History</strong> in the right-hand Actions pane. It is a global
+  Windows setting and it is <strong>off by default</strong>, so the History tab on every task is
+  empty until you switch it on &mdash; which is exactly the wrong thing to discover halfway
+  through working out why something did not run.</p>
+</div>
+<p>Three things to know before editing:</p>
+<ul>
+  <li><strong>Changing the monthly report&rsquo;s day does nothing.</strong> It is a <em>daily</em>
+  task that checks the date and exits on any day but the 1st, because
+  <code>New-ScheduledTaskTrigger</code> has no clean monthly trigger to reach for. Moving it to the
+  5th just means it runs on the 5th and does nothing. Change its <em>time</em> freely; the day is
+  decided in the script.</li>
+  <li><strong>Watch the password checkbox.</strong> The three unattended tasks are registered S4U
+  &mdash; <em>Run whether user is logged on or not</em> with <strong>Do not store password</strong>
+  ticked. If that box gets cleared while you are in Properties, Windows stores a password instead
+  and the task breaks the next time that password changes.
+  <code>First Time Setup.bat -RepairTasks</code> as administrator puts the principal back and
+  <strong>keeps whatever schedule you set</strong>, because it re-registers each existing task with
+  its own trigger and settings intact.</li>
+  <li><strong>The task stores an absolute path.</strong> Move or rename this folder and the tasks
+  still point at the old one: renewal quietly stops and the first symptom is an expiry warning
+  weeks later. The Home page flags this when it sees it; re-running setup after a move is the
+  fix.</li>
+</ul>
+
 <h3>The Automation panel on Home</h3>
 <p>None of the above has to be taken on trust. The Home page reads what the Windows scheduler actually
 has registered. The <strong>Automation</strong> box lists each service and when it runs &mdash; a
