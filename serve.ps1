@@ -22,8 +22,9 @@
 [CmdletBinding()]
 param(
     # 0 means "let Windows pick a free port", which avoids colliding with
-    # whatever else is already listening. The service is installed with an
-    # explicit port so it is predictable across restarts.
+    # whatever else is already listening. The startup task passes an explicit
+    # port so it is predictable across restarts, and enabling HTTPS pins one for
+    # interactive launches too - a hostname is worthless on a port that moves.
     [int]$Port = 0,
 
     [switch]$NoBrowser,
@@ -31,7 +32,18 @@ param(
     # Running under the Service Control Manager: no console to print to, and no
     # desktop to open a browser on. Also makes the diagnostics file the only
     # record of anything going wrong.
-    [switch]$ServiceMode
+    [switch]$ServiceMode,
+
+    # Serve plain HTTP even when HTTPS is configured.
+    #
+    # The way back in, and it exists for one failure specifically. An EXPIRED
+    # certificate is survivable - the browser still offers Advanced > Proceed,
+    # and the 03:20 renewal runs from the scheduled task rather than from here,
+    # so it repairs itself unattended. What is not survivable is the certificate
+    # failing to load at all: missing file, unreadable key, wrong password. Then
+    # there is no handshake, so the browser has nothing to warn about and
+    # nothing to accept, and the UI is unreachable exactly when it is needed.
+    [switch]$NoTls
 )
 
 $ErrorActionPreference = 'Stop'
@@ -376,6 +388,40 @@ function Send-Json {
         -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json))
 }
 
+function Send-HttpsRedirect {
+    <#
+      Answer a plain-HTTP request that arrived on the TLS port.
+
+      Without this the handshake fails on a byte it cannot parse and the
+      connection is dropped, so a stale http:// bookmark - or anyone's habit of
+      typing 127.0.0.1 - produces a forcible close and a browser saying the
+      connection was reset. Nothing on screen says the page moved to https, and
+      the server looks broken.
+
+      302, never 301. A permanent redirect is cached by the browser, so turning
+      HTTPS back off later would leave it still redirecting to a scheme this
+      server no longer speaks, with nothing to explain why. Same shape of trap
+      as HSTS, smaller blast radius.
+
+      The query string carries over, so a bookmarked ?t= arrives at the other
+      side. It is almost certainly a stale token - they are minted per launch -
+      but landing on "reopen from Open Tracker.bat" is a better place to be
+      than a dead connection.
+    #>
+    param([IO.Stream]$Stream, $Request, [int]$Port)
+
+    $target = "https://$($script:Web.hostname):$Port$($Request.Path)"
+    if ($Request.Query) { $target += "?$($Request.Query)" }
+
+    $html = '<!doctype html><meta charset="utf-8"><title>Cert Camel has moved to HTTPS</title>' +
+            '<p>This page is now served over HTTPS: <a href="' + $target + '">' + $target + '</a>'
+
+    Send-Response -Stream $Stream -Status 302 -StatusText 'Found' `
+        -ContentType 'text/html; charset=utf-8' `
+        -Body ([Text.Encoding]::UTF8.GetBytes($html)) `
+        -ExtraHeaders @{ 'Location' = $target }
+}
+
 function Send-Error {
     param([IO.Stream]$Stream, [int]$Status, [string]$Message)
 
@@ -535,6 +581,17 @@ function Get-StateResponse {
                 monthlySummary     = @{ enabled = [bool]$settings.alerts.monthlySummary.enabled }
             }
             logs = (Get-LogSettings -Settings $settings)
+            web  = (Get-WebSettings -Settings $settings)
+        }
+        # What this instance is ACTUALLY doing, which is not always what the
+        # settings asked for - a certificate that would not load falls back to
+        # HTTP, and the page has to be able to say so rather than showing a
+        # padlock that is not there.
+        serving = @{
+            scheme = $(if ($script:TlsCert) { 'https' } else { 'http' })
+            host   = $(if ($script:TlsCert) { $script:Web.hostname } else { '127.0.0.1' })
+            certId = $(if ($script:TlsCertId) { $script:TlsCertId } else { '' })
+            notAfter = $(if ($script:TlsCert) { $script:TlsCert.NotAfter.ToString('o') } else { $null })
         }
         catalog       = $catalogOut
         targetCatalog = $targetCatalogOut
@@ -818,13 +875,46 @@ function Invoke-SaveSettings {
         $settings.logs = @{ retentionDays = $days; maxSizeMb = $mb }
     }
 
+    # How this page is served. Validated hard, because every failure here is one
+    # a person discovers by being unable to reach the tool that reports it.
+    if ($Payload.PSObject.Properties['web'] -and $null -ne $Payload.web) {
+        $w = $Payload.web
+
+        $name = ''
+        if ($w.PSObject.Properties['hostname'] -and $w.hostname) {
+            $name = ([string]$w.hostname).Trim().TrimEnd('.').ToLowerInvariant()
+        }
+        $port = 0
+        if ($w.PSObject.Properties['port'] -and $w.port) { $port = [int]$w.port }
+        $https = [bool]($w.PSObject.Properties['https'] -and $w.https)
+
+        if ($https) {
+            if (-not $name) { throw "HTTPS needs a hostname for the tracker." }
+            if ($name.StartsWith('*.')) { throw "A wildcard cannot be the address of a web page - give it one name." }
+            if ($name -notmatch '^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$') {
+                throw "'$name' is not a valid hostname."
+            }
+            if ($port -lt 1 -or $port -gt 65535) {
+                throw "HTTPS needs a fixed port. A hostname is no use on a port that changes every launch."
+            }
+            # Refuse to turn it on with nothing to serve. The server would fall
+            # back to HTTP and say so in a log nobody is reading, which is a
+            # worse outcome than the save failing here with the reason.
+            if (-not (Find-CertificateForHost -HostName $name)) {
+                throw "No certificate on disk covers $name yet. Add it to domains.txt and renew first."
+            }
+        }
+
+        $settings.web = @{ https = $https; hostname = $name; port = $port }
+    }
+
     Save-TrackerSettings -Settings $settings
 
     # Which sections were actually present in the payload, so the trail says
     # what changed rather than just "settings saved" on every keystroke of a
     # save. Never the values - some of them are credentials.
     $touched = @()
-    foreach ($k in @('contact','cas','providers','targets','alerts','logs')) {
+    foreach ($k in @('contact','cas','providers','targets','alerts','logs','web')) {
         if ($Payload.PSObject.Properties[$k] -and $null -ne $Payload.$k) { $touched += $k }
     }
     Write-AuditEvent -Event 'settings' -Object ($touched -join ', ') -Outcome 'ok' `
@@ -1025,9 +1115,33 @@ function Invoke-Route {
 
     # Guard against DNS rebinding: a hostile page can point a name it controls
     # at 127.0.0.1, but it cannot make the browser send our Host header.
+    #
+    # An allow-list of exact names, never a pattern. The configured tracker
+    # hostname joins it when one is set - it has to, or serving under a name
+    # would be rejected by our own guard - and it is compared literally, so
+    # widening this for HTTPS does not weaken what it was written to stop.
+    #
+    # A missing port is allowed only for the standard one, since a browser
+    # omits :443 from the header on an https:// URL. Everything else must
+    # carry the port it actually connected on.
     $hostHeader = ''
     if ($Request.Headers.ContainsKey('host')) { $hostHeader = $Request.Headers['host'] }
-    if ($hostHeader -notmatch '^(127\.0\.0\.1|localhost|\[::1\]):\d+$') {
+
+    $hostName = $hostHeader
+    $hostPort = ''
+    $colon = $hostHeader.LastIndexOf(':')
+    if ($colon -ge 0 -and $hostHeader.IndexOf(']') -lt $colon) {
+        $hostName = $hostHeader.Substring(0, $colon)
+        $hostPort = $hostHeader.Substring($colon + 1)
+    }
+
+    $allowedHosts = @('127.0.0.1', 'localhost', '[::1]')
+    if ($script:WebHost) { $allowedHosts += $script:WebHost }
+
+    $hostOk = ($allowedHosts -contains $hostName.ToLowerInvariant()) -and
+              ($hostPort -match '^\d+$' -or (-not $hostPort -and $script:TlsCert))
+
+    if (-not $hostOk) {
         Send-Error $Stream 403 'Unexpected Host header.'
         return
     }
@@ -1351,6 +1465,68 @@ function Invoke-Route {
                     writes    = @($writes)
                     errors    = @($errors)
                 }
+            }
+            catch { Send-Error $Stream 400 $_.Exception.Message }
+            return
+        }
+
+        '^/api/web/preflight$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+
+            $name = ''
+            $port = 0
+            if ($payload) {
+                if ($payload.PSObject.Properties['hostname']) { $name = [string]$payload.hostname }
+                if ($payload.PSObject.Properties['port'] -and $payload.port) { $port = [int]$payload.port }
+            }
+            try {
+                Send-Json $Stream (Get-TrackerAddressStatus -HostName $name -Port $port `
+                    -Settings (Get-TrackerSettings) -ZoneCache (Get-ZoneCache) -CurrentPort $actualPort)
+            }
+            catch { Send-Error $Stream 400 $_.Exception.Message }
+            return
+        }
+
+        '^/api/web/hosts$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+            if (-not $payload -or -not $payload.PSObject.Properties['hostname'] -or -not $payload.hostname) {
+                Send-Error $Stream 400 'Missing "hostname".'
+                return
+            }
+            if (-not (Test-Elevated)) {
+                # Said plainly rather than attempted and failed with an access
+                # error: the hosts file is administrator-writable by design, and
+                # the page cannot elevate itself.
+                Send-Error $Stream 403 'Editing the hosts file needs administrator. Copy the line and add it yourself, or restart the tracker from an elevated console.'
+                return
+            }
+            try {
+                $r = Add-HostsEntry -HostName ([string]$payload.hostname)
+                Write-AuditEvent -Event 'settings' -Object 'hosts file' -Outcome 'ok' `
+                    -Detail "$($r.line) $(if ($r.changed) { 'added' } else { 'already present' })"
+                Send-Json $Stream $r
+            }
+            catch {
+                Write-AuditEvent -Event 'settings' -Object 'hosts file' -Outcome 'fail' `
+                    -Detail $_.Exception.Message
+                Send-Error $Stream 400 $_.Exception.Message
+            }
+            return
+        }
+
+        '^/api/web/domains$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+            if (-not $payload -or -not $payload.PSObject.Properties['hostname'] -or -not $payload.hostname) {
+                Send-Error $Stream 400 'Missing "hostname".'
+                return
+            }
+            $port = 0
+            if ($payload.PSObject.Properties['port'] -and $payload.port) { $port = [int]$payload.port }
+            try {
+                $r = Add-TrackerDomainEntry -HostName ([string]$payload.hostname) -Port $port
+                Write-AuditEvent -Event 'domains' -Object $r.entry -Outcome 'ok' `
+                    -Detail "tracker address $(if ($r.changed) { 'added to domains.txt' } else { 'already listed' })"
+                Send-Json $Stream $r
             }
             catch { Send-Error $Stream 400 $_.Exception.Message }
             return
@@ -1735,13 +1911,154 @@ if ($existing) {
     exit 0
 }
 
+# --------------------------------------------------------------------------- #
+# How this instance is served
+# --------------------------------------------------------------------------- #
+
+$script:Web = Get-WebSettings -Settings (Get-TrackerSettings)
+
+# An explicit -Port wins - the startup task passes one. Otherwise the configured
+# port, if HTTPS gave us one to pin. Otherwise 0, and Windows picks.
+if (-not $PSBoundParameters.ContainsKey('Port') -and $script:Web.port) {
+    $Port = $script:Web.port
+}
+
+# The configured hostname is accepted by the Host guard whether or not TLS came
+# up. That is deliberate: if the certificate fails to load and this falls back
+# to plain HTTP, http://<name>:<port> has to keep working, or the recovery path
+# is a URL the server itself rejects.
+$script:WebHost = $script:Web.hostname
+
+$script:TlsCert = $null
+$tlsNote = $null
+
+if ($script:Web.https -and -not $NoTls) {
+    $match = Find-CertificateForHost -HostName $script:Web.hostname
+    if (-not $match) {
+        $tlsNote = "no certificate on disk covers $($script:Web.hostname) - serving plain HTTP"
+    }
+    else {
+        try {
+            # No PersistKeySet: without it the key container Windows materialises
+            # for the PFX is removed when the certificate is disposed, so a
+            # server restarted daily does not leave a key file behind every time.
+            #
+            # EphemeralKeySet would be tidier still and must NOT be used -
+            # schannel cannot do server authentication with an ephemeral key, so
+            # every handshake would fail.
+            $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
+            try {
+                $script:TlsCert = New-Object Security.Cryptography.X509Certificates.X509Certificate2(
+                    $match.pfx, $script:PfxPassword, $flags)
+            }
+            catch {
+                # Under the startup task the logon is S4U and the user profile
+                # may not be loaded, which leaves no per-user key store to write
+                # into. MachineKeys needs no profile.
+                $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::MachineKeySet
+                $script:TlsCert = New-Object Security.Cryptography.X509Certificates.X509Certificate2(
+                    $match.pfx, $script:PfxPassword, $flags)
+            }
+
+            if (-not $script:TlsCert.HasPrivateKey) {
+                $script:TlsCert.Dispose()
+                $script:TlsCert = $null
+                $tlsNote = "$($match.certId) has no usable private key - serving plain HTTP"
+            }
+            else {
+                $script:TlsCertPath  = $match.pfx
+                $script:TlsCertId    = $match.certId
+                # Remembered so a reload after renewal uses whichever of the two
+                # key stores worked here, instead of rediscovering it.
+                $script:TlsKeyFlags  = $flags
+                # Watched so a renewal that replaces the file underneath us is
+                # picked up. Without this the server keeps presenting the old
+                # certificate until something restarts it, which looks exactly
+                # like a renewal that did not happen.
+                $script:TlsCertStamp = (Get-Item -LiteralPath $match.pfx).LastWriteTimeUtc
+            }
+        }
+        catch {
+            $tlsNote = "could not load $($match.certId): $(($_.Exception.Message -split "`n")[0].Trim()) - serving plain HTTP"
+        }
+    }
+}
+elseif ($script:Web.https -and $NoTls) {
+    $tlsNote = "-NoTls given, so HTTPS is configured but not in use"
+}
+
+function Update-TlsCertificate {
+    <#
+      Pick up a renewal that replaced the certificate under us.
+
+      Called per connection, which sounds extravagant and is one stat call on a
+      local file. The alternatives are worse: a timer means a second thread in a
+      deliberately single-threaded server, and "restart to pick it up" means the
+      page presents an expired certificate until somebody notices.
+
+      A renewal writing the .pfx is not atomic, so a load attempted mid-write
+      fails. Keep serving the certificate we already have - it is still valid -
+      and try again on the next connection, but only once per distinct
+      timestamp, so a genuinely corrupt file cannot turn into a load attempt on
+      every request forever.
+    #>
+    if (-not $script:TlsCert -or -not $script:TlsCertPath) { return }
+
+    $stamp = $null
+    try { $stamp = (Get-Item -LiteralPath $script:TlsCertPath).LastWriteTimeUtc } catch { return }
+
+    if ($stamp -le $script:TlsCertStamp) { return }
+    if ($script:TlsReloadFailed -and $stamp -eq $script:TlsReloadFailed) { return }
+
+    try {
+        $fresh = New-Object Security.Cryptography.X509Certificates.X509Certificate2(
+            $script:TlsCertPath, $script:PfxPassword, $script:TlsKeyFlags)
+        if (-not $fresh.HasPrivateKey) { $fresh.Dispose(); throw "no private key" }
+
+        $old = $script:TlsCert
+        $script:TlsCert      = $fresh
+        $script:TlsCertStamp = $stamp
+        $script:TlsReloadFailed = $null
+        if ($old) { try { $old.Dispose() } catch { } }
+
+        Write-Diag "  Reloaded $script:TlsCertId - now expires $($fresh.NotAfter.ToString('d MMM yyyy'))" 'Green'
+    }
+    catch {
+        $script:TlsReloadFailed = $stamp
+        Write-Diag "  ! Could not reload $script:TlsCertId : $(($_.Exception.Message -split "`n")[0].Trim())" 'Yellow'
+    }
+}
+
+$scheme  = $(if ($script:TlsCert) { 'https' } else { 'http' })
+$urlHost = $(if ($script:TlsCert) { $script:Web.hostname } else { '127.0.0.1' })
+
 # IPAddress.Loopback, never IPAddress.Any: this must not be reachable from the
-# network, only from this machine.
-$listener = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, $Port)
-$listener.Start()
+# network, only from this machine. A hostname in the URL changes nothing about
+# that - it resolves to 127.0.0.1 through the hosts file and goes no further.
+try {
+    $listener = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, $Port)
+    $listener.Start()
+}
+catch {
+    # Port 0 cannot collide, so this only happens once a port is pinned. Say
+    # which and stop, rather than falling back to a random one - that would
+    # silently undo the pinning the hostname depends on.
+    Write-Diag ""
+    Write-Diag "  Could not listen on port $Port." 'Red'
+    Write-Diag "  $(($_.Exception.Message -split "`n")[0].Trim())" 'DarkGray'
+    $owner = $null
+    try {
+        $conn = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)[0]
+        if ($conn) { $owner = (Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue) }
+    } catch { }
+    if ($owner) { Write-Diag "  Port $Port is held by $($owner.ProcessName) (pid $($owner.Id))." 'Yellow' }
+    Write-Diag "  Change the port under Settings > Tracker address, or stop whatever is using it." 'DarkGray'
+    Write-Diag ""
+    exit 1
+}
 
 $actualPort = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
-$url = "http://127.0.0.1:$actualPort/?t=$script:Token"
+$url = "${scheme}://${urlHost}:$actualPort/?t=$script:Token"
 
 # Written before anything is served, so the launcher can find a service that
 # started at boot with nobody watching.
@@ -1752,6 +2069,30 @@ Write-Diag "  SSL Certificate Tracker" 'Cyan'
 Write-Diag "  $PSScriptRoot" 'DarkGray'
 Write-Diag ""
 Write-Diag "  Listening on 127.0.0.1:$actualPort (this PC only)" 'Green'
+
+if ($script:TlsCert) {
+    Write-Diag "  HTTPS as $($script:Web.hostname), using $script:TlsCertId (expires $($script:TlsCert.NotAfter.ToString('d MMM yyyy')))" 'Green'
+
+    # A certificate that loaded is not the same as a URL that opens. If the name
+    # does not resolve to this machine the browser never reaches us at all, and
+    # the failure looks like the server being down rather than one missing line
+    # in a file - so say the line.
+    $entry = Get-HostsEntry -HostName $script:Web.hostname
+    if (-not $entry.present) {
+        Write-Diag "  ! $($script:Web.hostname) is not in the hosts file, so that URL will not resolve." 'Yellow'
+        Write-Diag "    Add this line to $(Get-HostsFilePath) as administrator:" 'DarkGray'
+        Write-Diag "      127.0.0.1  $($script:Web.hostname)" 'White'
+    }
+    elseif ($entry.address -ne '127.0.0.1') {
+        Write-Diag "  ! $($script:Web.hostname) is in the hosts file pointing at $($entry.address), not 127.0.0.1." 'Yellow'
+    }
+}
+elseif ($tlsNote) {
+    # Never silent. Falling back to HTTP without saying so is how someone ends
+    # up believing the page is encrypted when it is not.
+    Write-Diag "  HTTPS is configured but NOT active: $tlsNote" 'Yellow'
+    Write-Diag "  Settings > Tracker address explains which piece is missing." 'DarkGray'
+}
 
 if ($ServiceMode) {
     # No console read this, and no desktop to open a browser on. The session
@@ -1783,8 +2124,64 @@ try {
             $client.SendTimeout    = 30000
             $stream = $client.GetStream()
 
+            $plainOnTls = $false
+
+            if ($script:TlsCert) {
+                # The renewal runs from the scheduled task, not from here, so the
+                # file under us can be replaced while we hold the old one. Notice
+                # and reload, or the page keeps serving a certificate that has
+                # already been renewed - which reads exactly like a renewal that
+                # never happened.
+                Update-TlsCertificate
+
+                # Every TLS record starts 0x16 (handshake). Anything else is a
+                # client that came in over plain HTTP, and it gets a redirect
+                # rather than a failed handshake.
+                #
+                # Peeked, not read: SslStream needs the stream positioned at the
+                # very first byte, so consuming one here would break every real
+                # handshake. SocketFlags.Peek leaves it on the socket.
+                $first  = New-Object byte[] 1
+                $peeked = 0
+                try { $peeked = $client.Client.Receive($first, 0, 1, [Net.Sockets.SocketFlags]::Peek) } catch { }
+
+                # Nothing arrived before the receive timeout, or the client hung
+                # up. Drop it here rather than handing it to the handshake, which
+                # would sit through the SAME timeout again - this server is
+                # single-threaded, so one silent client costing 30 seconds
+                # instead of 15 is a real doubling of the worst case.
+                if ($peeked -ne 1) { continue }
+
+                if ($first[0] -ne 0x16) {
+                    $plainOnTls = $true
+                }
+                else {
+                    $ssl = New-Object Net.Security.SslStream($stream, $false)
+                    try {
+                        # checkCertificateRevocation is a CLIENT concern; this is
+                        # the server side and there is no client certificate to
+                        # revoke.
+                        $ssl.AuthenticateAsServer($script:TlsCert, $false,
+                            [Net.SecurityProtocolType]::Tls12, $false)
+                    }
+                    catch {
+                        # A client with no TLS 1.2, or one that hung up mid
+                        # handshake. Drop that one connection and carry on - an
+                        # unhandled throw here would end the accept loop and take
+                        # the server down with it.
+                        try { $ssl.Dispose() } catch { }
+                        throw
+                    }
+                    $stream = $ssl
+                }
+            }
+
             $request = Read-HttpRequest -Stream $stream
             if ($request) {
+                if ($plainOnTls) {
+                    Send-HttpsRedirect -Stream $stream -Request $request -Port $actualPort
+                    continue
+                }
                 try { Invoke-Route -Request $request -Stream $stream }
                 catch {
                     # A handler blowing up must not take the server down with
@@ -1806,6 +2203,13 @@ try {
 }
 finally {
     $listener.Stop()
+
+    # Disposing the certificate removes the key container Windows created when
+    # the PFX was opened - it was loaded without PersistKeySet precisely so this
+    # would clean up after itself. A server restarted daily would otherwise
+    # leave one key file behind per start, forever.
+    if ($script:TlsCert) { try { $script:TlsCert.Dispose() } catch { } }
+
     # Clear the session file on the way out so the next start is not told a
     # server is already running by a file describing a process that has gone.
     # Get-RunningInstance also checks the pid is alive, so this is belt and
