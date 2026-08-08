@@ -305,6 +305,16 @@ Two things worth knowing before you pick a name:
   already renew and it joins that zone's certificate. Give it a zone of its own
   and it gets a certificate of its own.
 
+**Turning it on takes effect at the next start**, because the certificate is
+loaded once when the server starts. Save, then restart — `Stop-ScheduledTask
+-TaskName 'Cert Camel Server'` and `Start-ScheduledTask` if it runs at boot,
+otherwise close the console and re-open `Open Tracker.bat`.
+
+**Plain HTTP on that port gets a 302 to the HTTPS URL**, so an old bookmark or a
+typed `127.0.0.1` still lands somewhere. It is deliberately a *temporary*
+redirect: a permanent one is cached by the browser, and turning HTTPS back off
+later would leave it still redirecting to a scheme the server no longer speaks.
+
 If the certificate ever fails to *load* — missing file, unreadable key — the
 server says so and falls back to plain HTTP rather than refusing to start. An
 *expired* certificate is different and less serious: the browser still offers

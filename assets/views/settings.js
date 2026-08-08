@@ -1024,6 +1024,19 @@
     };
   }
 
+  /* The certificate is loaded once when the server starts, so turning HTTPS on
+     cannot take effect on the running one. Said here rather than only after
+     Check, because Save is where someone actually is when they expect it to
+     have happened — and a setting that silently does nothing until a restart
+     nobody mentioned is how this looks broken. */
+  function restartNote(payload){
+    if (!payload.web || !payload.web.https) { return ''; }
+    var serving = (CC.state && CC.state.serving) || {};
+    if (serving.scheme === 'https' && serving.host === payload.web.hostname) { return ''; }
+    return ' Restart Cert Camel to serve over HTTPS at ' +
+           payload.web.hostname + ':' + payload.web.port + '.';
+  }
+
   function saveSettings(){
     var c = collectSettings();
     if (c.error) { setStatus(c.error, 'bad'); return; }
@@ -1040,7 +1053,7 @@
           CC.loadState();
           return;
         }
-        setStatus('Saved. ' + ((res && res.zoneCount) || 0) + ' DNS zones found.', 'good');
+        setStatus('Saved. ' + ((res && res.zoneCount) || 0) + ' DNS zones found.' + restartNote(c.payload), 'good');
         CC.loadState();
       });
     });

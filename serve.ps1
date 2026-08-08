@@ -388,6 +388,40 @@ function Send-Json {
         -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json))
 }
 
+function Send-HttpsRedirect {
+    <#
+      Answer a plain-HTTP request that arrived on the TLS port.
+
+      Without this the handshake fails on a byte it cannot parse and the
+      connection is dropped, so a stale http:// bookmark - or anyone's habit of
+      typing 127.0.0.1 - produces a forcible close and a browser saying the
+      connection was reset. Nothing on screen says the page moved to https, and
+      the server looks broken.
+
+      302, never 301. A permanent redirect is cached by the browser, so turning
+      HTTPS back off later would leave it still redirecting to a scheme this
+      server no longer speaks, with nothing to explain why. Same shape of trap
+      as HSTS, smaller blast radius.
+
+      The query string carries over, so a bookmarked ?t= arrives at the other
+      side. It is almost certainly a stale token - they are minted per launch -
+      but landing on "reopen from Open Tracker.bat" is a better place to be
+      than a dead connection.
+    #>
+    param([IO.Stream]$Stream, $Request, [int]$Port)
+
+    $target = "https://$($script:Web.hostname):$Port$($Request.Path)"
+    if ($Request.Query) { $target += "?$($Request.Query)" }
+
+    $html = '<!doctype html><meta charset="utf-8"><title>Cert Camel has moved to HTTPS</title>' +
+            '<p>This page is now served over HTTPS: <a href="' + $target + '">' + $target + '</a>'
+
+    Send-Response -Stream $Stream -Status 302 -StatusText 'Found' `
+        -ContentType 'text/html; charset=utf-8' `
+        -Body ([Text.Encoding]::UTF8.GetBytes($html)) `
+        -ExtraHeaders @{ 'Location' = $target }
+}
+
 function Send-Error {
     param([IO.Stream]$Stream, [int]$Status, [string]$Message)
 
@@ -2090,6 +2124,8 @@ try {
             $client.SendTimeout    = 30000
             $stream = $client.GetStream()
 
+            $plainOnTls = $false
+
             if ($script:TlsCert) {
                 # The renewal runs from the scheduled task, not from here, so the
                 # file under us can be replaced while we hold the old one. Notice
@@ -2098,26 +2134,54 @@ try {
                 # never happened.
                 Update-TlsCertificate
 
-                $ssl = New-Object Net.Security.SslStream($stream, $false)
-                try {
-                    # checkCertificateRevocation is a CLIENT concern; this is the
-                    # server side and there is no client certificate to revoke.
-                    $ssl.AuthenticateAsServer($script:TlsCert, $false,
-                        [Net.SecurityProtocolType]::Tls12, $false)
+                # Every TLS record starts 0x16 (handshake). Anything else is a
+                # client that came in over plain HTTP, and it gets a redirect
+                # rather than a failed handshake.
+                #
+                # Peeked, not read: SslStream needs the stream positioned at the
+                # very first byte, so consuming one here would break every real
+                # handshake. SocketFlags.Peek leaves it on the socket.
+                $first  = New-Object byte[] 1
+                $peeked = 0
+                try { $peeked = $client.Client.Receive($first, 0, 1, [Net.Sockets.SocketFlags]::Peek) } catch { }
+
+                # Nothing arrived before the receive timeout, or the client hung
+                # up. Drop it here rather than handing it to the handshake, which
+                # would sit through the SAME timeout again - this server is
+                # single-threaded, so one silent client costing 30 seconds
+                # instead of 15 is a real doubling of the worst case.
+                if ($peeked -ne 1) { continue }
+
+                if ($first[0] -ne 0x16) {
+                    $plainOnTls = $true
                 }
-                catch {
-                    # Anything speaking plain HTTP to this port lands here, and so
-                    # does a client with no TLS 1.2. Drop that one connection and
-                    # carry on - an unhandled throw here would end the accept loop
-                    # and take the server down with it.
-                    try { $ssl.Dispose() } catch { }
-                    throw
+                else {
+                    $ssl = New-Object Net.Security.SslStream($stream, $false)
+                    try {
+                        # checkCertificateRevocation is a CLIENT concern; this is
+                        # the server side and there is no client certificate to
+                        # revoke.
+                        $ssl.AuthenticateAsServer($script:TlsCert, $false,
+                            [Net.SecurityProtocolType]::Tls12, $false)
+                    }
+                    catch {
+                        # A client with no TLS 1.2, or one that hung up mid
+                        # handshake. Drop that one connection and carry on - an
+                        # unhandled throw here would end the accept loop and take
+                        # the server down with it.
+                        try { $ssl.Dispose() } catch { }
+                        throw
+                    }
+                    $stream = $ssl
                 }
-                $stream = $ssl
             }
 
             $request = Read-HttpRequest -Stream $stream
             if ($request) {
+                if ($plainOnTls) {
+                    Send-HttpsRedirect -Stream $stream -Request $request -Port $actualPort
+                    continue
+                }
                 try { Invoke-Route -Request $request -Stream $stream }
                 catch {
                     # A handler blowing up must not take the server down with

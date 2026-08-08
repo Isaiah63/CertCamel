@@ -235,6 +235,12 @@ fail in four different places:</p>
   of every certificate from every authority &mdash; skipping the DNS record buys resolution
   reliability, not privacy.</p>
 </div>
+<p><strong>Turning it on takes effect at the next start</strong> &mdash; the certificate is loaded
+once when the server starts, so saving cannot change a server already running. Restart it, then
+the URL becomes <code>https://&lt;name&gt;:&lt;port&gt;</code>. Plain HTTP on that port gets a
+<em>temporary</em> redirect to it, so an old bookmark still lands somewhere; temporary rather than
+permanent because a browser caches a permanent one, and turning HTTPS back off later would leave
+it redirecting to a scheme the server no longer speaks.</p>
 <p>If the certificate cannot be <em>loaded</em> at all the server says so and falls back to plain
 HTTP rather than refusing to start. An <em>expired</em> one is less serious: the browser still
 offers Advanced &rarr; Proceed, and renewal runs from the scheduled task rather than from this
