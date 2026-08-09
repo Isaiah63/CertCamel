@@ -1897,6 +1897,26 @@ if (-not $existing -and (Test-Path $script:SessionFile)) {
     try { Remove-Item -LiteralPath $script:SessionFile -Force -ErrorAction SilentlyContinue } catch { }
 }
 if ($existing) {
+    $opened = $false
+    if (-not $NoBrowser -and -not $ServiceMode) {
+        try { Start-Process $existing.url; $opened = $true } catch { }
+    }
+
+    # Exit 10 means "there was already a server, the browser is open, this window
+    # did nothing". 'Open Tracker.bat' checks for it and closes without the
+    # usual message and keypress - there is nothing here to read, and making
+    # someone dismiss a window to get at a page that is already in front of them
+    # is friction for its own sake.
+    #
+    # Only when the running copy is the BOOT TASK. A second console hosting it
+    # is a more surprising thing to find, and worth a window that says so rather
+    # than one that vanishes.
+    #
+    # And only when the browser actually launched: if Start-Process threw, this
+    # window is the sole remaining evidence of the URL, so it stays open and
+    # prints it.
+    if ($existing.service -and $opened) { exit 10 }
+
     Write-Diag ""
     Write-Diag "  Cert Camel is already running (pid $($existing.pid), port $($existing.port))." 'Yellow'
     if ($existing.service) {
@@ -1905,9 +1925,6 @@ if ($existing) {
     Write-Diag "  Open it with:" 'DarkGray'
     Write-Diag "  $($existing.url)" 'White'
     Write-Diag ""
-    if (-not $NoBrowser -and -not $ServiceMode) {
-        try { Start-Process $existing.url } catch { }
-    }
     exit 0
 }
 

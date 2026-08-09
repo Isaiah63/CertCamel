@@ -56,6 +56,12 @@ fable-prompt-*.md
 # delete it. See tests\README.md to rebuild - it is only `npm install jsdom`.
 tests/
 
+# The shortcut setup.ps1 creates so the launcher has the camel on it rather than
+# the generic batch-file icon. NOT committed: a .lnk bakes in an ABSOLUTE path,
+# so a copy made here would point at this machine's folder on somebody else's
+# computer and simply fail. Setup rebuilds it wherever the folder ends up.
+*.lnk
+
 # Windows junk
 desktop.ini
 Thumbs.db

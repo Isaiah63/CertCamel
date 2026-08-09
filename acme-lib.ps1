@@ -877,6 +877,61 @@ function Install-CamelServerTask {
     return @{ name = $def.name; port = $Port; command = "powershell.exe $argLine"; installed = $true }
 }
 
+function New-TrackerShortcut {
+    <#
+      A .lnk pointing at "Open Tracker.bat", carrying the Cert Camel icon.
+
+      This exists because **a .bat file cannot have its own icon**. Windows picks
+      the icon for a batch file from the file ASSOCIATION in the registry, which
+      is per-extension and machine-wide - changing it would re-icon every .bat on
+      the computer, which is nobody's idea of a good trade. A shortcut carries an
+      icon of its own, so that is the thing that gets one.
+
+      Created at setup time rather than committed, because a .lnk stores an
+      ABSOLUTE path. One built on my machine would point at my folder on yours,
+      and moving the folder silently breaks it - re-running setup rebuilds it.
+
+      Returns the path it wrote.
+    #>
+    param(
+        [ValidateSet('Folder', 'Desktop', 'StartMenu')]
+        [string]$Where = 'Folder',
+        [string]$Name = 'Cert Camel'
+    )
+
+    $target = Join-Path $script:Root 'Open Tracker.bat'
+    if (-not (Test-Path $target)) { throw "Open Tracker.bat is missing from $script:Root." }
+
+    $dir = switch ($Where) {
+        'Desktop'   { [Environment]::GetFolderPath('Desktop') }
+        'StartMenu' { [Environment]::GetFolderPath('Programs') }
+        default     { $script:Root }
+    }
+    if (-not $dir -or -not (Test-Path $dir)) { throw "Could not find the $Where folder." }
+
+    $lnk = Join-Path $dir "$Name.lnk"
+    $ico = Join-Path $script:Root 'assets\certcamel.ico'
+
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $s = $shell.CreateShortcut($lnk)
+        $s.TargetPath       = $target
+        # Without this the shortcut runs with whatever directory launched it, and
+        # everything the tool resolves relative to itself lands in the wrong place.
+        $s.WorkingDirectory = $script:Root
+        $s.Description      = 'Open the Cert Camel certificate tracker'
+        # ",0" is the icon INDEX within the file. An .ico has exactly one, so it
+        # is always 0 - but the shell wants the index spelled out.
+        if (Test-Path $ico) { $s.IconLocation = "$ico,0" }
+        $s.Save()
+    }
+    finally {
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+    }
+
+    return $lnk
+}
+
 function Uninstall-CamelServerTask {
     <#
       Removes the startup task and stops the running server, so "undo" really
