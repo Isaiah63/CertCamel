@@ -142,6 +142,17 @@ body.sidebar-collapsed .navitem .navbadge{position:absolute; top:.2rem; right:.2
 
 .sidebar-foot{margin-top:auto; padding-top:.8rem; border-top:1px solid var(--border);
   display:flex; flex-direction:column; gap:.3rem;}
+/* Lifetime renewals, sitting above the divider that opens the sidebar footer.
+   Quiet by design - it is a nice number to see, not a control, and it must not
+   compete with the navigation above it. */
+.sidebar-tally{display:flex; align-items:baseline; gap:.45rem; padding:.35rem .75rem .55rem;}
+.tallyn{font-size:1.05rem; font-weight:800; letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; color:var(--group-name);}
+.tallyk{font-size:.72rem; font-weight:650; letter-spacing:.04em; text-transform:uppercase;
+  color:var(--faint);}
+body.sidebar-collapsed .tallyk{display:none;}
+body.sidebar-collapsed .sidebar-tally{justify-content:center; padding-left:0; padding-right:0;}
+
 /* The current theme, on the right of the Theme button. The button is a plain
    .navitem now - same shape as Collapse below it - so this is the only piece
    that needed its own rule. */

@@ -2526,6 +2526,75 @@ function Get-HAProxyNodeStatus {
     return $out
 }
 
+function Get-RenewalTally {
+    <#
+      How many certificates this install has successfully renewed, counted from
+      the audit trail - the append-only record of what actually happened, which
+      is the only honest source for a lifetime total. Not from certs\history\,
+      which is deliberately capped at five versions and would undercount.
+
+      Counts the rotated archives too, so the number does not drop when
+      audit.log rolls over.
+
+      **It counts from when the audit trail existed**, not from the first
+      renewal ever. Renewals that predate it left no record to count, so the
+      earliest timestamp seen is returned alongside and the page says "since".
+      A total that quietly means something narrower than it says is worse than
+      no total.
+    #>
+    $out = @{ renewed = 0; since = $null }
+
+    $archives = @(Get-ChildItem -LiteralPath $script:Root -Filter 'audit-*.log' -File -ErrorAction SilentlyContinue)
+    $files = @($script:AuditFile) + @($archives | ForEach-Object { $_.FullName })
+
+    # /api/state runs on every page load and after every job, and this scan
+    # measured 103 ms - far too much for a number that changes a few times a
+    # year. Recompute only when the audit trail has actually been written to:
+    # its size and timestamp, plus how many archives exist, cannot change
+    # without a new line having been added somewhere.
+    $sig = ''
+    try {
+        if (Test-Path $script:AuditFile) {
+            $a = Get-Item $script:AuditFile
+            $sig = "$($a.Length)|$($a.LastWriteTimeUtc.Ticks)|$($archives.Count)"
+        } else { $sig = "none|$($archives.Count)" }
+    } catch { }
+
+    if ($sig -and $script:RenewalTallyCache -and $script:RenewalTallyCache.sig -eq $sig) {
+        return @{ renewed = $script:RenewalTallyCache.renewed; since = $script:RenewalTallyCache.since }
+    }
+
+    foreach ($f in $files) {
+        if (-not (Test-Path $f)) { continue }
+        try {
+            # ReadAllLines, not Get-Content: the NoteProperty trap that wedged
+            # /api/logs/audit. Shared read because a renewal may be appending.
+            $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite')
+            try {
+                $sr = New-Object IO.StreamReader($fs)
+                while ($null -ne ($line = $sr.ReadLine())) {
+                    # when · who · source · event · object · outcome · detail,
+                    # separated by runs of two or more spaces.
+                    $c = $line -split '\s{2,}'
+                    if ($c.Count -lt 6) { continue }
+                    if ($c[3].Trim() -ne 'renew') { continue }
+
+                    $when = $c[0].Trim()
+                    if ($when -and (-not $out.since -or $when -lt $out.since)) { $out.since = $when }
+
+                    if ($c[5].Trim() -eq 'ok') { $out.renewed++ }
+                }
+                $sr.Dispose()
+            }
+            finally { $fs.Dispose() }
+        }
+        catch { }   # an unreadable archive must not take the page down
+    }
+
+    if ($sig) { $script:RenewalTallyCache = @{ sig = $sig; renewed = $out.renewed; since = $out.since } }
+    return $out
+}
+
 function Get-LoadBalancerCache {
     <#
       The last sweep check-lb.ps1 wrote, or an empty shape.

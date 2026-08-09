@@ -593,6 +593,7 @@ function Get-StateResponse {
             certId = $(if ($script:TlsCertId) { $script:TlsCertId } else { '' })
             notAfter = $(if ($script:TlsCert) { $script:TlsCert.NotAfter.ToString('o') } else { $null })
         }
+        tally         = (Get-RenewalTally)
         catalog       = $catalogOut
         targetCatalog = $targetCatalogOut
         deployment    = $deployOut
