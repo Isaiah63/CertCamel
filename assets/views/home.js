@@ -191,6 +191,12 @@
        with .rule{flex:1}, so the button lands hard right and centred on the
        line at no layout cost - and it costs the page no vertical space at all,
        which a row of its own did. */
+    // "checked N ago" moves up here beside the control, same as Load balancers
+    // below. It used to sit under the table, where it read as a footnote to the
+    // last row rather than as a fact about the whole section.
+    var stamp = el('span', 'filternote');
+    sh.appendChild(stamp);
+
     var filterNote = el('span', 'filternote');
     sh.appendChild(filterNote);
     var filterBtn = el('button', 'btn sm filterbtn', 'Filter');
@@ -230,8 +236,6 @@
     tw.appendChild(table);
     section.appendChild(tw);
 
-    var stamp = el('p', 'mini');
-    section.appendChild(stamp);
     host.appendChild(section);
 
     // Below Tracked domains, as asked. The table rows are appended into
@@ -354,8 +358,10 @@
     };
     describeFilter();
 
-    stamp.textContent = 'Last checked ' + ago(data.generated) + ' (' +
-      new Date(data.generated).toLocaleString() + ').';
+    // Short in the heading, exact on hover - the full timestamp was useful but
+    // too long to sit on one line beside a button.
+    stamp.textContent = 'checked ' + ago(data.generated);
+    stamp.title = new Date(data.generated).toLocaleString();
 
     markUnmapped(rowsByHost, alertsBox);
   }
@@ -687,7 +693,10 @@
     if (!res.checkedAt) { return; }
 
     (res.targets || []).forEach(function(t){
-      var card = el('div', 'card lbgroup');
+      // .wide so it runs to the same right edge as the domains table above it.
+      // The default .card caps at 64rem, which left it visibly short of the
+      // table and made the page read as two columns of different lengths.
+      var card = el('div', 'card wide lbgroup');
       card.appendChild(el('h4', null, t.label));
 
       (t.nodes || []).forEach(function(n){ card.appendChild(lbNodeRow(n)); });
