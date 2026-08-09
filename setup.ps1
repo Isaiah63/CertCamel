@@ -461,6 +461,50 @@ if ($isServer -or $serverTaskExists) {
 }
 
 # --------------------------------------------------------------------------- #
+# 9. A shortcut with the camel on it
+# --------------------------------------------------------------------------- #
+# Always made, never asked about: it is one file in the folder it belongs to,
+# it replaces nothing, and re-running setup repairs it after the folder moves.
+# The desktop copy is the one worth asking about, since that is someone else's
+# desktop.
+
+$folderLnk = $null
+try {
+    $folderLnk = New-TrackerShortcut -Where 'Folder'
+}
+catch {
+    Write-Host ""
+    Write-Host "  Could not create the shortcut: $(($_.Exception.Message -split "`n")[0].Trim())" -ForegroundColor Yellow
+    Write-Host "  'Open Tracker.bat' still works exactly as before." -ForegroundColor DarkGray
+}
+
+if ($folderLnk) {
+    Write-Host ""
+    Write-Host "  [+] Desktop shortcut" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "      Made 'Cert Camel' in this folder - same launcher, with the camel"
+    Write-Host "      on it. A .bat cannot carry its own icon, so the shortcut does."   -ForegroundColor DarkGray
+    Write-Host ""
+
+    $wantDesktop = Read-Host "      Put one on the desktop too? (Y/N)"
+    if ($wantDesktop -match '^[Yy]') {
+        try {
+            $d = New-TrackerShortcut -Where 'Desktop'
+            Write-Host ""
+            Write-Host "      Created $d" -ForegroundColor Green
+        }
+        catch {
+            Write-Host ""
+            Write-Host "      Could not create it: $(($_.Exception.Message -split "`n")[0].Trim())" -ForegroundColor Red
+        }
+    }
+    else {
+        Write-Host ""
+        Write-Host "      Skipped. The one in this folder is still there." -ForegroundColor Yellow
+    }
+}
+
+# --------------------------------------------------------------------------- #
 # Done
 # --------------------------------------------------------------------------- #
 
@@ -469,7 +513,7 @@ Write-Host "  Setup complete." -ForegroundColor Cyan
 Write-Host ""
 Write-Host "    Add/remove domains .... edit domains.txt"
 Write-Host "    Refresh now ........... Check Now.bat"
-Write-Host "    Open the tracker ...... Open Tracker.bat"
+Write-Host "    Open the tracker ...... Cert Camel, or Open Tracker.bat"
 Write-Host ""
 Write-Host "    Always use 'Open Tracker.bat': it starts a small local server the page" -ForegroundColor DarkGray
 Write-Host "    needs for everything, including just displaying what is tracked." -ForegroundColor DarkGray

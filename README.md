@@ -259,15 +259,24 @@ table of contents — it is linked from **Read me** in the app.
 
 A page opened from disk (`file://`) genuinely cannot run PowerShell, call a DNS
 API, or write to its own folder — so buttons there would be decoration.
-`Open Tracker.bat` starts a small server on `127.0.0.1` and opens the same page
-against it, which is what gives the buttons something to talk to, and is now
-the **only** way to open the tracker — every view, including the certificate
+`Open Tracker.bat` — or the **Cert Camel** shortcut beside it, which is the same
+launcher with the camel on it — starts a small server on `127.0.0.1` and opens
+the same page against it, which is what gives the buttons something to talk to,
+and is now the **only** way to open the tracker — every view, including the certificate
 table, needs the session token the server hands it, so `ssl-tracker.html`
 opened directly shows an explanation rather than a page. Close that window
 and the server stops.
 
 Nothing is exposed to your network: the server binds to loopback only, and every
 request must carry a random token generated fresh each time it starts.
+
+**Why a shortcut rather than an icon on the `.bat` itself?** Windows takes a
+batch file's icon from the file *association*, which is per-extension and
+machine-wide — giving this one a camel would put a camel on every `.bat` on the
+computer. A shortcut carries its own icon, so that gets one instead. Setup
+creates it, and offers a desktop copy. It is **not** in the repository: a `.lnk`
+bakes in an absolute path, so a committed one would point at whoever built it.
+Re-run setup after moving the folder and it is rebuilt.
 
 ### Serving the page over HTTPS
 
