@@ -37,6 +37,10 @@ $script:AcmeState    = Join-Path $script:Root 'acme-state'
 $script:CertsDir     = Join-Path $script:Root 'certs'
 $script:JobsDir      = Join-Path $script:Root 'jobs'
 $script:SweepFile    = Join-Path $script:JobsDir 'renew-due-sweep.json'
+# The last load balancer health sweep. A cache the Home page reads; written only
+# by check-lb.ps1, which runs as a detached child so a node that blackholes
+# packets cannot stall the web server.
+$script:LbStatusFile = Join-Path $script:JobsDir 'lb-status.json'
 
 $script:SettingsVersion = 2
 
@@ -2398,8 +2402,17 @@ function Get-DataPlaneApiVersion {
       Probe /v3 first, fall back to /v2. HAPEE 3.0 serves v3; older builds serve
       v2, and pinning either one would break on upgrade. Cached per base URL for
       the life of the process.
+
+      TimeoutSeconds is worth passing on any path where somebody is waiting. The
+      15-second default is right for a deployment - better to wait than to abort
+      a push - but it applies to BOTH attempts, so an unreachable node costs 30
+      seconds before this even returns. The health probe passes something far
+      shorter for exactly that reason.
     #>
-    param([string]$BaseUrl, [string]$User, [string]$Password, [switch]$InsecureTls)
+    param(
+        [string]$BaseUrl, [string]$User, [string]$Password, [switch]$InsecureTls,
+        [int]$TimeoutSeconds = 15
+    )
 
     # Normalise before caching, so a URL pasted with a /v3 on it and the same URL
     # without one are not probed twice and cached under two keys.
@@ -2413,7 +2426,7 @@ function Get-DataPlaneApiVersion {
     foreach ($v in @('v3', 'v2')) {
         try {
             [void](Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
-                     -Path "/$v/services/haproxy/configuration/version" -InsecureTls:$InsecureTls -TimeoutSeconds 15)
+                     -Path "/$v/services/haproxy/configuration/version" -InsecureTls:$InsecureTls -TimeoutSeconds $TimeoutSeconds)
             $script:DataPlaneApiVersion[$BaseUrl] = $v
             return $v
         }
@@ -2439,6 +2452,107 @@ function Get-DataPlaneConfigVersion {
     $v = Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
             -Path "/$ApiVersion/services/haproxy/configuration/version" -InsecureTls:$InsecureTls
     return [int]$v
+}
+
+function Get-HAProxyNodeStatus {
+    <#
+      Is this load balancer node answering, and what is it?
+
+      Deliberately small. It reports what the Data Plane API can actually be
+      asked for and stops there:
+
+        node            HAProxy's own `node` directive - hap1, hap2. The only
+                        identity the box gives out, and the one worth showing,
+                        because it is what distinguishes two nodes behind one
+                        address.
+        haproxyVersion  the running build.
+
+      **VRRP state is not here and cannot be.** MASTER/BACKUP lives in
+      keepalived, which has no API; HAProxy binds its frontends on every node
+      regardless of who holds the virtual address and has no idea one exists.
+      Anything claiming to report it from here would be guessing.
+
+      `uptime_sec` and `description` come back empty on HAProxy 3.3, so they are
+      not read. If a later version fills them in, they can be added - but they
+      are not to be displayed on the strength of the field merely existing.
+
+      Never throws. A node being down is the thing this exists to report, so it
+      is a result, not an error - and one bad node must not abort the sweep
+      across the others.
+    #>
+    param(
+        [string]$BaseUrl,
+        [string]$User,
+        [string]$Password,
+        [switch]$InsecureTls,
+        # Short on purpose. This runs while somebody is looking at a page; a
+        # deployment can afford to wait for a slow node, a health check cannot.
+        [int]$TimeoutSeconds = 5
+    )
+
+    $out = @{
+        url            = $BaseUrl
+        reachable      = $false
+        apiVersion     = $null
+        node           = $null
+        haproxyVersion = $null
+        error          = $null
+    }
+
+    try {
+        $v = Get-DataPlaneApiVersion -BaseUrl $BaseUrl -User $User -Password $Password `
+                -InsecureTls:$InsecureTls -TimeoutSeconds $TimeoutSeconds
+        $out.apiVersion = $v
+
+        $r = Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                -Path "/$v/services/haproxy/runtime/info" -InsecureTls:$InsecureTls `
+                -TimeoutSeconds $TimeoutSeconds
+
+        # The API answered, which is the question being asked. A missing field
+        # below is a thinner answer, not a failure.
+        $out.reachable = $true
+
+        $info = $null
+        if ($r -and $r.PSObject.Properties['info']) { $info = $r.info }
+        if ($info) {
+            if ($info.PSObject.Properties['node']    -and $info.node)    { $out.node           = [string]$info.node }
+            if ($info.PSObject.Properties['version'] -and $info.version) { $out.haproxyVersion = [string]$info.version }
+        }
+    }
+    catch {
+        $out.error = ($_.Exception.Message -split "`n")[0].Trim()
+    }
+
+    return $out
+}
+
+function Get-LoadBalancerCache {
+    <#
+      The last sweep check-lb.ps1 wrote, or an empty shape.
+
+      A CACHE, read by the web layer, never a live probe. An unreachable node
+      costs up to 30 seconds to fail, and serve.ps1 handles one connection at a
+      time - probing on the request thread would freeze the whole UI for that
+      long, at exactly the moment somebody is trying to find out what is wrong.
+
+      ReadAllText, not Get-Content: Get-Content attaches PSPath/PSDrive
+      NoteProperties to the string, and ConvertTo-Json then walks into session
+      state. That is what wedged /api/logs/audit.
+    #>
+    if (-not (Test-Path $script:LbStatusFile)) {
+        return @{ checkedAt = $null; targets = @() }
+    }
+    try {
+        $c = ConvertTo-HashtableDeep ((([IO.File]::ReadAllText($script:LbStatusFile, [Text.Encoding]::UTF8)) | ConvertFrom-Json))
+        if (-not $c.ContainsKey('targets') -or $null -eq $c.targets) { $c.targets = @() }
+        $c.targets = @($c.targets)
+        return $c
+    }
+    catch {
+        # A half-written or corrupt file must read as "nothing yet" rather than
+        # taking the Home page down with it.
+        return @{ checkedAt = $null; targets = @() }
+    }
 }
 
 function Get-HAProxyCertificates {

@@ -73,6 +73,12 @@
 
     renderActivity(cardRow);
 
+    // Load balancer health has nothing to do with whether the checker has run,
+    // so it is created here and placed in BOTH paths below - an install with no
+    // certificate data yet still wants to know its load balancers are alive.
+    // It removes itself if no deployment targets are configured.
+    var lbBox = el('section', 'lbsection');
+
     if (!hasData) {
       // Still worth answering "is anything automated?" when there is no checker
       // data at all - arguably that is exactly when it matters.
@@ -87,6 +93,8 @@
       p.appendChild(document.createTextNode(' page to see tracked domains here.'));
       empty.appendChild(p);
       host.appendChild(empty);
+      host.appendChild(lbBox);
+      renderLoadBalancers(lbBox);
       return;
     }
 
@@ -173,18 +181,45 @@
     sh.appendChild(el('span', 'rule'));
     section.appendChild(sh);
 
-    var chips = el('div', 'chips');
-    chips.setAttribute('role', 'group');
-    chips.setAttribute('aria-label', 'Filter by category');
-    section.appendChild(chips);
+    /* Filtering lives behind one button rather than a row of category chips.
+       With three categories the chips were fine; with thirty they are a wall of
+       buttons above the thing you came to read, and they push the table off the
+       screen on the installs that need it most. Nothing is shown until asked
+       for, and the button says when a filter is active so a hidden one can
+       never quietly change what you are looking at. */
+    /* Placed INSIDE the heading, after the rule. The h2 is already a flex row
+       with .rule{flex:1}, so the button lands hard right and centred on the
+       line at no layout cost - and it costs the page no vertical space at all,
+       which a row of its own did. */
+    var filterNote = el('span', 'filternote');
+    sh.appendChild(filterNote);
+    var filterBtn = el('button', 'btn sm filterbtn', 'Filter');
+    filterBtn.type = 'button';
+    filterBtn.setAttribute('aria-expanded', 'false');
+    sh.appendChild(filterBtn);
 
-    var searchwrap = el('div', 'searchwrap hidden');
+    var filterPanel = el('div', 'filterpanel hidden');
+
+    var searchwrap = el('div', 'searchwrap');
     var search = document.createElement('input');
     search.className = 'search'; search.type = 'search'; search.id = 'home-search';
     search.placeholder = 'Search domains'; search.autocomplete = 'off';
     search.setAttribute('aria-label', 'Search domains');
     searchwrap.appendChild(search);
-    section.appendChild(searchwrap);
+    filterPanel.appendChild(searchwrap);
+
+    var chips = el('div', 'chips');
+    chips.setAttribute('role', 'group');
+    chips.setAttribute('aria-label', 'Filter by category');
+    filterPanel.appendChild(chips);
+
+    section.appendChild(filterPanel);
+
+    filterBtn.addEventListener('click', function(){
+      var open = filterPanel.classList.toggle('hidden') === false;
+      filterBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) { search.focus(); }
+    });
 
     var tw = el('div', 'tablewrap');
     var table = document.createElement('table');
@@ -198,6 +233,12 @@
     var stamp = el('p', 'mini');
     section.appendChild(stamp);
     host.appendChild(section);
+
+    // Below Tracked domains, as asked. The table rows are appended into
+    // `section` after this point, which is fine - it is already in the DOM, so
+    // they land above this rather than after it.
+    host.appendChild(lbBox);
+    renderLoadBalancers(lbBox);
 
     var rowsByHost = {};
 
@@ -266,7 +307,11 @@
       body.querySelectorAll('tr.grouphead').forEach(function(tr){
         tr.classList.toggle('hidden', !visibleByCat[tr.getAttribute('data-cat')]);
       });
+      if (describeFilter) { describeFilter(); }
     }
+    // Declared before applyFilters can reach it; assigned once the controls it
+    // reads exist.
+    var describeFilter = null;
 
     if (grouped && groups.length > 1) {
       var all = [{name: null, label: 'All', count: rows.length}].concat(groups.map(function(g){
@@ -289,13 +334,25 @@
       });
     }
 
-    if (rows.length > 12) {
-      searchwrap.classList.remove('hidden');
-      search.addEventListener('input', function(){
-        searchTerm = search.value.trim().toLowerCase();
-        applyFilters();
-      });
-    }
+    // Always wired now. It used to appear only past twelve rows, which made
+    // sense when it was permanently on screen; behind a button there is no
+    // reason to withhold it, and "search is missing on small lists" was its own
+    // small confusion.
+    search.addEventListener('input', function(){
+      searchTerm = search.value.trim().toLowerCase();
+      applyFilters();
+    });
+
+    // A filter you cannot see must still announce itself, or a collapsed panel
+    // silently hides rows and the table looks wrong for no visible reason.
+    describeFilter = function(){
+      var bits = [];
+      if (activeCat) { bits.push(activeCat); }        // null means every category
+      if (searchTerm) { bits.push('"' + searchTerm + '"'); }
+      filterNote.textContent = bits.join(' · ');
+      filterBtn.classList.toggle('on', bits.length > 0);
+    };
+    describeFilter();
 
     stamp.textContent = 'Last checked ' + ago(data.generated) + ' (' +
       new Date(data.generated).toLocaleString() + ').';
@@ -579,6 +636,167 @@
 
       // Prepended so the schedule reads before the history beside it.
       cardRow.insertBefore(renewalsCard(res), cardRow.firstChild);
+    });
+  }
+
+  /* --- Load balancers ------------------------------------------------------- //
+
+     Reads a CACHE the server wrote out of process. Nothing here ever waits on a
+     load balancer: an unreachable node takes ten seconds to fail and the server
+     handles one connection at a time, so probing on the request thread would
+     freeze every other view for as long as it took - exactly when someone is
+     trying to find out what is wrong.
+
+     Shows what the Data Plane API can actually be asked for and no more. There
+     is no VRRP row because there is no honest way to fill one in: MASTER and
+     BACKUP live in keepalived, which has no API, and HAProxy binds its
+     frontends on every node whether or not it holds the virtual address. */
+
+  function renderLoadBalancers(box){
+    api('GET', '/api/loadbalancers', null, function(err, res){
+      // No deployment targets configured means this install only watches and
+      // renews. Remove the section rather than showing an empty one - plenty of
+      // people will never deploy anywhere.
+      if (err || !res || !res.haveTargets) {
+        if (box.parentNode) { box.parentNode.removeChild(box); }
+        return;
+      }
+      drawLoadBalancers(box, res);
+    });
+  }
+
+  function drawLoadBalancers(box, res){
+    box.textContent = '';
+
+    var h = el('h2', null, 'Load balancers');
+    h.appendChild(el('span', 'rule'));
+    box.appendChild(h);
+
+    if (!res.checkedAt) {
+      var none = el('p', 'mini', 'Not checked yet.');
+      box.appendChild(none);
+      box.appendChild(lbFoot(box, null));
+      return;
+    }
+
+    (res.targets || []).forEach(function(t){
+      var card = el('div', 'card lbgroup');
+      card.appendChild(el('h4', null, t.label));
+
+      (t.nodes || []).forEach(function(n){ card.appendChild(lbNodeRow(n)); });
+
+      var dep = lastDeployFor(t.id);
+      if (dep) {
+        var d = el('p', 'mini lbdeploy');
+        d.appendChild(el('span', 'dot ' + (dep.ok ? 'ok' : 'bad')));
+        d.appendChild(document.createTextNode(
+          'Last deployment ' + ago(dep.at) + ' — ' + dep.name + (dep.ok ? ' succeeded' : ' failed')));
+        card.appendChild(d);
+      }
+
+      box.appendChild(card);
+    });
+
+    box.appendChild(lbFoot(box, res.checkedAt));
+  }
+
+  function lbNodeRow(n){
+    var row = el('div', 'lbnode' + (n.reachable ? '' : ' down'));
+
+    row.appendChild(el('span', 'dot ' + (n.reachable ? 'ok' : 'bad')));
+    row.appendChild(el('span', 'lbname', n.name));
+
+    // HAProxy's own `node` directive - the only identity the box gives out, and
+    // the thing that tells two nodes behind one address apart.
+    row.appendChild(el('span', 'lbid', n.node || '—'));
+
+    var detail = el('span', 'lbdetail');
+    if (n.reachable) {
+      detail.textContent = 'HAProxy ' + (n.haproxyVersion || 'unknown') +
+                           (n.apiVersion ? '  ·  API ' + n.apiVersion : '');
+    } else {
+      // The reason, not just the fact. "Unreachable" alone sends people looking
+      // at the network when the answer is often a wrong password.
+      detail.textContent = n.error || 'did not answer';
+      detail.className = 'lbdetail bad';
+    }
+    row.appendChild(detail);
+
+    row.appendChild(el('span', 'lburl', n.url));
+    return row;
+  }
+
+  // The most recent deployment that touched this target group. Matched on the
+  // group, not the node: jobs\deploy-<certId>.json keys its node entries by
+  // verify host rather than by the configured node name, so a per-node match
+  // would be guesswork.
+  function lastDeployFor(targetId){
+    var state = CC.state || {};
+    var deployment = state.deployment || {};
+    var best = null;
+
+    Object.keys(deployment).forEach(function(certId){
+      var last = deployment[certId] && deployment[certId].last;
+      if (!last || !last.at || !last.targets) { return; }
+      var mine = null;
+      last.targets.forEach(function(t){ if (t && t.targetId === targetId) { mine = t; } });
+      if (!mine) { return; }
+      if (!best || new Date(last.at) > new Date(best.at)) {
+        best = {at: last.at, ok: !!last.ok, name: last.name || certId};
+      }
+    });
+    return best;
+  }
+
+  function lbFoot(box, checkedAt){
+    var foot = el('div', 'cardfoot');
+
+    if (checkedAt) {
+      foot.appendChild(el('p', 'mini', 'Checked ' + ago(checkedAt) + '.'));
+    }
+
+    var p = el('p', 'mini');
+    var btn = el('button', 'btn sm', 'Check now');
+    btn.type = 'button';
+    btn.title = 'Asks each node whether it is answering. Changes nothing.';
+    btn.addEventListener('click', function(){ refreshLoadBalancers(box, btn); });
+    p.appendChild(btn);
+    foot.appendChild(p);
+    return foot;
+  }
+
+  /* Polled here rather than through CC.runJob, which opens the full job panel
+     with a scrolling log - right for a renewal that takes minutes, far too much
+     for a sweep that usually finishes in under a second. */
+  function refreshLoadBalancers(box, btn){
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+
+    api('POST', '/api/loadbalancers/refresh', null, function(err, res){
+      if (err || !res || !res.jobId) {
+        btn.disabled = false;
+        btn.textContent = 'Check now';
+        return;
+      }
+
+      var tries = 0;
+      (function poll(){
+        // Bounded: two nodes that both blackhole packets take ten seconds each,
+        // and something has to give up rather than spin forever on a job that
+        // died.
+        if (++tries > 60) {
+          btn.disabled = false;
+          btn.textContent = 'Check now';
+          return;
+        }
+        window.setTimeout(function(){
+          api('GET', '/api/job/' + res.jobId, null, function(e2, st){
+            if (e2) { btn.disabled = false; btn.textContent = 'Check now'; return; }
+            if (st && st.running) { poll(); return; }
+            renderLoadBalancers(box);
+          });
+        }, 700);
+      })();
     });
   }
 

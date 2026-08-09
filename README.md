@@ -359,6 +359,28 @@ mail.example.com:993
 It is gitignored and never overwritten — it's yours. `domains.example.txt` is
 the shipped sample that setup copies from on a first run.
 
+## The load balancer panel
+
+Under Tracked domains, when — and only when — deployment targets are
+configured. Per node: whether its Data Plane API answered, HAProxy's own **node
+name** (`hap1`, `hap2` — the thing that tells two nodes behind one address
+apart), the running HAProxy version, and the group's last deployment result.
+
+**It never probes while you wait.** A node that blackholes packets takes ten
+seconds to fail, and the web server handles one connection at a time — so the
+sweep runs as a detached child process, writes `jobs\lb-status.json`, and the
+page reads that. **Check now** starts a fresh sweep and polls it. The rest of
+the UI stays responsive throughout, which matters most precisely when a load
+balancer is unreachable.
+
+**There is no VRRP row, and there cannot be an honest one.** MASTER and BACKUP
+live in keepalived, which has no API. HAProxy binds its frontends on every node
+whether or not that node holds the virtual address, and has no idea one exists —
+so nothing the Data Plane API can be asked will tell you who is master. Reading
+it truthfully needs something on each node publishing keepalived's state, which
+is outside what this tool can arrange. Anything shown here claiming to know
+would be guessing.
+
 ## Categories
 
 A line in `[Brackets]` starts a category. Every domain below it belongs to that

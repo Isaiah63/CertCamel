@@ -1470,6 +1470,36 @@ function Invoke-Route {
             return
         }
 
+        '^/api/loadbalancers$' {
+            if ($Request.Method -ne 'GET') { Send-Error $Stream 405 'Use GET.'; return }
+
+            # Cache only. This must never touch the network: an unreachable node
+            # takes ten seconds to fail and this server handles one connection
+            # at a time, so probing here would freeze every other view for as
+            # long as it took - precisely when someone is trying to find out
+            # what is broken. /api/loadbalancers/refresh does the probing, out
+            # of process.
+            $cache = Get-LoadBalancerCache
+
+            # Whether the panel should appear at all is a question about
+            # configuration, not about the cache - a fresh install with targets
+            # but no sweep yet still wants the panel, saying "not checked yet".
+            $settings = Get-TrackerSettings
+            Send-Json $Stream @{
+                checkedAt   = $cache.checkedAt
+                targets     = @($cache.targets)
+                haveTargets = [bool](@($settings.targets).Count -gt 0)
+            }
+            return
+        }
+
+        '^/api/loadbalancers/refresh$' {
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+            $id = Start-ChildJob -Kind 'lb' -ScriptArgs @((Join-Path $PSScriptRoot 'check-lb.ps1'))
+            Send-Json $Stream @{ jobId = $id }
+            return
+        }
+
         '^/api/web/preflight$' {
             if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
 
