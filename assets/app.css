@@ -142,14 +142,12 @@ body.sidebar-collapsed .navitem .navbadge{position:absolute; top:.2rem; right:.2
 
 .sidebar-foot{margin-top:auto; padding-top:.8rem; border-top:1px solid var(--border);
   display:flex; flex-direction:column; gap:.3rem;}
-.theme-picker{display:flex; align-items:center; gap:.7rem; font-size:.86rem; font-weight:600;
-  color:var(--muted); padding:.5rem .6rem;}
-.theme-picker .ic{flex:none; width:1.15rem; height:1.15rem;}
-.theme-picker .navlabel{white-space:nowrap;}
-.theme-picker select{font:inherit; font-size:.78rem; color:var(--text); margin-left:auto;
-  max-width:6.4rem; padding:.2rem .4rem; border:1px solid var(--border); border-radius:8px;
-  background:var(--bg);}
-body.sidebar-collapsed .theme-picker select{display:none;}
+/* The current theme, on the right of the Theme button. The button is a plain
+   .navitem now - same shape as Collapse below it - so this is the only piece
+   that needed its own rule. */
+.navnote{margin-left:auto; font-size:.72rem; font-weight:650; color:var(--faint);
+  white-space:nowrap;}
+body.sidebar-collapsed .navnote{display:none;}
 
 .content{flex:1 1 auto; min-width:0;}
 .contentwrap{max-width:min(120rem,96vw); margin:0 auto;
@@ -234,6 +232,23 @@ tr.grouphead .gmeta.crit{color:var(--red); font-weight:650;}
 tbody tr.grouphead:first-child td{border-top:none; padding-top:.6rem;}
 
 /* Filter chips */
+/* Filtering behind one button. The chips were fine at three categories and a
+   wall of buttons at thirty, pushing the table off screen on exactly the
+   installs that need it most. */
+/* The button sits in the h2 itself, right of the rule. h2 is already
+   display:flex with .rule{flex:1}, so nothing more is needed to place it. */
+h2 > .filterbtn{flex:none; font-weight:650;}
+.filterbtn.on{color:#fff; border-color:transparent;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));}
+/* Normal weight and colour: it sits inside a heading but is a status, not part
+   of the title. */
+.filternote{flex:none; font-size:.78rem; font-weight:500; color:var(--muted);
+  letter-spacing:0;}
+.filterpanel{margin:0 0 1rem; padding:.9rem 1rem; border:1px solid var(--border);
+  border-radius:var(--radius-sm); background:var(--surface);}
+.filterpanel .searchwrap{margin:0 0 .8rem;}
+.filterpanel .chips{margin:0;}
+
 .chips{display:flex; flex-wrap:wrap; gap:.45rem; margin:0 0 1rem;}
 .chip{font:inherit; font-size:.78rem; font-weight:600; color:var(--muted); cursor:pointer;
   padding:.35rem .8rem; border:1px solid var(--border); border-radius:999px;
@@ -444,6 +459,33 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 .pick-advanced .field{margin:.5rem 0;}
 .pick-advanced .field label{font-size:.66rem;}
 .pick-advanced input{font-size:.82rem !important; padding:.35rem .6rem !important;}
+/* Load balancers on Home. A grid rather than a table: four short facts per node
+   that should stay on one line on a wide window and stack on a narrow one,
+   which a table fights. */
+.lbsection .card.lbgroup{margin:0 0 1rem;}
+.lbgroup > h4{margin:0 0 .6rem;}
+.lbnode{display:grid; align-items:baseline; gap:.15rem .8rem; padding:.5rem 0;
+  grid-template-columns:.9rem 6rem 5rem 1fr; border-top:1px solid var(--border);
+  font-size:.85rem;}
+.lbgroup > .lbnode:first-of-type{border-top:none;}
+.lbname{font-weight:700; color:var(--text);}
+/* HAProxy's own node name - the thing that tells two nodes behind one address
+   apart, so it reads as an identifier rather than prose. */
+.lbid{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.78rem;
+  color:var(--group-name);}
+.lbdetail{color:var(--muted); word-break:break-word;}
+.lbdetail.bad{color:var(--red);}
+.lburl{grid-column:2 / -1; font-size:.74rem; color:var(--faint); word-break:break-all;}
+.lbdeploy{margin:.7rem 0 0; padding-top:.6rem; border-top:1px solid var(--border);}
+.dot{width:.55rem; height:.55rem; border-radius:50%; display:inline-block;
+  background:var(--faint); flex:none; align-self:center;}
+.dot.ok{background:var(--green);} .dot.bad{background:var(--red);}
+.lbdeploy .dot{margin-right:.45rem;}
+@media (max-width:44rem){
+  .lbnode{grid-template-columns:.9rem 1fr;}
+  .lbid,.lbdetail,.lburl{grid-column:2 / -1;}
+}
+
 .status-line{font-size:.82rem; margin:1rem 0 0; min-height:1.2em;}
 .status-line.bad{color:var(--red);} .status-line.good{color:var(--green);}
 
