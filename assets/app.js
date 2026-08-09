@@ -187,13 +187,21 @@
   }
 
   // --- Theme ---------------------------------------------------------------- //
-  // A dropdown over a small registry rather than a cycle button, so a future
-  // theme is one CSS block (:root[data-theme="name"]{...} in app.css) plus one
-  // entry here - not a redesign of the control. The pre-paint choice is applied
-  // by an inline script in <head> so a saved theme never flashes the default on
-  // the way in; this wires the dropdown and keeps it in sync.
+  // The whole row is the button and clicking it advances to the next theme,
+  // matching Collapse directly below it. It was a label with a <select> beside
+  // it, which was the only control in the sidebar shaped that way.
+  //
+  // Still driven by a registry, so ADDING A THEME IS STILL ONE CSS BLOCK
+  // (:root[data-theme="name"]{...} in app.css) plus one entry here. The control
+  // does not have to change: cycling walks whatever this array contains, and
+  // the current name is shown on the right so a longer list stays navigable.
+  // Past four or five entries a menu would beat cycling - that is the point to
+  // revisit it, not before.
+  //
+  // The pre-paint choice is applied by an inline script in <head> so a saved
+  // theme never flashes the default on the way in; this wires the button.
   var THEMES = [
-    {value: 'auto',  label: 'Auto (system)'},
+    {value: 'auto',  label: 'Auto'},
     {value: 'light', label: 'Light'},
     {value: 'dark',  label: 'Dark'}
   ];
@@ -201,32 +209,45 @@
 
   (function(){
     var root = document.documentElement;
-    var sel  = document.getElementById('theme-select');
-    if (!sel) { return; }
+    var btn  = document.getElementById('btn-theme');
+    var now  = document.getElementById('theme-now');
+    if (!btn) { return; }
 
     var KEY = 'certcamel-theme';
-
-    THEMES.forEach(function(t){
-      var o = document.createElement('option');
-      o.value = t.value;
-      o.textContent = t.label;
-      sel.appendChild(o);
-    });
 
     function read(){
       var v = localStorage.getItem(KEY);
       return THEMES.some(function(t){ return t.value === v; }) ? v : 'auto';
     }
+    function labelOf(mode){
+      var hit = null;
+      THEMES.forEach(function(t){ if (t.value === mode) { hit = t; } });
+      return hit ? hit.label : mode;
+    }
     function apply(mode){
-      if (mode === 'auto') { root.removeAttribute('data-theme'); }
-      else { root.setAttribute('data-theme', mode); }
-      if (mode === 'auto') { localStorage.removeItem(KEY); }
-      else { localStorage.setItem(KEY, mode); }
+      if (mode === 'auto') {
+        root.removeAttribute('data-theme');
+        localStorage.removeItem(KEY);
+      } else {
+        root.setAttribute('data-theme', mode);
+        localStorage.setItem(KEY, mode);
+      }
+      if (now) { now.textContent = labelOf(mode); }
+      // Says what pressing it will DO, not what it currently is - the visible
+      // label already says that, and a tooltip repeating it earns nothing.
+      var next = THEMES[(indexOf(mode) + 1) % THEMES.length];
+      btn.title = 'Theme: ' + labelOf(mode) + '. Click for ' + next.label + '.';
+    }
+    function indexOf(mode){
+      var i = 0, found = 0;
+      THEMES.forEach(function(t){ if (t.value === mode) { found = i; } i++; });
+      return found;
     }
 
-    sel.value = read();
-    apply(sel.value);
-    sel.addEventListener('change', function(){ apply(sel.value); });
+    apply(read());
+    btn.addEventListener('click', function(){
+      apply(THEMES[(indexOf(read()) + 1) % THEMES.length].value);
+    });
   })();
 
   // --- Sidebar collapse ------------------------------------------------------- //
