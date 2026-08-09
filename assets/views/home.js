@@ -668,16 +668,23 @@
   function drawLoadBalancers(box, res){
     box.textContent = '';
 
+    /* Same shape as Tracked domains: the control lives in the heading, right of
+       the rule, so it costs the page no vertical space and the two sections
+       read as one pattern rather than two. */
     var h = el('h2', null, 'Load balancers');
     h.appendChild(el('span', 'rule'));
+    h.appendChild(el('span', 'filternote',
+      res.checkedAt ? 'checked ' + ago(res.checkedAt) : 'not checked yet'));
+
+    var btn = el('button', 'btn sm filterbtn', 'Check now');
+    btn.type = 'button';
+    btn.title = 'Asks each node whether it is answering. Changes nothing.';
+    btn.addEventListener('click', function(){ refreshLoadBalancers(box, btn); });
+    h.appendChild(btn);
+
     box.appendChild(h);
 
-    if (!res.checkedAt) {
-      var none = el('p', 'mini', 'Not checked yet.');
-      box.appendChild(none);
-      box.appendChild(lbFoot(box, null));
-      return;
-    }
+    if (!res.checkedAt) { return; }
 
     (res.targets || []).forEach(function(t){
       var card = el('div', 'card lbgroup');
@@ -696,8 +703,6 @@
 
       box.appendChild(card);
     });
-
-    box.appendChild(lbFoot(box, res.checkedAt));
   }
 
   function lbNodeRow(n){
@@ -746,23 +751,6 @@
       }
     });
     return best;
-  }
-
-  function lbFoot(box, checkedAt){
-    var foot = el('div', 'cardfoot');
-
-    if (checkedAt) {
-      foot.appendChild(el('p', 'mini', 'Checked ' + ago(checkedAt) + '.'));
-    }
-
-    var p = el('p', 'mini');
-    var btn = el('button', 'btn sm', 'Check now');
-    btn.type = 'button';
-    btn.title = 'Asks each node whether it is answering. Changes nothing.';
-    btn.addEventListener('click', function(){ refreshLoadBalancers(box, btn); });
-    p.appendChild(btn);
-    foot.appendChild(p);
-    return foot;
   }
 
   /* Polled here rather than through CC.runJob, which opens the full job panel
