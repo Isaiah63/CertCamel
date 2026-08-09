@@ -113,6 +113,7 @@
         return;
       }
       CertCamel.state = s;
+      setTally(s.tally);
       var staging = ((s.settings && s.settings.cas) || []).filter(function(ca){ return ca.useStaging; });
       setLiveHint(staging.length
         ? 'Staging: ' + staging.map(function(ca){ return ca.label; }).join(', ')
@@ -125,6 +126,28 @@
   function setLiveHint(text){
     var h = document.getElementById('livehint');
     if (h) { h.textContent = text || ''; }
+  }
+
+  /* Lifetime renewals, from the audit trail.
+     Hidden at zero rather than shown as "0 renewed": a fresh install has not
+     failed at anything, and a zero in the sidebar reads like a warning. It
+     appears the moment there is something to count.
+     The tooltip says WHAT it counts from, because the audit trail is younger
+     than some installs and a total that quietly means something narrower than
+     it says would be worse than none. */
+  function setTally(t){
+    var box = document.getElementById('sidebar-tally');
+    if (!box) { return; }
+    var n = (t && t.renewed) || 0;
+    if (!n) { box.classList.add('hidden'); return; }
+
+    document.getElementById('tally-n').textContent = String(n);
+    document.getElementById('tally-k').textContent = (n === 1 ? 'renewed' : 'renewed');
+    box.title = t.since
+      ? 'Certificates renewed successfully since ' + new Date(t.since).toLocaleDateString() +
+        ', counted from the audit trail.'
+      : 'Certificates renewed successfully, counted from the audit trail.';
+    box.classList.remove('hidden');
   }
 
   // --- Job runner ------------------------------------------------------------- //
