@@ -141,8 +141,9 @@
     var n = (t && t.renewed) || 0;
     if (!n) { box.classList.add('hidden'); return; }
 
-    document.getElementById('tally-n').textContent = String(n);
-    document.getElementById('tally-k').textContent = (n === 1 ? 'renewed' : 'renewed');
+    // Grouped: this is a number that only grows, and 12847 is harder to read at
+    // a glance than 12,847.
+    document.getElementById('tally-n').textContent = n.toLocaleString();
     box.title = t.since
       ? 'Certificates renewed successfully since ' + new Date(t.since).toLocaleDateString() +
         ', counted from the audit trail.'
@@ -200,13 +201,65 @@
 
         if (!j.running) {
           window.clearInterval(jobTimer); jobTimer = null; setBusy(false);
+
           // A check job rewrote ssl-data.js, which only arrives as a fresh
           // <script> tag - a full reload is the honest way to pick that up.
-          if (j.kind === 'check') { window.setTimeout(function(){ location.reload(); }, 900); }
+          //
+          // But NOT when the run reported a problem. Reloading takes the log
+          // off the screen, and the log is the only place the reason appears -
+          // so the one run you most need to read is the one that vanishes
+          // after 900ms. When something failed, hold the panel and let the
+          // person press it themselves.
+          if (j.kind === 'check') {
+            if (jobHadTrouble(j.log)) { offerReload(); }
+            else { window.setTimeout(function(){ location.reload(); }, 900); }
+          }
           else { CertCamel.loadState(); }
         }
       });
     }, 1500);
+  }
+
+  /* Did the run report anything worth reading before the page reloads?
+
+     Matched against check-ssl.ps1's own output, which is in this repository and
+     changes only when somebody changes it deliberately - "ERROR" per host and
+     "N domain(s) could not be reached" in the summary. Text matching is
+     ordinarily a poor signal, but the alternative here is a result file the
+     checker does not write, and the cost of a false positive is merely that
+     somebody presses a button. The cost of a false negative is an error nobody
+     ever sees. */
+  function jobHadTrouble(text){
+    if (!text) { return false; }
+    return /\bERROR\b/.test(text) ||
+           /could not be reached/i.test(text) ||
+           /\bFAILED\b/i.test(text);
+  }
+
+  // Replaces the automatic reload with a deliberate one, and says why the page
+  // is still showing old numbers.
+  function offerReload(){
+    var log = document.getElementById('joblog');
+    if (!log || !log.parentNode) { return; }
+    if (document.getElementById('job-reload')) { return; }   // one is enough
+
+    var bar = document.createElement('p');
+    bar.className = 'mini';
+    bar.id = 'job-reload';
+
+    var btn = document.createElement('button');
+    btn.className = 'btn sm';
+    btn.type = 'button';
+    btn.textContent = 'Reload the page';
+    btn.addEventListener('click', function(){ location.reload(); });
+    bar.appendChild(btn);
+
+    var note = document.createElement('span');
+    note.className = 'jobnote';
+    note.textContent = 'Something above needs reading. The table still shows the previous check until you reload.';
+    bar.appendChild(note);
+
+    log.parentNode.appendChild(bar);
   }
 
   // --- Theme ---------------------------------------------------------------- //
