@@ -462,6 +462,9 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 /* Load balancers on Home. A grid rather than a table: four short facts per node
    that should stay on one line on a wide window and stack on a narrow one,
    which a table fights. */
+/* Clear air above it. Without this the heading sat straight under the table and
+   the two sections read as one run-on block. */
+.lbsection{margin-top:2.4rem;}
 .lbsection .card.lbgroup{margin:0 0 1rem;}
 .lbgroup > h4{margin:0 0 .6rem;}
 .lbnode{display:grid; align-items:baseline; gap:.15rem .8rem; padding:.5rem 0;
