@@ -178,6 +178,7 @@ rewrite your load balancer's configuration.</p>
     <li><a href="#connect">Point Cert Camel at it</a></li>
     <li><a href="#pairs">Pairs and clusters</a></li>
     <li><a href="#trouble">When it breaks</a></li>
+    <li><a href="#example">Example configs</a></li>
   </ol>
 </nav>
 
@@ -641,6 +642,292 @@ machine and needs no configuration at all.</p>
 </table></div>
 <p>The Data Plane API's own log is the first place to look; it records every request including the
 ones it rejected.</p>
+
+<h2 id="example">14. Complete example configurations</h2>
+
+<p>Everything above as three finished files, for a pair of load balancers. Adapted
+from a working two-node lab rather than written from memory &mdash; the structure,
+the health check and the reload behaviour have all actually been run.</p>
+
+<p>The example is <strong>lb1</strong> and <strong>lb2</strong> sharing a virtual
+address that moves between them:</p>
+
+<pre><code>lb1   10.0.0.11   priority 110   normally MASTER
+lb2   10.0.0.12   priority 100   normally BACKUP
+VIP   10.0.0.10                  wherever the master is</code></pre>
+
+<div class="callout note">
+  <div class="h">What Cert Camel writes, and what it never touches</div>
+  <p>Of everything below, Cert Camel only ever writes <strong>certificate
+  storage</strong> and <strong>crt-list entries</strong>. It never writes a
+  <code>bind</code> line, never creates a frontend, and never edits your
+  configuration file. If a certificate is not being served, the frontend and its
+  <code>crt-list</code> reference are yours to fix &mdash; the tool will not have
+  changed them.</p>
+</div>
+
+<h3>haproxy.cfg</h3>
+
+<p>Identical on both nodes except the <code>node</code> line. Nothing here is
+Cert&nbsp;Camel-specific except the admin socket and the <code>crt-list</code>,
+both marked.</p>
+
+<pre><code>global
+    log /dev/log local0
+    chroot /var/lib/haproxy
+    user haproxy
+    group haproxy
+    daemon
+
+    # REQUIRED BY THE DATA PLANE API. It drives HAProxy through this socket,
+    # and "level admin" is what lets it load certificates at runtime.
+    stats socket /run/haproxy/admin.sock mode 660 level admin expose-fd listeners
+    stats timeout 30s
+
+    # Name this node. Both machines otherwise report the same hostname, and this
+    # is what tells them apart - in the stats page, in the logs, and on Cert
+    # Camel's Home page, which shows it per node.
+    node lb1
+    description edge load balancer, site A
+
+    ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
+    tune.ssl.default-dh-param 2048
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    timeout connect 5s
+    timeout client  30s
+    timeout server  30s
+    retries 3
+
+frontend fe_http
+    bind *:80
+    http-request redirect scheme https unless { ssl_fc }
+
+frontend fe_https
+    # CERT CAMEL WRITES THE crt-list, NOT THIS LINE. The bind stays as you
+    # wrote it; deployment adds and updates entries in the file it points at,
+    # so new certificates appear without the configuration changing.
+    bind *:443 ssl crt-list /etc/haproxy/certs/crt-list.txt alpn h2,http/1.1
+
+    http-response set-header Strict-Transport-Security "max-age=31536000"
+    default_backend be_app
+
+backend be_app
+    balance roundrobin
+    option httpchk GET /healthz
+    http-check expect status 200
+    server app1 10.0.1.21:8080 check
+    server app2 10.0.1.22:8080 check
+
+# Bound to the node's own address, not the VIP - you want to reach a SPECIFIC
+# node when working out which one is misbehaving.
+listen stats
+    bind 10.0.0.11:9000
+    stats enable
+    stats uri /
+    stats refresh 10s
+    stats auth admin:CHANGE-THIS
+
+userlist dataplaneapi
+    user certcamel insecure-password CHANGE-THIS
+    # Better - a hashed password, see section 5:
+    # user certcamel password $5$rounds=...</code></pre>
+
+<p>And the crt-list it points at. <strong>Create the file even if it is empty</strong>
+&mdash; HAProxy will not start with a <code>crt-list</code> that does not exist, and
+Cert Camel appends to it rather than creating it:</p>
+
+<pre><code># /etc/haproxy/certs/crt-list.txt
+# One line per certificate. Cert Camel maintains these.
+/etc/haproxy/certs/example.com.pem
+/etc/haproxy/certs/wildcard.example.com.pem</code></pre>
+
+<div class="callout warn">
+  <div class="h">The first entry is the default certificate</div>
+  <p>HAProxy serves the first line to any client that does not send SNI. Put the
+  name you most want answered correctly at the top, and do not be surprised when
+  an SNI-less probe reports it.</p>
+</div>
+
+<h3>keepalived.conf &mdash; the VRRP pair</h3>
+
+<p>This is what moves the virtual address between the two nodes, and it is
+<em>separate from HAProxy entirely</em>: HAProxy binds <code>*:443</code> on both
+machines and has no idea a virtual address exists. keepalived decides which node
+currently holds it.</p>
+
+<p><strong>lb1</strong>, the higher priority:</p>
+
+<pre><code>global_defs {
+    router_id lb1
+    enable_script_security
+    script_user root
+}
+
+# The piece people leave out, and the one that matters most. Without it the VIP
+# happily stays on a node whose HAProxy has died - the machine is still up, so
+# VRRP sees nothing wrong, and every request goes to a dead listener.
+vrrp_script chk_haproxy {
+    script "/usr/bin/killall -0 haproxy"
+    interval 2
+    timeout 2
+    fall 2      # 2 failures before it counts as down
+    rise 2      # 2 successes before it counts as up again
+    weight -30  # drop priority by 30 - enough to lose to the backup
+}
+
+vrrp_instance VI_1 {
+    state MASTER
+    interface eth0
+    virtual_router_id 51     # MUST match on both nodes, and be unique on the LAN
+    priority 110             # higher wins
+    advert_int 1
+
+    authentication {
+        auth_type PASS
+        auth_pass CHANGE-ME  # 8 characters maximum, and sent in clear
+    }
+
+    virtual_ipaddress {
+        10.0.0.10/24 dev eth0
+    }
+
+    track_script {
+        chk_haproxy
+    }
+}</code></pre>
+
+<p><strong>lb2</strong> is the same file with three changes &mdash; everything else,
+especially <code>virtual_router_id</code>, <code>auth_pass</code> and
+<code>virtual_ipaddress</code>, stays identical:</p>
+
+<pre><code>    router_id lb2
+    state BACKUP
+    priority 100</code></pre>
+
+<div class="callout crit">
+  <div class="h">Three ways a VRRP pair goes wrong</div>
+  <p><strong>Both nodes think they are master.</strong> They cannot see each
+  other's advertisements &mdash; a firewall dropping protocol 112, or a switch
+  blocking multicast. Both hold the VIP and traffic goes wherever ARP last landed.
+  If multicast is unreliable on your network, use unicast instead:</p>
+  <pre><code>    unicast_src_ip 10.0.0.11
+    unicast_peer {
+        10.0.0.12
+    }</code></pre>
+  <p><strong>A mismatched <code>virtual_router_id</code></strong> produces exactly
+  the same symptom, because each node is effectively alone in its own group.</p>
+  <p><strong>Two unrelated pairs sharing a <code>virtual_router_id</code></strong>
+  on one LAN will fight over each other's addresses. It only has to be unique on
+  the broadcast domain &mdash; but it does have to be.</p>
+</div>
+
+<div class="callout note">
+  <div class="h">Should the master take the VIP back when it recovers?</div>
+  <p>By default it does, so a flapping node moves the address back and forth. Add
+  <code>nopreempt</code> to the instance (with <code>state BACKUP</code> on
+  <em>both</em> nodes) if you would rather it stay put until something makes it
+  move. Neither is wrong &mdash; decide which you want before an incident rather
+  than during one.</p>
+</div>
+
+<h3>dataplaneapi.yml</h3>
+
+<p>One per node, each managing only its own HAProxy. Full detail is in
+<a href="#config">section 6</a>; this is the whole file for lb1:</p>
+
+<pre><code>config_version: 2
+name: lb1
+
+dataplaneapi:
+  host: 0.0.0.0
+  port: 5555
+
+  # TLS on the API itself. It carries private keys and a password - see
+  # section 8. A self-signed certificate is fine; tick "allow self-signed"
+  # in Cert Camel rather than leaving the API in the clear.
+  tls:
+    tls_host: 0.0.0.0
+    tls_port: 5555
+    tls_certificate: /etc/haproxy/dpa/dpa.crt
+    tls_key: /etc/haproxy/dpa/dpa.key
+  scheme:
+    - https
+
+  # Authentication comes from the HAProxy userlist above - section 5.
+  userlist:
+    userlist: dataplaneapi
+
+  transaction:
+    transaction_dir: /var/lib/dataplaneapi/transactions
+    backups_number: 10
+    backups_dir: /var/lib/dataplaneapi/backups
+
+  resources:
+    # WHERE CERT CAMEL WRITES CERTIFICATES. This must be the same directory
+    # your crt-list entries point at, or deployment succeeds and HAProxy keeps
+    # serving the old certificate - one of the more confusing failures, because
+    # nothing reports an error.
+    ssl_certs_dir: /etc/haproxy/certs
+    maps_dir: /var/lib/dataplaneapi/maps
+    general_storage_dir: /var/lib/dataplaneapi/general
+    spoe_dir: /var/lib/dataplaneapi/spoe
+
+haproxy:
+  config_file: /etc/haproxy/haproxy.cfg
+  haproxy_bin: /usr/sbin/haproxy
+  reload:
+    reload_delay: 2
+    reload_cmd: systemctl reload haproxy
+    restart_cmd: systemctl restart haproxy
+    reload_strategy: custom
+
+log_targets:
+  - log_to: file
+    log_file: /var/log/dataplaneapi.log
+    log_level: info
+    log_types:
+      - access
+      - app</code></pre>
+
+<h3>Pointing Cert Camel at the pair</h3>
+
+<p>One group, two nodes, each reached by <strong>its own address</strong>:</p>
+
+<pre><code>lb1    https://10.0.0.11:5555
+lb2    https://10.0.0.12:5555</code></pre>
+
+<div class="callout warn">
+  <div class="h">Never point it at the virtual address</div>
+  <p>A deployment through the VIP reaches whichever node happens to hold it, so the
+  other silently keeps the old certificate &mdash; and stays wrong until it takes
+  over, which is the worst possible moment to find out. Verification follows the
+  same rule: each node is checked by its own address, which is how a standby that
+  missed an update gets caught.</p>
+</div>
+
+<h3>Checking it before you trust it</h3>
+
+<pre><code># configuration is valid
+haproxy -c -f /etc/haproxy/haproxy.cfg
+
+# who holds the VIP right now - run on both, exactly one should show it
+ip addr show eth0 | grep 10.0.0.10
+
+# watch a failover: stop HAProxy on the master and the VIP should move
+systemctl stop haproxy &amp;&amp; journalctl -fu keepalived
+
+# what a node is actually serving, asked of the node itself
+echo | openssl s_client -connect 10.0.0.11:443 -servername example.com 2>/dev/null \
+  | openssl x509 -noout -subject -dates</code></pre>
+
+<p>That last one is worth keeping. It is what Cert Camel does after every
+deployment, against every node individually &mdash; and running it by hand is how
+you confirm the tool is telling you the truth.</p>
 
 </article>
 </div>
