@@ -960,9 +960,10 @@
     var note = el('p', 'hint');
     note.appendChild(el('strong', null, 'Accepted is not delivered.'));
     note.appendChild(document.createTextNode(
-      ' If nothing arrives, the message was taken and then dropped or filed further ' +
-      'along — most often because the from-address fails SPF or DKIM for that domain, ' +
-      'the relay is discarding mail it accepted, or it went to spam.'));
+      ' If nothing arrives, give it a while first — a mail server that is behind ' +
+      'queues messages and delivers the backlog at once, which looks identical to ' +
+      'a message that was dropped. After that: the from-address failing SPF or DKIM ' +
+      'for its domain, a relay discarding mail it accepted, or spam filing.'));
     box.appendChild(note);
 
     // The one handle that survives into the receiving server's logs. Whoever
