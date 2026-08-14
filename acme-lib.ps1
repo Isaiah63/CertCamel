@@ -1695,12 +1695,32 @@ function Test-ProviderWriteAccess {
     param([hashtable]$Provider, [string]$Zone)
 
     Import-PoshAcme
-    $mod = Get-Module Posh-ACME
+
+    # @(...)[0] because Get-Module can return more than one entry for a name,
+    # and indexing a collection's .Path silently yields something Split-Path
+    # cannot bind.
+    $mod = @(Get-Module Posh-ACME)[0]
     if (-not $mod) { throw "Posh-ACME is not loaded." }
 
-    $pluginFile = Join-Path (Join-Path (Split-Path $mod.Path) 'Plugins') "$($Provider.plugin).ps1"
+    # The plugin folder is derived from the MANIFEST WE VENDORED, not from the
+    # loaded module's .Path.
+    #
+    # $mod.Path has been observed null in the long-running server process -
+    # reproducibly there, never in a fresh one - which made this fail with
+    # "Cannot bind argument to parameter 'Path' because it is null", an error
+    # that says nothing about DNS and sent the reader looking at their
+    # credentials. We already know exactly where the module lives, because
+    # Get-VendoredPoshAcme just found its manifest to import it; asking the
+    # module where it thinks it is adds a dependency on module introspection
+    # for no benefit.
+    $manifest = Get-VendoredPoshAcme
+    if (-not $manifest) {
+        throw "Posh-ACME is not installed in this folder. Run 'First Time Setup.bat' to fetch it."
+    }
+
+    $pluginFile = Join-Path (Join-Path (Split-Path $manifest) 'Plugins') "$($Provider.plugin).ps1"
     if (-not (Test-Path $pluginFile)) {
-        throw "No Posh-ACME plugin file found for '$($Provider.plugin)'."
+        throw "No Posh-ACME plugin file found for '$($Provider.plugin)' at $pluginFile."
     }
 
     $pluginArgs = Get-ProviderPluginArgs -Provider $Provider
