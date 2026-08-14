@@ -26,6 +26,22 @@
       list.appendChild(a);
     });
     host.appendChild(list);
+
+    /* What ACME client is actually installed.
+       Pinned once fetched and it does not move on its own - deliberately, since
+       this is the component every renewal runs through. Said here because
+       otherwise the only way to find out is to go looking in lib\. */
+    var v = (CC.state && CC.state.acmeVersion) || null;
+    var foot = el('p', 'mini');
+    if (v) {
+      foot.appendChild(document.createTextNode('Renewal runs on Posh-ACME '));
+      foot.appendChild(el('strong', null, v));
+      foot.appendChild(document.createTextNode(
+        ', installed in this folder. It stays on that version until you update it — see the Read me.'));
+    } else {
+      foot.textContent = 'Posh-ACME is not installed yet. Run First Time Setup to fetch it; without it nothing can be renewed.';
+    }
+    host.appendChild(foot);
   }
 
   CC.registerView('docs', {render: render});
