@@ -374,13 +374,18 @@ Camel generates itself**. That id is the one handle that survives into the
 receiving mail server's logs, so it is what to hand to whoever runs it. The SMTP
 password is never part of any of it.
 
-When a message is accepted and never arrives, the usual causes in order:
+When a message is accepted and does not arrive, the usual causes in order:
 
 | | |
 |---|---|
+| **It has not arrived *yet*** | Check this first. A mail server that is behind delivers the whole backlog at once, sometimes hours later. Accepting a message and queueing it is normal, correct behaviour — and it is indistinguishable from a message that was dropped until the queue drains |
 | **SPF or DKIM** | The from-address belongs to a domain whose records do not authorise this server. The relay accepts it and the recipient's side discards it |
 | **The relay is discarding it** | Common on ISP and appliance relays that accept everything and quietly drop what they will not carry |
 | **Spam filing** | Especially for a first message from a new sender to a domain |
+
+This is exactly what the Message-ID is for. Rather than guessing between those
+four, hand it to whoever runs the mail server and they can say which one it was
+— including "it is still in the queue".
 
 Alert failures used to be recorded only in the run log, where nobody looks for
 "have my alerts stopped working". They are in the audit trail now too. A failed
