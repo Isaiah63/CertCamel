@@ -96,13 +96,20 @@ try {
     $lines += ""
     $lines += "Checker last ran $($checker.generated)."
 
+    $subject = "Cert Camel monthly summary - $($now.ToString('yyyy-MM'))"
     try {
-        Send-AlertEmail -Settings $settings -Subject "Cert Camel monthly summary - $($now.ToString('yyyy-MM'))" `
-            -Body ($lines -join "`r`n")
-        Write-Log "Monthly summary sent." 'ok'
+        # Captured, not left to fall out of the pipeline: Send-AlertEmail
+        # returns a receipt now, and an uncaptured hashtable would print itself
+        # into this run log.
+        $receipt = Send-AlertEmail -Settings $settings -Subject $subject -Body ($lines -join "`r`n")
+        Write-EmailAuditEvent -Receipt $receipt -Subject $subject -Source $Source
+        # "Accepted", not "sent" - that is all a returning Send() establishes.
+        Write-Log "Monthly summary accepted by $($receipt.host) for $((@($receipt.to)) -join ', '); id $($receipt.messageId)." 'ok'
     }
     catch {
-        Write-Log "Monthly summary could not be sent: $(($_.Exception.Message -split "`n")[0].Trim())" 'error'
+        $why = ($_.Exception.Message -split "`n")[0].Trim()
+        Write-EmailAuditEvent -ErrorMessage $why -Subject $subject -Source $Source
+        Write-Log "Monthly summary could not be sent: $why" 'error'
         exit 1
     }
 
