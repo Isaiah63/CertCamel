@@ -598,6 +598,13 @@ function Get-StateResponse {
         targetCatalog = $targetCatalogOut
         deployment    = $deployOut
         acmeReady     = [bool](Get-VendoredPoshAcme)
+        # Read off disk, never from the gallery: the app makes no outbound
+        # request on load and this must not become the first one. Answers "what
+        # am I running" without anyone having to look inside lib\.
+        acmeVersion   = $(
+            $v = @(Get-PoshAcmeVersions)
+            if ($v.Count) { $v[0].version.ToString() } else { $null }
+        )
     }
 }
 

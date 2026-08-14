@@ -359,6 +359,41 @@ mail.example.com:993
 It is gitignored and never overwritten — it's yours. `domains.example.txt` is
 the shipped sample that setup copies from on a first run.
 
+## Posh-ACME, and keeping it current
+
+Renewal runs on [Posh-ACME](https://poshac.me), fetched into `lib\` by First Time
+Setup rather than committed here. The Docs page shows which version you have.
+
+**A fresh install always gets the newest**, because setup asks for the latest.
+**An existing install stays where it is** and does not move on its own. That is
+deliberate: this is the component every renewal talks to your CA and your DNS
+provider through, so an update that breaks a DNS plugin breaks the 03:20
+unattended run with nobody watching. It should move when you decide it does.
+
+It is still worth moving occasionally — ACME keeps changing (renewal information,
+certificate profiles, the shrinking lifetimes above) and DNS plugins get fixed.
+
+```powershell
+# update to the current release
+. .\acme-lib.ps1
+Install-PoshAcmeLocal -Force
+```
+
+The previous version is left in place beside the new one rather than deleted,
+which makes going back a deletion rather than a reinstall:
+
+```powershell
+# list what is installed
+Get-ChildItem .\lib\Posh-ACME
+
+# revert - remove the newer folder and the older one takes over again
+Remove-Item .\lib\Posh-ACME\<newer-version> -Recurse
+```
+
+Restart the tracker afterwards either way, and renew something against
+**staging** before trusting it — that costs nothing and is the whole point of
+having a staging authority configured.
+
 ## When a test email says it sent and nothing arrives
 
 **"Sent" is not what the tool knows.** A send that returns without an error

@@ -1311,7 +1311,42 @@ function Test-TrackerSecret {
 # Posh-ACME
 # --------------------------------------------------------------------------- #
 
+function Get-PoshAcmeVersions {
+    <#
+      Every vendored Posh-ACME, newest first, as @{ version; path; manifest }.
+
+      Sorted as VERSIONS, not as strings. Save-Module puts each release in its
+      own folder, so updating leaves the old one beside the new - and a string
+      sort gets that wrong the moment the minor numbers differ in length:
+
+          4.9.0, 4.10.0   ->  string sort picks 4.9.0. Silently.
+
+      Which is the older module, loaded in preference to the update somebody
+      just installed, with nothing to indicate it happened. A folder that does
+      not parse as a version is ignored rather than guessed at.
+    #>
+    $out = @()
+    if (-not (Test-Path $script:LibDir)) { return $out }
+
+    foreach ($m in @(Get-ChildItem -Path $script:LibDir -Filter 'Posh-ACME.psd1' -Recurse -ErrorAction SilentlyContinue)) {
+        # ...\lib\Posh-ACME\4.33.1\Posh-ACME.psd1 - the version is the folder
+        # the manifest sits in, which is how Save-Module lays modules out.
+        $name = Split-Path (Split-Path $m.FullName -Parent) -Leaf
+        $v = $null
+        if (-not [version]::TryParse($name, [ref]$v)) { continue }
+        $out += @{ version = $v; path = (Split-Path $m.FullName -Parent); manifest = $m.FullName }
+    }
+
+    return @($out | Sort-Object -Property { $_.version } -Descending)
+}
+
 function Get-VendoredPoshAcme {
+    $all = @(Get-PoshAcmeVersions)
+    if ($all.Count) { return $all[0].manifest }
+
+    # A copy whose folder is not a version number still works and should still
+    # load - Save-Module always names them properly, but a hand-placed one may
+    # not, and refusing to run over a naming convention would be silly.
     $manifest = Get-ChildItem -Path $script:LibDir -Filter 'Posh-ACME.psd1' -Recurse -ErrorAction SilentlyContinue |
                 Sort-Object FullName -Descending |
                 Select-Object -First 1
