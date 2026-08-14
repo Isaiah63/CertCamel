@@ -957,25 +957,26 @@
       ' accepted it for ' + (r.to || []).join(', ') + ', from ' + r.from + '.'));
     box.appendChild(line);
 
+    // Short on purpose. The full list of reasons a message can be accepted and
+    // still not arrive lives in the Read me, where somebody actually
+    // troubleshooting will look for it. Here it only needs to stop the word
+    // "accepted" being read as "delivered".
     var note = el('p', 'hint');
-    note.appendChild(el('strong', null, 'Accepted is not delivered.'));
+    note.appendChild(el('strong', null, 'Accepted is not the same as delivered.'));
     note.appendChild(document.createTextNode(
-      ' If nothing arrives, give it a while first — a mail server that is behind ' +
-      'queues messages and delivers the backlog at once, which looks identical to ' +
-      'a message that was dropped. After that: the from-address failing SPF or DKIM ' +
-      'for its domain, a relay discarding mail it accepted, or spam filing.'));
+      ' If it does not turn up, wait a few minutes, then check the spam folder.'));
     box.appendChild(note);
 
     // The one handle that survives into the receiving server's logs. Whoever
     // runs that mail server can search for it, which is the difference between
-    // a guess and an answer.
+    // a guess and an answer. Worth the line even though most people will never
+    // need it - when it IS needed, nothing else will do.
     var id = el('p', 'hint');
-    id.appendChild(document.createTextNode('Message ID, for tracing it in the mail server logs: '));
-    var code = el('code', null, r.messageId);
-    id.appendChild(code);
+    id.appendChild(document.createTextNode('Message ID, if you need to trace it: '));
+    id.appendChild(el('code', null, r.messageId));
     box.appendChild(id);
 
-    box.appendChild(el('p', 'hint', 'This attempt is recorded in the audit trail on the Logs page, along with every alert the tool sends.'));
+    box.appendChild(el('p', 'hint', 'Recorded on the Logs page, along with every alert the tool sends.'));
   }
 
   // --- Save (writes every panel, including hidden ones) ------------------------ //
