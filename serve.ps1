@@ -1565,13 +1565,29 @@ function Invoke-Route {
 
         '^/api/settings/test-email$' {
             if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
+
+            # Reads settings.json FROM DISK, not from whatever is typed into the
+            # form. Testing an unsaved profile would report on the previous one
+            # and mean nothing, so the page saves before calling this.
+            $subject = 'Cert Camel test email'
             try {
                 $settings = Get-TrackerSettings
-                Send-AlertEmail -Settings $settings -Subject 'Cert Camel test email' `
+                $receipt = Send-AlertEmail -Settings $settings -Subject $subject `
                     -Body "This is a test message from Cert Camel, sent $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')).`r`n`r`nIf this arrived, alerts are configured correctly."
-                Send-Json $Stream @{ ok = $true }
+
+                Write-EmailAuditEvent -Receipt $receipt -Subject $subject
+
+                # The receipt goes back so the page can say what was actually
+                # established - accepted by this server, for these recipients,
+                # under this id - rather than the word "sent", which claims
+                # something nobody here can know.
+                Send-Json $Stream @{ ok = $true; receipt = $receipt }
             }
-            catch { Send-Error $Stream 400 $_.Exception.Message }
+            catch {
+                $why = ($_.Exception.Message -split "`n")[0].Trim()
+                Write-EmailAuditEvent -ErrorMessage $why -Subject $subject
+                Send-Error $Stream 400 $why
+            }
             return
         }
 

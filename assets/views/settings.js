@@ -919,6 +919,8 @@
     return {value: alerts};
   }
 
+  /* Saves first, deliberately: the endpoint reads settings.json from disk, so
+     testing an unsaved form would report on the previous profile. */
   function testEmail(){
     var c = collectSettings();
     if (c.error) { setStatus(c.error, 'bad'); return; }
@@ -927,11 +929,52 @@
     box.textContent = '';
     api('POST', '/api/settings', c.payload, function(err){
       if (err) { setStatus(err, 'bad'); return; }
-      api('POST', '/api/settings/test-email', {}, function(err2){
+      api('POST', '/api/settings/test-email', {}, function(err2, res){
         if (err2) { setStatus(err2, 'bad'); return; }
-        setStatus('Test email sent.', 'good');
+        showTestEmailResult(box, res && res.receipt);
       });
     });
+  }
+
+  /* It used to say "Test email sent." It does not know that.
+
+     A send that returns without throwing means the SMTP server ACCEPTED the
+     message. Whether it was delivered, filed as spam, or dropped for failing
+     SPF is decided afterwards and elsewhere, and nothing visible from here can
+     tell those apart - which is exactly how a "sent" test email never arrives
+     and leaves nobody anything to go on. So it reports what was established,
+     and names the thing that would answer the next question. */
+  function showTestEmailResult(box, r){
+    setStatus('Accepted by the mail server.', 'good');
+    if (!box) { return; }
+    box.textContent = '';
+
+    if (!r) { box.appendChild(el('p', 'hint', 'The server accepted the message.')); return; }
+
+    var line = el('p', 'hint');
+    line.appendChild(el('strong', null, r.host + ':' + r.port));
+    line.appendChild(document.createTextNode(
+      ' accepted it for ' + (r.to || []).join(', ') + ', from ' + r.from + '.'));
+    box.appendChild(line);
+
+    var note = el('p', 'hint');
+    note.appendChild(el('strong', null, 'Accepted is not delivered.'));
+    note.appendChild(document.createTextNode(
+      ' If nothing arrives, the message was taken and then dropped or filed further ' +
+      'along — most often because the from-address fails SPF or DKIM for that domain, ' +
+      'the relay is discarding mail it accepted, or it went to spam.'));
+    box.appendChild(note);
+
+    // The one handle that survives into the receiving server's logs. Whoever
+    // runs that mail server can search for it, which is the difference between
+    // a guess and an answer.
+    var id = el('p', 'hint');
+    id.appendChild(document.createTextNode('Message ID, for tracing it in the mail server logs: '));
+    var code = el('code', null, r.messageId);
+    id.appendChild(code);
+    box.appendChild(id);
+
+    box.appendChild(el('p', 'hint', 'This attempt is recorded in the audit trail on the Logs page, along with every alert the tool sends.'));
   }
 
   // --- Save (writes every panel, including hidden ones) ------------------------ //

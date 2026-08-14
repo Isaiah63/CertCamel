@@ -1097,6 +1097,16 @@ function Send-AlertEmail {
         $msg.Body = $Body
         $msg.IsBodyHtml = $false
 
+        # A Message-ID we choose, rather than letting the server invent one we
+        # never see. It is the only handle that survives into the receiving
+        # server's logs, so it is the difference between "the tool says it sent"
+        # and something a mail administrator can actually search for - which is
+        # the question that gets asked when a message is accepted and then never
+        # arrives.
+        $msgId = '<{0}.{1}@certcamel>' -f (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'),
+                                          ([Guid]::NewGuid().ToString('n').Substring(0, 12))
+        $msg.Headers.Add('Message-ID', $msgId)
+
         $port = $(if ($smtp.port) { [int]$smtp.port } else { 587 })
         $client = New-Object Net.Mail.SmtpClient($smtp.host, $port)
         $client.EnableSsl = ($smtp.encryption -eq 'starttls')
@@ -1111,11 +1121,57 @@ function Send-AlertEmail {
         }
 
         $client.Send($msg)
+
+        # A RECEIPT, not a delivery confirmation, and the caller must not treat
+        # it as one. Send() returning without throwing means the SMTP server
+        # ACCEPTED the message. Whether it was then delivered, filed as spam or
+        # dropped for failing SPF is decided later and elsewhere, and nothing
+        # visible from here can tell those apart.
+        return @{
+            host       = [string]$smtp.host
+            port       = $port
+            encryption = $(if ($client.EnableSsl) { 'starttls' } else { 'none' })
+            from       = $from
+            to         = @($to)
+            auth       = [bool]$smtp.authRequired
+            messageId  = $msgId
+            at         = (Get-Date).ToString('o')
+        }
     }
     finally {
         $msg.Dispose()
         if ($client) { $client.Dispose() }
     }
+}
+
+function Write-EmailAuditEvent {
+    <#
+      One line per send attempt. Email was the only thing this tool did that
+      left no record at all - a message that was accepted and never arrived had
+      nothing to look at afterwards, which is exactly when somebody goes
+      looking.
+
+      Recipients are recorded because an address is not a credential and "who
+      was it sent to" is the first question asked. The SMTP password is never
+      touched here, and every audit detail goes through Protect-LogLine anyway.
+    #>
+    param($Receipt, [string]$Subject, [string]$ErrorMessage, [string]$Source)
+
+    $detail = if ($Receipt) {
+        "via $($Receipt.host):$($Receipt.port) $($Receipt.encryption)$(if ($Receipt.auth) { ' auth' }); from $($Receipt.from); to $((@($Receipt.to)) -join ', '); id $($Receipt.messageId); ACCEPTED by the server - acceptance is not delivery"
+    } else {
+        $ErrorMessage
+    }
+
+    $p = @{
+        Event   = 'email'
+        Object  = $Subject
+        Outcome = $(if ($Receipt) { 'ok' } else { 'fail' })
+        Detail  = $detail
+    }
+    if ($Source) { $p.Source = $Source }
+
+    try { Write-AuditEvent @p } catch { }
 }
 
 function Send-RenewalOutcomeAlert {
@@ -1137,17 +1193,27 @@ function Send-RenewalOutcomeAlert {
             $where = if ($null -eq $Deployed) { 'issued (no load balancer assigned)' }
                      elseif ($Deployed)        { 'issued and deployed' }
                      else                       { 'issued' }
-            Send-AlertEmail -Settings $Settings -Subject "Cert Camel: $DisplayName renewed" `
+            $subject = "Cert Camel: $DisplayName renewed"
+            $receipt = Send-AlertEmail -Settings $Settings -Subject $subject `
                 -Body "$DisplayName was $where successfully, $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))."
         }
         else {
             if (-not $alerts.deploymentFailure.enabled) { return }
-            Send-AlertEmail -Settings $Settings -Subject "Cert Camel: $DisplayName FAILED" `
+            $subject = "Cert Camel: $DisplayName FAILED"
+            $receipt = Send-AlertEmail -Settings $Settings -Subject $subject `
                 -Body "$DisplayName did not fully succeed, $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')).`r`n`r`n$ErrorMessage`r`n`r`nCheck the tracker for the full log."
         }
+        Write-EmailAuditEvent -Receipt $receipt -Subject $subject
     }
     catch {
-        Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [warn] Alert email could not be sent: $(($_.Exception.Message -split "`n")[0].Trim())"
+        # Still swallowed - an alert about a renewal must never become the
+        # reason the renewal is recorded as failed - but no longer silent. It
+        # went to the run log only, which is the wrong place to look for "did
+        # my alerts stop working"; the audit trail is where that question gets
+        # asked, months later.
+        $why = ($_.Exception.Message -split "`n")[0].Trim()
+        Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [warn] Alert email could not be sent: $why"
+        Write-EmailAuditEvent -ErrorMessage $why -Subject $(if ($subject) { $subject } else { "alert for $DisplayName" })
     }
 }
 
@@ -1211,13 +1277,20 @@ function Send-ExpiryAlerts {
         # Only a NEW (smaller, more urgent) threshold than whatever was last
         # alerted triggers a send, so 30 does not re-fire every day until 14.
         if ($null -eq $prevAlerted -or $crossed -lt $prevAlerted) {
+            $subject = "Cert Camel: $hostName expires in $days day(s)"
             try {
-                Send-AlertEmail -Settings $Settings -Subject "Cert Camel: $hostName expires in $days day(s)" `
+                $receipt = Send-AlertEmail -Settings $Settings -Subject $subject `
                     -Body "$hostName has $days day(s) remaining (crossed the $crossed-day threshold), expiring $(([datetime]$r.notAfter).ToString('yyyy-MM-dd'))."
+                Write-EmailAuditEvent -Receipt $receipt -Subject $subject
             }
             catch {
-                Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [warn] Expiry alert for $hostName could not be sent: $(($_.Exception.Message -split "`n")[0].Trim())"
+                $why = ($_.Exception.Message -split "`n")[0].Trim()
+                Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [warn] Expiry alert for $hostName could not be sent: $why"
+                Write-EmailAuditEvent -ErrorMessage $why -Subject $subject
             }
+            # Recorded as alerted either way, deliberately. Retrying a failed
+            # send on every run would mean a broken mail server producing one
+            # message per host per run once it recovers.
             $state[$hostName] = @{ lastThresholdAlerted = $crossed }
             $changed = $true
         }

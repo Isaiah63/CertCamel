@@ -359,6 +359,33 @@ mail.example.com:993
 It is gitignored and never overwritten — it's yours. `domains.example.txt` is
 the shipped sample that setup copies from on a first run.
 
+## When a test email says it sent and nothing arrives
+
+**"Sent" is not what the tool knows.** A send that returns without an error
+means the SMTP server **accepted** the message. Whether it was then delivered,
+filed as spam, or dropped is decided afterwards and elsewhere, and nothing
+visible from here can tell those apart. So the page reports *accepted by
+`<host>` for `<recipients>`*, and says so plainly.
+
+**Every attempt is recorded** — the test button and every real alert — as an
+`email` line in the audit trail, visible on the **Logs** page. It carries the
+server, port, encryption, from-address, recipients and a **Message-ID that Cert
+Camel generates itself**. That id is the one handle that survives into the
+receiving mail server's logs, so it is what to hand to whoever runs it. The SMTP
+password is never part of any of it.
+
+When a message is accepted and never arrives, the usual causes in order:
+
+| | |
+|---|---|
+| **SPF or DKIM** | The from-address belongs to a domain whose records do not authorise this server. The relay accepts it and the recipient's side discards it |
+| **The relay is discarding it** | Common on ISP and appliance relays that accept everything and quietly drop what they will not carry |
+| **Spam filing** | Especially for a first message from a new sender to a domain |
+
+Alert failures used to be recorded only in the run log, where nobody looks for
+"have my alerts stopped working". They are in the audit trail now too. A failed
+alert still never fails the renewal it was reporting on — that is deliberate.
+
 ## The load balancer panel
 
 Under Tracked domains, when — and only when — deployment targets are
