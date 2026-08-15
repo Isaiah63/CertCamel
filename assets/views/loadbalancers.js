@@ -107,9 +107,19 @@
       var d = el('span', 'lbdetail');
       if (n.reachable) {
         d.textContent = 'HAProxy ' + (n.haproxyVersion || 'unknown') +
+                        (n.dataplaneVersion ? '  ·  Data Plane ' + n.dataplaneVersion : '') +
                         '  ·  ' + ((n.frontends || []).length) + ' frontends';
         if (n.frontendError) {
           d.textContent += '  ·  configuration unreadable';
+          d.className = 'lbdetail bad';
+        }
+        /* A node whose API has no crt-list routes can be deployed TO and can
+           never have the result referenced - Data Plane API 3.1 is like this,
+           3.3 is not. Without saying so here, its certificates simply show as
+           "not referenced" and the fix dialog sends someone to check a bind
+           line that was never the problem. */
+        else if (n.crtListApi === false) {
+          d.textContent += '  ·  no crt-list API — certificates cannot be referenced';
           d.className = 'lbdetail bad';
         }
       } else {
@@ -262,11 +272,22 @@
     body.appendChild(el('h4', null, 'Either — point HAProxy at Cert Camel’s list'));
     body.appendChild(el('p', 'mini',
       'Right when this certificate has its own frontend and the bind was mistyped. Edit the bind on every node, then reload:'));
+
+    /* The file that exists, not the one the setting names. The Data Plane API
+       rewrites interior dots to underscores, so a list Cert Camel created for
+       camelnuggets.com is on disk as camelnuggets_com-crt-list.txt - and a bind
+       naming the dotted path would simply fail to parse. */
+    var bindPath = c.crtListOnDisk || c.crtList || '<path>';
     body.appendChild(el('pre', 'log',
-      'bind <address>:443 ssl crt-list ' + (c.crtList || '<path>') + '\n\n' +
+      'bind <address>:443 ssl crt-list ' + bindPath + '\n\n' +
       '# check the config parses, then reload without dropping connections\n' +
       'haproxy -c -f /etc/haproxy/haproxy.cfg\n' +
       'systemctl reload haproxy'));
+    if (c.crtListOnDisk && c.crtListOnDisk !== c.crtList) {
+      body.appendChild(el('p', 'mini',
+        'That is not the path in your settings (' + c.crtList + '). The Data Plane API rewrites dots in a filename, ' +
+        'so the file on disk is the one above — bind that one.'));
+    }
 
     body.appendChild(el('h4', null, 'Or — point Cert Camel at HAProxy’s list'));
     body.appendChild(el('p', 'mini',

@@ -77,8 +77,11 @@ foreach ($t in $targets) {
         $s = Get-HAProxyNodeStatus -BaseUrl ([string]$n.url) -User $user -Password $pass `
                 -InsecureTls:$insec -TimeoutSeconds $TimeoutSeconds
 
-        $frontends = @()
-        $feError   = $null
+        $frontends  = @()
+        $feError    = $null
+        $crtLists   = @()
+        $crtListApi = $false
+        $dpVersion  = $null
 
         if ($s.reachable) {
             Write-Line "    ok - node '$($s.node)', HAProxy $($s.haproxyVersion), API $($s.apiVersion)"
@@ -98,6 +101,37 @@ foreach ($t in $targets) {
                 $feError = $fe.error
                 Write-Line "    could not read the configuration - $($fe.error)" 'warn'
             }
+
+            # The Data Plane API's own BUILD version, which is a different thing
+            # from the /v3 path version already reported as apiVersion. Worth
+            # showing next to the HAProxy version: whether a node can manage
+            # crt-lists at all is a property of this number - 3.1 has no
+            # crt-list routes, 3.3 has them - so without it the warning below
+            # reads as arbitrary. Trimmed of the build hash the API appends.
+            $dpVersion = Get-DataPlaneVersionString -BaseUrl ([string]$n.url) -User $user -Password $pass `
+                            -ApiVersion $s.apiVersion -InsecureTls:$insec
+            if ($dpVersion) { $dpVersion = (([string]$dpVersion).Trim() -split '\s+')[0] }
+
+            # Which crt-lists this node's API actually manages. The page needs
+            # the name ON DISK, not the one in the setting: anything Cert Camel
+            # created has had its interior dots rewritten to underscores, and a
+            # bind line must name the file that exists. Read rather than derived,
+            # because a list somebody created by hand keeps its dots.
+            try {
+                $cl = Get-DataPlaneCrtLists -BaseUrl ([string]$n.url) -User $user -Password $pass `
+                        -ApiVersion $s.apiVersion -InsecureTls:$insec
+                if ($null -eq $cl) {
+                    # Not an error, and worth saying: this API has no crt-list
+                    # routes at all, so nothing here can ever reference a
+                    # certificate. Data Plane API 3.1 is like this; 3.3 is not.
+                    Write-Line "    this API has no crt-list support - certificates can be stored but not referenced" 'warn'
+                } else {
+                    $crtListApi = $true
+                    $crtLists   = @($cl | ForEach-Object { [string]$_.file })
+                }
+            } catch {
+                Write-Line "    could not read the crt-lists - $(($_.Exception.Message -split "`n")[0])" 'warn'
+            }
         } else {
             Write-Line "    unreachable - $($s.error)" 'warn'
         }
@@ -114,6 +148,9 @@ foreach ($t in $targets) {
             error          = $s.error
             frontends      = $frontends
             frontendError  = $feError
+            crtLists       = $crtLists
+            crtListApi     = $crtListApi
+            dataplaneVersion = $dpVersion
         }
     }
 

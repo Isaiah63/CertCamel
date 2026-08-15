@@ -740,8 +740,14 @@
 
     var detail = el('span', 'lbdetail');
     if (n.reachable) {
+      // The Data Plane BUILD version when it is known, not the /v3 path version.
+      // They are different things and showing both reads as noise - and the
+      // build number is the one that answers real questions, since whether a
+      // node can manage crt-lists at all depends on it (3.1 cannot, 3.3 can).
+      // It also implies the path version, so nothing is lost by preferring it.
       detail.textContent = 'HAProxy ' + (n.haproxyVersion || 'unknown') +
-                           (n.apiVersion ? '  ·  API ' + n.apiVersion : '');
+                           (n.dataplaneVersion ? '  ·  Data Plane ' + n.dataplaneVersion
+                                               : (n.apiVersion ? '  ·  API ' + n.apiVersion : ''));
     } else {
       // The reason, not just the fact. "Unreachable" alone sends people looking
       // at the network when the answer is often a wrong password.
