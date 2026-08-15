@@ -243,7 +243,17 @@ try {
                 # over results and cannot see this scope.
                 $tResult.remoteName = $remoteName
 
+                # {certId} works here exactly as it does for the filename above.
+                # With one frontend per domain, each wants its OWN crt-list -
+                # otherwise every frontend can serve every certificate it holds,
+                # which is untidy at best and defeats the point of separating
+                # them at worst. Without substitution that meant a hand-set
+                # override on every certificate; with it, one group-level
+                # setting of
+                #     /etc/haproxy/certs/{certId}-crt-list.txt
+                # covers all of them and each new domain lands in its own list.
                 $crtListPath = [string](Resolve-TargetSetting -Target $target -Binding $binding -Name 'crtList' -Default '')
+                $crtListPath = $crtListPath.Replace('{certId}', $certId)
 
                 if (@($binding.overrides.Keys).Count) {
                     Write-Log "  (this certificate overrides $(@($binding.overrides.Keys) -join ', ') for this group)"
