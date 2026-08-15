@@ -682,6 +682,20 @@
     h.appendChild(el('span', 'filternote',
       res.checkedAt ? 'checked ' + ago(res.checkedAt) : 'not checked yet'));
 
+    // A certificate deployed to a crt-list nothing reads is served to nobody,
+    // and Home is where someone looks first. Say it here and send them to the
+    // page that explains it, rather than leaving it to be found.
+    var broken = 0;
+    (res.groups || []).forEach(function(g){
+      (g.certificates || []).forEach(function(c){ if (c.state === 'unreferenced') { broken++; } });
+    });
+    if (broken) {
+      var warn = el('a', 'filternote bad');
+      warn.href = '#/loadbalancers';
+      warn.textContent = broken + (broken === 1 ? ' certificate is' : ' certificates are') + ' not being served — see Load balancers';
+      h.appendChild(warn);
+    }
+
     var btn = el('button', 'btn sm filterbtn', 'Check now');
     btn.type = 'button';
     btn.title = 'Asks each node whether it is answering. Changes nothing.';
