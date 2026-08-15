@@ -63,6 +63,12 @@ param(
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'acme-lib.ps1')
+
+# Multi-value lists reach a child process comma-joined, because -File cannot
+# carry a real array. See Expand-ListArgument.
+$ZoneList   = Expand-ListArgument $ZoneList
+$TargetList = Expand-ListArgument $TargetList
+
 [void](Start-RunLog -Kind 'renew' -Path $RunLogPath -Source $Source)
 
 # --------------------------------------------------------------------------- #
@@ -384,8 +390,11 @@ try {
                 # Pass the resolved list explicitly rather than letting deploy.ps1
                 # re-read the assignment, so a run-time override survives the hop
                 # between the two scripts.
+                # Comma-joined: an array handed to a native command arrives as
+                # one token per element, and -File binds only the first of them
+                # to -TargetList. See Expand-ListArgument.
                 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $deployScript `
-                    -Cert $certId -ResultPath $deployResult -TargetList $certTargets -CalledFromRenew `
+                    -Cert $certId -ResultPath $deployResult -TargetList ($certTargets -join ',') -CalledFromRenew `
                     -Source $Source 2>&1 |
                   ForEach-Object { Write-Output $_ }
                 $deployOk = ($LASTEXITCODE -eq 0)

@@ -61,6 +61,12 @@ param(
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'acme-lib.ps1')
+
+# Multi-value lists reach a child process comma-joined, because -File cannot
+# carry a real array. See Expand-ListArgument.
+$CertList   = Expand-ListArgument $CertList
+$TargetList = Expand-ListArgument $TargetList
+
 # When renew.ps1 invokes this as its deploy step it hands over its own log, so
 # issuance and deployment read as one story in one file rather than two.
 [void](Start-RunLog -Kind 'deploy' -Path $RunLogPath -Source $Source)
