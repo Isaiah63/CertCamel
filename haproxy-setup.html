@@ -379,6 +379,49 @@ sudo systemctl status dataplaneapi</code></pre>
 <p>The default listens on every interface. On a load balancer, "every interface" includes the
 public one. Bind it to the management address, or to <code>127.0.0.1</code> with an SSH tunnel if
 Cert Camel runs elsewhere.</p>
+<h3>Make a certificate for the API</h3>
+
+<p>The API needs its own certificate, and <strong>Cert Camel cannot issue this
+one</strong> &mdash; it deploys certificates <em>through</em> the API, so the API
+has to be reachable before the tool can do anything. Chicken and egg. Make it by
+hand, once; it is an internal certificate that no browser ever sees.</p>
+
+<pre><code>sudo mkdir -p /etc/haproxy/ssl
+
+<span class="c"># One command, valid 10 years. Replace the IP with the address Cert Camel</span>
+<span class="c"># will actually connect to - that is what has to match the SAN.</span>
+sudo openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -keyout /etc/haproxy/ssl/dataplaneapi.key \
+  -out    /etc/haproxy/ssl/dataplaneapi.crt \
+  -subj   "/CN=lb1" \
+  -addext "subjectAltName = IP:10.0.0.11, DNS:lb1"
+
+<span class="c"># The key must not be world-readable. Match the user the API runs as.</span>
+sudo chown haproxy:haproxy /etc/haproxy/ssl/dataplaneapi.*
+sudo chmod 600 /etc/haproxy/ssl/dataplaneapi.key
+sudo chmod 644 /etc/haproxy/ssl/dataplaneapi.crt</code></pre>
+
+<p><strong>Each node gets its own</strong>, with its own address in the SAN. Do not
+copy one between nodes &mdash; a certificate naming <code>10.0.0.11</code>
+presented by <code>10.0.0.12</code> is exactly the mismatch this is meant to
+catch.</p>
+
+<div class="callout note">
+  <div class="h">A long expiry here is the right call</div>
+  <p>Ten years on an internal API certificate is deliberate. Nothing renews it
+  automatically &mdash; Cert Camel cannot, for the reason above &mdash; so a short
+  one becomes an outage on a date nobody has written down. If you would rather it
+  were shorter, put the renewal in your own calendar first.</p>
+  <p><code>-addext</code> needs OpenSSL 1.1.1 or newer, which covers anything
+  currently supported. On something older, use a config file with a
+  <code>[v3_req]</code> section instead.</p>
+</div>
+
+<p>Because it is self-signed, Cert Camel will not trust it by default. Tick
+<strong>allow self-signed / private certificates</strong> on the load balancer
+group &mdash; see <a href="#prove">section 9</a>. That accepts <em>this</em>
+connection being unverified; it does not weaken anything else.</p>
+
 <h3>Put TLS on it</h3>
 <p>Basic authentication over plain HTTP sends the password, base64-encoded, on <em>every single
 request</em>. Base64 is not encryption. Terminate TLS on the API:</p>
@@ -847,14 +890,16 @@ dataplaneapi:
   host: 0.0.0.0
   port: 5555
 
-  # TLS on the API itself. It carries private keys and a password - see
-  # section 8. A self-signed certificate is fine; tick "allow self-signed"
-  # in Cert Camel rather than leaving the API in the clear.
+  # TLS on the API itself. It carries private keys and a password, so this is
+  # not optional. Section 8 has the one openssl command that creates these two
+  # files - and note Cert Camel cannot issue this certificate, because it
+  # deploys THROUGH the API, so the API has to be up before the tool works.
+  # Self-signed is fine; tick "allow self-signed" in Cert Camel.
   tls:
     tls_host: 0.0.0.0
     tls_port: 5555
-    tls_certificate: /etc/haproxy/dpa/dpa.crt
-    tls_key: /etc/haproxy/dpa/dpa.key
+    tls_certificate: /etc/haproxy/ssl/dataplaneapi.crt
+    tls_key: /etc/haproxy/ssl/dataplaneapi.key
   scheme:
     - https
 
