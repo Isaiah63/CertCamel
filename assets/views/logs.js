@@ -132,11 +132,11 @@
     tw.appendChild(table);
     host.appendChild(tw);
 
-    var viewer = el('div');
-    host.appendChild(viewer);
-
     runs.forEach(function(r){
-      var tr = el('tr');
+      var isOpen = openRun === r.name;
+      // The run row loses its bottom rule while open, so it and its log read as
+      // one block rather than two things that happen to be adjacent.
+      var tr = el('tr', isOpen ? 'open' : null);
       var when = el('td', 'dim');
       when.textContent = ago(r.at);
       when.title = new Date(r.at).toLocaleString();
@@ -145,8 +145,9 @@
       tr.appendChild(el('td', 'n', (r.bytes / 1024).toFixed(1) + ' KB'));
 
       var acts = el('td', 'acts');
-      var open = el('button', 'btn sm', openRun === r.name ? 'Hide' : 'View');
+      var open = el('button', 'btn sm', isOpen ? 'Hide' : 'View');
       open.type = 'button';
+      open.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
       open.addEventListener('click', function(){
         if (openRun === r.name) { openRun = null; render(); return; }
         openRun = r.name;
@@ -155,19 +156,30 @@
       acts.appendChild(open);
       tr.appendChild(acts);
       tbody.appendChild(tr);
-    });
 
-    if (openRun) {
+      // The log opens as a row of the table, immediately under the run it
+      // belongs to, rather than at the bottom of the page. With a dozen runs
+      // listed, a viewer appended after the table opened somewhere off-screen
+      // from the button that was pressed, and nothing tied the two together.
+      if (!isOpen) { return; }
+
+      var detail = el('tr', 'logrow');
+      var cell = document.createElement('td');
+      cell.colSpan = 4;
+
       var pre = el('pre', 'log');
-      pre.textContent = 'Loading ' + openRun + '...';
-      viewer.appendChild(el('h4', null, openRun));
-      viewer.appendChild(pre);
-      api('GET', '/api/logs/run/' + encodeURIComponent(openRun), null, function(err, res2){
+      pre.textContent = 'Loading ' + r.name + '...';
+      cell.appendChild(pre);
+      detail.appendChild(cell);
+      tbody.appendChild(detail);
+
+      api('GET', '/api/logs/run/' + encodeURIComponent(r.name), null, function(err, res2){
         if (err) { pre.textContent = err; return; }
         pre.textContent = (res2 && res2.content) || '(empty)';
+        // The end of a run is the part worth reading first.
         pre.scrollTop = pre.scrollHeight;
       });
-    }
+    });
   }
 
   CC.registerView('logs', {render: render});

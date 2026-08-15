@@ -378,6 +378,15 @@ td.deploy{padding-top:.55rem; padding-bottom:.55rem;}
   border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
 #jobpanel{margin-bottom:1.9rem;}
 
+/* A run log opened as a row of the table, directly under the run it belongs to.
+   The cell carries no top padding and the row above drops its rule, so the two
+   read as one block instead of two adjacent things. .log already wraps
+   (pre-wrap + break-word), so a long line cannot widen the table and set
+   .tablewrap scrolling sideways. */
+tr.open > td{border-bottom:none;}
+.logrow > td{padding:0 1.1rem .9rem;}
+.logrow .log{max-height:22rem;}
+
 /* Modal (the target picker only, now that Settings is a page not a dialog) */
 .modal{position:fixed; top:0; right:0; bottom:0; left:0; z-index:50; display:flex;
   align-items:flex-start; justify-content:center; overflow-y:auto;
