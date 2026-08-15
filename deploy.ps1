@@ -89,9 +89,28 @@ function Save-Outcome {
     catch { Write-Log "Could not write the result file: $($_.Exception.Message)" 'warn' }
 }
 
-# The address to connect to for verification. Defaults to the host part of the
-# Data Plane API URL, since the API and the served site are normally the same
-# machine - but a node can override it when they differ.
+# The address to connect to for verification, or NOTHING when none is set.
+#
+# This used to fall back to the host part of the Data Plane API URL, reasoning
+# that the API and the served site are normally the same machine. That guess is
+# wrong in two ways, and both of them produce a GREEN deployment:
+#
+#   - the management address often has no :443 listener at all. Where each
+#     domain has its own frontend on its own floating address - the topology the
+#     API check exists for - a node's own address serves nothing.
+#   - worse, several nodes usually share one management host. Every node of a
+#     Docker or port-forwarded pair is "localhost", so the fallback verified one
+#     endpoint once per node and reported that single answer against each of
+#     them. Observed while building the crt-list work: both nodes of a pair
+#     reported "serving the new certificate" at a moment when the crt-list had
+#     just been created and no bind line referenced it. The check had reached a
+#     different lab entirely, and would have passed no matter what those nodes
+#     were doing.
+#
+# So a blank verify address now means what it says: nowhere was given, do not
+# invent one. Verification falls through to asking the node's own Data Plane API
+# what it has loaded - weaker evidence, labelled as such at the point of use,
+# but evidence about THAT node. Setting a verify address restores the wire check.
 #
 # The override may carry its own port ("lb1.internal:8443"), which wins over the
 # group's verify port. Nodes usually all serve on the same port and the group
@@ -120,9 +139,8 @@ function Resolve-VerifyTarget {
         return @{ host = $override.Trim(); port = $DefaultPort }
     }
 
-    $h = $null
-    try { $h = ([Uri]$Node.url).Host } catch { }
-    return @{ host = $h; port = $DefaultPort }
+    # Nothing set. Deliberately not derived from the node URL - see above.
+    return @{ host = $null; port = $DefaultPort }
 }
 
 try {
@@ -439,7 +457,22 @@ try {
                                     -InsecureTls:([bool](Get-TargetArg -Target $vTarget -Name 'insecureTls' -Default $false)) `
                                     -TimeoutSeconds $VerifyTimeoutSeconds
 
-                            $covers = $(if ($rt.found) { [bool](Test-NameCoveredBySans -Sans $rt.sans -Name $entry.name) } else { $false })
+                            # Coverage is checked against the names this
+                            # CERTIFICATE carries, not against $entry.name - that
+                            # is the zone's display name, and a certificate for
+                            # www plus subdomains very often does not include the
+                            # bare apex at all. Checking the apex therefore failed
+                            # a perfectly good deployment every time, which went
+                            # unnoticed only because this whole branch was
+                            # unreachable until the verify-address fallback above
+                            # was removed.
+                            $missing = @()
+                            if ($rt.found) {
+                                $missing = @(@($cert.names) | Where-Object {
+                                    -not (Test-NameCoveredBySans -Sans $rt.sans -Name $_)
+                                })
+                            }
+                            $covers = ($rt.found -and $missing.Count -eq 0)
                             $serialOk = ($rt.found -and $rt.serial -and $pre.serial -and
                                          $rt.serial.TrimStart('0') -eq ([string]$pre.serial).TrimStart('0'))
 
@@ -455,7 +488,7 @@ try {
                                 $v.error = if (-not $rt.found)       { 'not present in the API' }
                                            elseif (-not $serialOk)   { "loaded serial $($rt.serial), expected $($pre.serial)" }
                                            elseif ($rt.status -ne 'Used') { "on disk but not in use (status $($rt.status))" }
-                                           else                      { "loaded certificate does not cover $($entry.name)" }
+                                           else                      { "loaded certificate does not cover $($missing -join ', ')" }
                             }
                             $n.verify += $v
 
@@ -502,7 +535,7 @@ try {
                     # only this certificate should be able to serve.
                     foreach ($n in $t.nodes) {
                         $checked = @($n.verify)
-                        if (-not $checked.Count) { continue }   # no verifyHost; already warned
+                        if (-not $checked.Count) { continue }   # nothing could be checked; already warned
                         $hardFailed = @($checked | Where-Object { -not $_.ok -and -not ($_.contested -and $_.role -eq 'coverage') }).Count
                         $proved     = @($checked | Where-Object { $_.ok -and $_.role -eq 'identity' }).Count
                         if ($hardFailed -gt 0 -or $proved -eq 0) { $t.ok = $false }
