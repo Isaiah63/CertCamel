@@ -50,7 +50,7 @@ if (-not $targets.Count) {
     # Not an error. Plenty of installs only watch and renew, and never deploy
     # anywhere - the Home page hides the panel entirely in that case.
     Write-Line "No load balancer targets are configured. Nothing to check."
-    Write-TextFileAtomic -Path $script:LbStatusFile -Content ($result | ConvertTo-Json -Depth 6)
+    Write-TextFileAtomic -Path $script:LbStatusFile -Content ($result | ConvertTo-Json -Depth 12)
     exit 0
 }
 
@@ -77,14 +77,33 @@ foreach ($t in $targets) {
         $s = Get-HAProxyNodeStatus -BaseUrl ([string]$n.url) -User $user -Password $pass `
                 -InsecureTls:$insec -TimeoutSeconds $TimeoutSeconds
 
+        $frontends = @()
+        $feError   = $null
+
         if ($s.reachable) {
             Write-Line "    ok - node '$($s.node)', HAProxy $($s.haproxyVersion), API $($s.apiVersion)"
+
+            # Read the configuration back so the page can answer the question
+            # neither verification tier can: does any bind actually READ the
+            # crt-list a certificate is deployed to? Only attempted when the
+            # node answered - there is nothing to ask otherwise.
+            $fe = Get-HAProxyFrontendBinds -BaseUrl ([string]$n.url) -User $user -Password $pass `
+                    -ApiVersion $s.apiVersion -InsecureTls:$insec -TimeoutSeconds $TimeoutSeconds
+
+            if ($fe.ok) {
+                $frontends = @($fe.frontends)
+                $tls = @($frontends | ForEach-Object { $_.binds } | Where-Object { $_.ssl }).Count
+                Write-Line "    $(@($frontends).Count) frontend(s), $tls TLS bind(s)"
+            } else {
+                $feError = $fe.error
+                Write-Line "    could not read the configuration - $($fe.error)" 'warn'
+            }
         } else {
             Write-Line "    unreachable - $($s.error)" 'warn'
         }
 
         # Only the fields the page shows. The credential is never any of them,
-        # and $s carries no copy of it to leak by accident.
+        # and neither $s nor $fe carries a copy of it to leak by accident.
         $entry.nodes += @{
             name           = $name
             url            = [string]$n.url
@@ -93,6 +112,8 @@ foreach ($t in $targets) {
             haproxyVersion = $s.haproxyVersion
             apiVersion     = $s.apiVersion
             error          = $s.error
+            frontends      = $frontends
+            frontendError  = $feError
         }
     }
 
@@ -104,6 +125,11 @@ $all  = @($result.targets | ForEach-Object { $_.nodes }).Count
 Write-Line ""
 Write-Line "$up of $all node(s) answering."
 
-Write-TextFileAtomic -Path $script:LbStatusFile -Content ($result | ConvertTo-Json -Depth 6)
+# Depth 12, not the default and not 6. The nesting reaches
+# result > targets > target > nodes > node > frontends > frontend > binds > bind,
+# which is nine levels before a bind's own fields - and ConvertTo-Json truncates
+# past its depth SILENTLY, writing a file that looks fine and has empty binds.
+# That is exactly what happened at 6.
+Write-TextFileAtomic -Path $script:LbStatusFile -Content ($result | ConvertTo-Json -Depth 12)
 Write-Line "Wrote $($script:LbStatusFile)."
 exit 0

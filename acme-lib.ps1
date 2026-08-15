@@ -2669,6 +2669,247 @@ function Get-HAProxyRuntimeCertificate {
     return $out
 }
 
+function ConvertTo-ComparablePath {
+    <#
+      Normalise a filesystem path so two spellings of the same file compare
+      equal. `/etc/haproxy/certs/a.txt` and `/etc/haproxy//certs/a.txt` are the
+      same file, and reporting a mismatch between them would send somebody
+      hunting for a problem that is not there.
+
+      Deliberately conservative: collapses repeated separators, normalises
+      backslashes to forward, and drops a trailing separator. It does NOT try to
+      resolve `..` or relative paths - HAProxy resolves those against its own
+      working directory, which is not knowable from here. A relative path is
+      returned as-is and the caller reports "unknown" rather than guessing.
+    #>
+    param([string]$Path)
+
+    if (-not $Path) { return '' }
+    $p = ([string]$Path).Trim().Replace('\', '/')
+    $p = [regex]::Replace($p, '/{2,}', '/')
+    if ($p.Length -gt 1) { $p = $p.TrimEnd('/') }
+    return $p
+}
+
+function Test-PathIsAbsolute {
+    param([string]$Path)
+    if (-not $Path) { return $false }
+    $p = ([string]$Path).Trim()
+    return ($p.StartsWith('/') -or $p -match '^[A-Za-z]:[\\/]')
+}
+
+function Get-HAProxyFrontendBinds {
+    <#
+      Every frontend on this node and what each of its binds is configured with.
+
+      This is the question neither verification tier can answer: Cert Camel
+      writes certificate storage and crt-list ENTRIES, and never a bind line - so
+      a crt-list nothing reads produces a green deployment and a certificate that
+      is never served. Reading the configuration back is the only way to see it.
+
+      Note the v3 path is NESTED - /frontends/{name}/binds. The v2-style
+      /binds?parent_type=frontend&parent_name=X returns 404 on v3.
+
+      `crt` is read as well as `crt_list`: a bind may point at a DIRECTORY
+      instead of a list, which is a legitimate configuration. Everything in that
+      directory is served, so a certificate there is not "unreferenced" - it just
+      is not hot-loaded until a reload. Reporting it as broken would be wrong.
+
+      Never throws; an unreachable node is a result.
+    #>
+    param(
+        [string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion,
+        [switch]$InsecureTls, [int]$TimeoutSeconds = 10
+    )
+
+    $out = @{ ok = $false; frontends = @(); error = $null }
+
+    try {
+        $fes = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                    -Path "/$ApiVersion/services/haproxy/configuration/frontends" `
+                    -InsecureTls:$InsecureTls -TimeoutSeconds $TimeoutSeconds)
+
+        foreach ($f in $fes) {
+            $name = [string]$f.name
+            $entry = @{ name = $name; binds = @() }
+
+            try {
+                $binds = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                            -Path "/$ApiVersion/services/haproxy/configuration/frontends/$([Uri]::EscapeDataString($name))/binds" `
+                            -InsecureTls:$InsecureTls -TimeoutSeconds $TimeoutSeconds)
+
+                foreach ($b in $binds) {
+                    $entry.binds += @{
+                        name    = [string]$b.name
+                        address = [string]$b.address
+                        port    = $(if ($b.port) { [int]$b.port } else { $null })
+                        ssl     = [bool]$b.ssl
+                        crtList = [string]$b.crt_list
+                        crtDir  = [string]$b.crt
+                    }
+                }
+            }
+            catch {
+                # One unreadable frontend must not lose the others.
+                $entry.error = ($_.Exception.Message -split "`n")[0].Trim()
+            }
+
+            $out.frontends += $entry
+        }
+        $out.ok = $true
+    }
+    catch {
+        $out.error = ($_.Exception.Message -split "`n")[0].Trim()
+    }
+
+    return $out
+}
+
+function Get-CrtListReconciliation {
+    <#
+      Does anything on this load balancer actually READ the crt-list each
+      certificate is deployed to?
+
+      Cert Camel writes certificate storage and crt-list entries and never a
+      bind line, so a wrong crt-list path produces a green deployment, a
+      certificate sitting on disk, and nothing served. The wire check cannot see
+      it where nodes have no individually reachable TLS address, and the runtime
+      check proves a certificate is loaded but not that a frontend references
+      it. This closes that gap by reading the configuration back.
+
+      Pure computation over the cached sweep plus settings - NO network. Safe to
+      run on the request thread, which the sweep itself is not.
+
+      Three outcomes per certificate, and the third is not a fault:
+
+        served        a bind on this node reads the expected crt-list
+        unreferenced  nothing reads it. The failure this exists to find
+        unknown       cannot be judged - the path is relative (HAProxy resolves
+                      those against its own working directory, which is not
+                      knowable from here), or the node could not be read
+
+      Frontends reading a crt-list Cert Camel does not write are returned
+      separately as `unmanaged`. Not an error - that is how somebody adopting an
+      existing load balancer sees what is still outside the tool.
+    #>
+    param([hashtable]$Settings, $Cache, [array]$Groups)
+
+    $out = @()
+    $byTarget = @{}
+    foreach ($t in @($Cache.targets)) { $byTarget[[string]$t.id] = $t }
+
+    foreach ($target in @($Settings.targets)) {
+        $tid   = [string]$target.id
+        $cached = $byTarget[$tid]
+
+        $entry = @{
+            id = $tid; label = [string]$target.label
+            nodes = @(); certificates = @(); unmanaged = @()
+        }
+        if ($cached) { $entry.nodes = @($cached.nodes) }
+
+        # Every crt-list this group's certificates expect, so an unmanaged
+        # frontend can be told apart from a managed one below.
+        $expected = @{}
+
+        foreach ($g in @($Groups)) {
+            $certId = [string]$g.certId
+            if (-not $certId) { continue }
+
+            $binding = $null
+            if ($Settings.certs -and $Settings.certs.ContainsKey($certId)) {
+                $binding = @(Get-CertTargetBindings -CertConfig $Settings.certs[$certId] |
+                             Where-Object { $_.id -eq $tid })[0]
+            }
+            if (-not $binding) { continue }   # this certificate is not sent here
+
+            $path = [string](Resolve-TargetSetting -Target $target -Binding $binding -Name 'crtList' -Default '')
+            $path = $path.Replace('{certId}', $certId)
+
+            $cert = @{
+                certId = $certId; name = [string]$g.displayName
+                crtList = $path; state = 'unknown'; frontends = @(); note = $null
+            }
+
+            if (-not $path) {
+                # No crt-list configured at all. Legitimate: the certificate is
+                # pushed to storage and an existing bind may already name the
+                # file directly.
+                $cert.note = 'no crt-list configured - the certificate is stored, and a bind must name it directly'
+                $entry.certificates += $cert
+                continue
+            }
+
+            $expected[(ConvertTo-ComparablePath $path)] = $certId
+
+            if (-not (Test-PathIsAbsolute $path)) {
+                $cert.note = 'relative path - HAProxy resolves it against its own working directory, which cannot be checked from here'
+                $entry.certificates += $cert
+                continue
+            }
+
+            $want = ConvertTo-ComparablePath $path
+            $anyNodeReadable = $false
+
+            foreach ($n in @($entry.nodes)) {
+                if (-not $n.reachable -or $n.frontendError) { continue }
+                $anyNodeReadable = $true
+
+                foreach ($fe in @($n.frontends)) {
+                    foreach ($b in @($fe.binds)) {
+                        if (-not $b.ssl) { continue }
+
+                        # A directory bind serves everything in the directory, so
+                        # a certificate stored there IS served - it just is not
+                        # hot-loaded until a reload. Calling that unreferenced
+                        # would be wrong.
+                        $viaDir = $false
+                        if ($b.crtDir) {
+                            $d = ConvertTo-ComparablePath $b.crtDir
+                            if ($d -and $want.StartsWith($d + '/')) { $viaDir = $true }
+                        }
+
+                        if ((ConvertTo-ComparablePath $b.crtList) -eq $want -or $viaDir) {
+                            $cert.frontends += @{
+                                node = $n.name; frontend = $fe.name
+                                address = $b.address; port = $b.port
+                                viaDirectory = $viaDir
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (@($cert.frontends).Count)  { $cert.state = 'served' }
+            elseif ($anyNodeReadable)      { $cert.state = 'unreferenced' }
+            else                           { $cert.note = 'no node could be read' }
+
+            $entry.certificates += $cert
+        }
+
+        # Anything with a TLS bind pointing somewhere Cert Camel does not write.
+        foreach ($n in @($entry.nodes)) {
+            if (-not $n.reachable) { continue }
+            foreach ($fe in @($n.frontends)) {
+                foreach ($b in @($fe.binds)) {
+                    if (-not $b.ssl) { continue }
+                    $p = ConvertTo-ComparablePath $b.crtList
+                    if ($p -and $expected.ContainsKey($p)) { continue }
+                    $entry.unmanaged += @{
+                        node = $n.name; frontend = $fe.name
+                        address = $b.address; port = $b.port
+                        crtList = [string]$b.crtList; crtDir = [string]$b.crtDir
+                    }
+                }
+            }
+        }
+
+        $out += $entry
+    }
+
+    return $out
+}
+
 function Get-HAProxyNodeStatus {
     <#
       Is this load balancer node answering, and what is it?

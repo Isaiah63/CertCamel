@@ -268,6 +268,8 @@ h2 > .filterbtn{flex:none; font-weight:650;}
    of the title. */
 .filternote{flex:none; font-size:.78rem; font-weight:500; color:var(--muted);
   letter-spacing:0;}
+a.filternote.bad{color:var(--red); font-weight:650; text-decoration:none;}
+a.filternote.bad:hover{text-decoration:underline;}
 .filterpanel{margin:0 0 1rem; padding:.9rem 1rem; border:1px solid var(--border);
   border-radius:var(--radius-sm); background:var(--surface);}
 .filterpanel .searchwrap{margin:0 0 .8rem;}
@@ -377,6 +379,62 @@ td.deploy{padding-top:.55rem; padding-bottom:.55rem;}
   max-height:24rem; overflow-y:auto; padding:.9rem 1rem; color:var(--muted);
   border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
 #jobpanel{margin-bottom:1.9rem;}
+
+/* --- Load balancers ---------------------------------------------------------
+   Certificates carry a state stripe down the left because "not referenced" is
+   the one thing on the page that needs finding at a glance. Green is not used
+   for served - a healthy row should be quiet, and colouring everything makes
+   the one row that matters no easier to see. */
+.lbcert{border-left:3px solid var(--border);}
+.lbcert.unreferenced{border-left-color:var(--red); background:var(--red-bg);}
+.lbcert.unknown{border-left-color:var(--amber);}
+
+.lbcerthead{display:flex; align-items:baseline; gap:.7rem; flex-wrap:wrap; margin:0 0 .5rem;}
+.lbcertname{font-weight:750; font-size:.98rem; letter-spacing:-.01em;}
+.lbstate{font-size:.66rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase;
+  padding:.2rem .55rem; border-radius:999px; border:1px solid var(--border);
+  color:var(--faint);}
+.lbstate.unreferenced{color:var(--red); border-color:var(--red); background:var(--red-bg);}
+.lbstate.unknown{color:var(--amber); border-color:var(--amber);}
+.lbpath{margin:0 0 .6rem;}
+.lbpath code{word-break:break-all;}
+
+/* One frontend. Same grid idea as .lbnode so the two read as a family. */
+.lbfe{display:grid; grid-template-columns:.9rem 1fr auto auto; gap:.15rem .8rem;
+  align-items:baseline; font-size:.84rem; padding:.4rem 0;
+  border-top:1px solid var(--border);}
+.lbfename{font-weight:650; color:var(--text);}
+.lbfeaddr{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.78rem;
+  color:var(--muted);}
+.lbfenode{font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+  color:var(--faint);}
+.lbfenote{grid-column:2 / -1; font-size:.76rem; color:var(--faint);}
+.lbfenote code{word-break:break-all;}
+@media (max-width:44rem){
+  .lbfe{grid-template-columns:.9rem 1fr;}
+  .lbfeaddr,.lbfenode{grid-column:2 / -1;}
+}
+
+/* The fix dialog. Two paths side by side, because a typo in a long path is
+   nearly invisible in prose and obvious in a column. */
+#lbfix{max-width:min(46rem,94vw); padding:1.4rem 1.6rem; border:1px solid var(--border-strong);
+  border-radius:var(--radius); background:var(--surface-solid); color:var(--text);
+  box-shadow:0 24px 70px -20px rgba(0,0,0,.6);}
+#lbfix::backdrop{background:rgba(6,7,10,.7);}
+#lbfix h3{margin:0 0 1rem; font-size:1.05rem;}
+#lbfix h4{margin:1.4rem 0 .35rem; font-size:.8rem; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--group-name);}
+#lbfix .log{max-height:none;}
+.lbfixclose{position:absolute; top:.7rem; right:.8rem; font:inherit; font-size:1.1rem;
+  line-height:1; cursor:pointer; color:var(--muted); background:none; border:none;}
+.lbfixclose:hover{color:var(--text);}
+.fixcompare{display:grid; grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));
+  gap:1rem; margin:1rem 0;}
+.fixside{border:1px solid var(--border); border-radius:var(--radius-sm); padding:.8rem .9rem;
+  background:var(--surface);}
+.fixside .k{font-size:.68rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--faint); margin-bottom:.4rem;}
+.fixside code{display:block; word-break:break-all; margin:.2rem 0;}
 
 /* A run log opened as a row of the table, directly under the run it belongs to.
    The cell carries no top padding and the row above drops its rule, so the two
