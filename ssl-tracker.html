@@ -48,6 +48,10 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
         <span class="navlabel">Certificates</span>
         <span class="navbadge hidden" id="nav-badge-certificates"></span>
       </a>
+      <a class="navitem" href="#/loadbalancers" data-view="loadbalancers">
+        <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="6" rx="1"/><rect x="3" y="15" width="18" height="6" rx="1"/><path d="M7 9v6M17 9v6"/></svg></span>
+        <span class="navlabel">Load balancers</span>
+      </a>
     </div>
 
     <div class="navgroup navgroup-divided">
@@ -132,6 +136,7 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
 
       <div id="view-home" class="view hidden"></div>
       <div id="view-certificates" class="view hidden"></div>
+      <div id="view-loadbalancers" class="view hidden"></div>
       <div id="view-settings" class="view hidden"></div>
       <div id="view-logs" class="view hidden"></div>
       <div id="view-docs" class="view hidden"></div>
@@ -157,12 +162,28 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
   </div>
 </div>
 
+<!-- The crt-list mismatch explainer. A real <dialog> rather than the .modal
+     pattern above: it brings Escape, the focus trap and the backdrop with it,
+     and this one only ever shows text - there is nothing to submit, because
+     Cert Camel never edits a bind line. It hands over the commands to run. -->
+<dialog id="lbfix" aria-labelledby="lbfixtitle">
+  <form method="dialog">
+    <button class="lbfixclose" aria-label="Close">&times;</button>
+  </form>
+  <h3 id="lbfixtitle">Nothing is reading this crt-list</h3>
+  <div class="fixbody"></div>
+  <form method="dialog" class="modal-actions">
+    <button class="btn primary">Close</button>
+  </form>
+</dialog>
+
 <span class="mini hidden" id="livehint"></span>
 
 <script src="ssl-data.js"></script>
 <script src="assets/app.js"></script>
 <script src="assets/views/home.js"></script>
 <script src="assets/views/certificates.js"></script>
+<script src="assets/views/loadbalancers.js"></script>
 <script src="assets/views/settings.js"></script>
 <script src="assets/views/logs.js"></script>
 <script src="assets/views/docs.js"></script>
