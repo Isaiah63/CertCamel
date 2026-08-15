@@ -175,7 +175,7 @@
 
       api('GET', '/api/logs/run/' + encodeURIComponent(r.name), null, function(err, res2){
         if (err) { pre.textContent = err; return; }
-        pre.textContent = (res2 && res2.content) || '(empty)';
+        CC.renderLog(pre, (res2 && res2.content) || '(empty)');
         // The end of a run is the part worth reading first.
         pre.scrollTop = pre.scrollHeight;
       });

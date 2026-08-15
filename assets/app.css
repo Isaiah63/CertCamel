@@ -380,6 +380,15 @@ td.deploy{padding-top:.55rem; padding-bottom:.55rem;}
   border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
 #jobpanel{margin-bottom:1.9rem;}
 
+/* Log levels. The line already says which it is - this only makes it findable
+   without reading every line. Colour is the ONLY thing added: the level stays
+   spelled out in the text, so a log copied out of the page, or read by someone
+   who cannot pick these hues apart, loses nothing. Tokens rather than literals,
+   so both themes are handled where every other colour is. */
+.log .ll-error{color:var(--red);}
+.log .ll-warn{color:var(--amber);}
+.log .ll-ok{color:var(--green);}
+
 /* --- Load balancers ---------------------------------------------------------
    Certificates carry a state stripe down the left because "not referenced" is
    the one thing on the page that needs finding at a glance. Green is not used
