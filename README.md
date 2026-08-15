@@ -448,6 +448,47 @@ it truthfully needs something on each node publishing keepalived's state, which
 is outside what this tool can arrange. Anything shown here claiming to know
 would be guessing.
 
+## The Load balancers page
+
+The panel on Home is the summary; this is the detail, and it answers a question
+nothing else can: **is any frontend actually reading the crt-list a certificate
+is deployed to?**
+
+That matters because Cert Camel writes certificate storage and crt-list entries
+and **never a bind line**. A wrong crt-list path produces a green deployment, a
+certificate sitting on disk, and nothing served. Neither verification tier sees
+it — the wire check needs a per-node TLS address, and the runtime check proves a
+certificate is loaded, not that anything references it.
+
+Certificates are grouped by what serves them, worst first, in four states:
+
+| | |
+|---|---|
+| **served** | a bind on this group reads the expected crt-list |
+| **not referenced** | nothing reads it. The certificate is deployed and will never be served |
+| **unknown** | a relative crt-list path. HAProxy resolves those against its own working directory, which cannot be checked from here, so it says so rather than guessing |
+| **not managed here** | a TLS frontend reading a crt-list Cert Camel does not write. Not a fault — this is how you see what is still outside the tool |
+
+**When a path does not match, the fix is offered in both directions**, because
+which side is wrong depends on what you meant and the tool cannot know:
+
+- *Point HAProxy at Cert Camel's list* — a `bind` edit on every node and a
+  reload. Usually right when the certificate has its own frontend and the path
+  was mistyped.
+- *Point Cert Camel at HAProxy's list* — a settings change, no reload. Usually
+  right when adopting a load balancer that already works.
+
+The two paths are shown side by side, because a typo in a long path is nearly
+invisible in prose. Cert Camel still never edits your configuration; the dialog
+hands you the commands.
+
+**A `crt` directory bind is not a fault.** If a frontend binds a directory
+rather than a crt-list, everything in that directory is served — the certificate
+is fine, it just is not hot-loaded until the next reload, and the row says so.
+
+Like the Home panel, the page reads a cache. The sweep runs out of process, so
+an unreachable node never freezes the interface.
+
 ## Categories
 
 A line in `[Brackets]` starts a category. Every domain below it belongs to that
