@@ -2882,6 +2882,15 @@ function Get-CrtListReconciliation {
                 if (-not $n.reachable -or $n.frontendError) { continue }
                 $anyNodeReadable = $true
 
+                # The file that actually exists, when it is not spelled the way
+                # the setting spells it. A bind line has to name the real one,
+                # so this is what the fix dialog must offer.
+                foreach ($f in @($n.crtLists)) {
+                    if ((ConvertTo-ComparablePath $f) -ne $want -and (Test-CrtListPathsMatch -A $f -B $path)) {
+                        $cert.crtListOnDisk = [string]$f
+                    }
+                }
+
                 foreach ($fe in @($n.frontends)) {
                     foreach ($b in @($fe.binds)) {
                         if (-not $b.ssl) { continue }
@@ -2896,7 +2905,7 @@ function Get-CrtListReconciliation {
                             if ($d -and $want.StartsWith($d + '/')) { $viaDir = $true }
                         }
 
-                        if ((ConvertTo-ComparablePath $b.crtList) -eq $want -or $viaDir) {
+                        if ((Test-CrtListPathsMatch -A $b.crtList -B $want) -or $viaDir) {
                             $cert.frontends += @{
                                 node = $n.name; frontend = $fe.name
                                 address = $b.address; port = $b.port
@@ -2921,7 +2930,11 @@ function Get-CrtListReconciliation {
                 foreach ($b in @($fe.binds)) {
                     if (-not $b.ssl) { continue }
                     $p = ConvertTo-ComparablePath $b.crtList
-                    if ($p -and $expected.ContainsKey($p)) { continue }
+                    # Compared the same rewriting-tolerant way the served check
+                    # is, or a frontend that IS serving a managed certificate is
+                    # also listed as "not managed here" - the two panels then
+                    # contradict each other about the same bind.
+                    if ($p -and @($expected.Keys | Where-Object { Test-CrtListPathsMatch -A $p -B $_ }).Count) { continue }
                     $entry.unmanaged += @{
                         node = $n.name; frontend = $fe.name
                         address = $b.address; port = $b.port
@@ -3295,6 +3308,171 @@ function Push-CertificateToNode {
     return $out
 }
 
+function Test-CrtListPathsMatch {
+    <#
+      Do two crt-list paths refer to the same file, allowing for the Data Plane
+      API's rewriting of interior dots to underscores?
+
+      The bind line names the file that actually exists - which, for anything
+      Cert Camel created, is the rewritten name. The setting names what was
+      asked for. With a {certId} template those differ for every certificate,
+      because certificates are named after domains, so comparing them literally
+      reports a correctly served certificate as "not referenced" and sends
+      somebody looking for a fault that is not there.
+
+      Directories still have to match exactly: only the basename is rewritten.
+    #>
+    param([string]$A, [string]$B)
+
+    $pa = ConvertTo-ComparablePath $A
+    $pb = ConvertTo-ComparablePath $B
+    if (-not $pa -or -not $pb) { return $false }
+    if ($pa -eq $pb) { return $true }
+
+    if (($pa -replace '/[^/]+$', '') -ne ($pb -replace '/[^/]+$', '')) { return $false }
+    return ((Get-NormalisedStorageName (($pa -split '/')[-1])) -eq
+            (Get-NormalisedStorageName (($pb -split '/')[-1])))
+}
+
+function Get-DataPlaneCrtLists {
+    <#
+      The crt-lists this API manages, or $null when it does not manage crt-lists
+      at all - which is a capability answer, not an empty result.
+
+      Data Plane API 3.1 has NO crt-list routes whatsoever: storage and runtime
+      alike answer 404. 3.3 has both. That is safely distinguishable from "the
+      API manages none", because an empty storage listing answers 200 with an
+      empty array - verified against the maps and general endpoints on the same
+      build, which are configured but empty.
+
+      Worth the distinction: on 3.1 a certificate uploads perfectly and then
+      nothing can ever reference it, and the bare 404 that used to surface read
+      as a mistyped path rather than as an API that cannot do this at all.
+    #>
+    param([string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion, [switch]$InsecureTls)
+
+    try {
+        return @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                   -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists" -InsecureTls:$InsecureTls)
+    }
+    catch {
+        if ($_.Exception.Message -match 'HTTP 404') { return $null }
+        throw
+    }
+}
+
+function Get-DataPlaneVersionString {
+    # Only ever used to make an error message specific, so a failure to read it
+    # must not become the error the operator sees.
+    param([string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion, [switch]$InsecureTls)
+
+    try {
+        $info = Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                  -Path "/$ApiVersion/info" -InsecureTls:$InsecureTls
+        return [string]$info.api.version
+    } catch { return $null }
+}
+
+function Get-HAProxyRuntimeCrtListEntries {
+    <#
+      What the RUNNING process has in a crt-list, or $null when it does not know
+      that list at all.
+
+      HAProxy only loads a crt-list a bind line references, so the runtime
+      answers 404 - "didn't find the specified filename" - for one that exists on
+      disk but is referenced by nothing. That is the normal state of a list Cert
+      Camel has just created, and it is permanent until somebody edits the
+      config, so it must not be treated as a transient failure to be waited out.
+
+      $null therefore means "no bind line reads this", an empty array means "the
+      list is loaded and empty", and those are genuinely different answers.
+    #>
+    param(
+        [string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion,
+        [string]$CrtListPath, [switch]$InsecureTls
+    )
+
+    $enc = [Uri]::EscapeDataString($CrtListPath)
+    try {
+        return @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                   -Path "/$ApiVersion/services/haproxy/runtime/ssl_crt_lists/entries?name=$enc" `
+                   -InsecureTls:$InsecureTls)
+    }
+    catch {
+        if ($_.Exception.Message -match 'HTTP 404') { return $null }
+        throw
+    }
+}
+
+function Resolve-ManagedCrtList {
+    <#
+      Find the managed crt-list that corresponds to a configured path, through
+      the API's own name rewriting rather than by string equality.
+
+      The API rewrites interior dots to underscores on upload, so a crt-list
+      configured as /etc/haproxy/certs/camelnuggets.com-crt-list.txt is filed as
+      camelnuggets_com-crt-list.txt and never compares equal to what was asked
+      for. The {certId} template makes that the normal case, not the exception,
+      because every certificate is named after a domain. Without this, creating
+      the missing list "succeeds" and the very next lookup still fails to find
+      it - the loop being that the file exists and the tool cannot see it.
+
+      The directory is compared exactly and only the basename is normalised: two
+      different directories are two different files no matter how they are
+      spelled.
+    #>
+    param($Lists, [string]$CrtListPath)
+
+    $exact = @($Lists | Where-Object { [string]$_.file -eq $CrtListPath }) | Select-Object -First 1
+    if ($exact) { return $exact }
+
+    $dir  = ($CrtListPath -replace '/[^/]+$', '')
+    $want = Get-NormalisedStorageName (($CrtListPath -split '/')[-1])
+    foreach ($l in @($Lists)) {
+        $f = [string]$l.file
+        if (($f -replace '/[^/]+$', '') -ne $dir) { continue }
+        if ((Get-NormalisedStorageName (($f -split '/')[-1])) -eq $want) { return $l }
+    }
+    return $null
+}
+
+function New-HAProxyCrtList {
+    <#
+      Create a crt-list in the API's storage, with its first entry already in
+      it, and return the record the API filed it under.
+
+      multipart/form-data by hand, the same shape the certificate upload uses -
+      the create endpoint takes a file_upload part and NOT a JSON body, which is
+      the one thing about it that is easy to get wrong.
+
+      The upload carries a FILENAME, never a path: the API alone decides which
+      directory the file lands in. That is why the caller has to check the
+      configured directory is the API's own before calling this, and why the
+      returned record - not the requested name - is what everything downstream
+      must use.
+    #>
+    param(
+        [string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion,
+        [string]$FileName, [string]$FirstEntry, [switch]$InsecureTls
+    )
+
+    $cfgVer = Get-DataPlaneConfigVersion -BaseUrl $BaseUrl -User $User -Password $Password `
+                -ApiVersion $ApiVersion -InsecureTls:$InsecureTls
+
+    $boundary = [Guid]::NewGuid().ToString('n')
+    $lf   = "`r`n"
+    $body = "--$boundary$lf" +
+            "Content-Disposition: form-data; name=`"file_upload`"; filename=`"$FileName`"$lf" +
+            "Content-Type: application/octet-stream$lf$lf" +
+            "$FirstEntry`n" + $lf +
+            "--$boundary--$lf"
+
+    return (Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+              -Method 'POST' -ContentType "multipart/form-data; boundary=$boundary" `
+              -Body $body -InsecureTls:$InsecureTls `
+              -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists`?version=$cfgVer")
+}
+
 function Sync-HAProxyCrtList {
     <#
       Make sure a pushed certificate is referenced by the node's crt-list, so a
@@ -3330,53 +3508,124 @@ function Sync-HAProxyCrtList {
         [int]$LoadTimeoutSeconds = 15
     )
 
-    $out = @{ ok = $false; action = $null; runtimeLoaded = $false; error = $null }
+    $out = @{
+        ok = $false; action = $null; runtimeLoaded = $false; error = $null
+        # Set when this run had to create the list. The path is the one the API
+        # filed it under, which is not always the one that was asked for, and is
+        # the path a bind line has to name.
+        created = $false; path = $CrtListPath; bindLine = $null; needsBind = $false
+    }
 
     try {
-        # Which storage object is that path? The API only manages crt-lists
-        # inside ssl_certs_dir, so a path outside it simply will not be here.
-        $lists = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
-                     -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists" -InsecureTls:$InsecureTls)
-        $list = @($lists | Where-Object { $_.file -eq $CrtListPath }) | Select-Object -First 1
-        if (-not $list) {
-            $known = (@($lists | ForEach-Object { $_.file }) -join ', ')
-            throw "The Data Plane API does not manage a crt-list at '$CrtListPath'.$(if ($known) { " It manages: $known." } else { ' It manages none - the crt-list must live inside ssl_certs_dir.' })"
+        # Can this API do crt-lists at all? $null means the routes are absent,
+        # which is a different failure from "manages none" and needs saying
+        # differently - there is nothing the operator can fix at this end.
+        $lists = Get-DataPlaneCrtLists -BaseUrl $BaseUrl -User $User -Password $Password `
+                   -ApiVersion $ApiVersion -InsecureTls:$InsecureTls
+        if ($null -eq $lists) {
+            $v = Get-DataPlaneVersionString -BaseUrl $BaseUrl -User $User -Password $Password `
+                   -ApiVersion $ApiVersion -InsecureTls:$InsecureTls
+            throw ("This node's Data Plane API$(if ($v) { " ($v)" }) has no crt-list API - " +
+                   'storage/ssl_crt_lists is not a route it serves, and neither is the runtime ' +
+                   'equivalent, so the certificate uploads and then nothing can reference it. ' +
+                   'Data Plane API 3.3 has these routes and 3.1 does not. Either upgrade this ' +
+                   "node's API, or clear the crt-list setting for this group and reference the " +
+                   'certificate from a bind line by hand.')
         }
-        $storageName = [string]$list.storage_name
 
         # The full path the entry must carry. Read it from the certificate's own
         # storage record rather than assembling it, falling back to "same
         # directory as the crt-list" only when the record does not say.
-        $certPath = $null
         $certs = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
                      -Path "/$ApiVersion/services/haproxy/storage/ssl_certificates" -InsecureTls:$InsecureTls)
         $rec = @($certs | Where-Object { $_.storage_name -eq $CertStorageName }) | Select-Object -First 1
-        if ($rec -and $rec.file) { $certPath = [string]$rec.file }
-        else { $certPath = ($CrtListPath -replace '/[^/]+$', '') + '/' + $CertStorageName }
+        $certPath = if ($rec -and $rec.file) { [string]$rec.file }
+                    else { ($CrtListPath -replace '/[^/]+$', '') + '/' + $CertStorageName }
 
-        $entries = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
-                       -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists/$storageName/entries" -InsecureTls:$InsecureTls)
-        if (@($entries | Where-Object { $_.file -eq $certPath }).Count) {
-            $out.action = 'present'
+        # Matched through the API's naming, not by string equality - see
+        # Resolve-ManagedCrtList.
+        $list = Resolve-ManagedCrtList -Lists $lists -CrtListPath $CrtListPath
+
+        if (-not $list) {
+            # Create it. The upload carries a filename only, so the API decides
+            # the directory: creating a list for a path in some OTHER directory
+            # would put the file somewhere no bind line reads, which is worse
+            # than failing. Take the directory from the certificate that was
+            # just pushed - it is by definition inside ssl_certs_dir.
+            $wantDir = ($CrtListPath -replace '/[^/]+$', '')
+            $apiDir  = ($certPath    -replace '/[^/]+$', '')
+            if ($wantDir -ne $apiDir) {
+                $known = (@($lists | ForEach-Object { $_.file }) -join ', ')
+                throw ("The crt-list is configured at '$CrtListPath', but this API keeps its " +
+                       "certificates in '$apiDir' and can only manage files there. Point the " +
+                       "crt-list setting inside '$apiDir', or create the file on the node by " +
+                       "hand.$(if ($known) { " It currently manages: $known." })")
+            }
+
+            $created = New-HAProxyCrtList -BaseUrl $BaseUrl -User $User -Password $Password `
+                         -ApiVersion $ApiVersion -FileName (($CrtListPath -split '/')[-1]) `
+                         -FirstEntry $certPath -InsecureTls:$InsecureTls
+
+            # Re-read rather than trust the record we just got back, for the same
+            # reason the certificate push re-reads: what it is called now is the
+            # only thing that matters from here on.
+            $lists = Get-DataPlaneCrtLists -BaseUrl $BaseUrl -User $User -Password $Password `
+                       -ApiVersion $ApiVersion -InsecureTls:$InsecureTls
+            $list  = Resolve-ManagedCrtList -Lists $lists -CrtListPath $CrtListPath
+            if (-not $list) {
+                throw ("Created a crt-list for '$CrtListPath', but the API does not list it " +
+                       "afterwards$(if ($created.storage_name) { " (it reported '$($created.storage_name)')" }) - refusing to report a success that cannot be confirmed.")
+            }
+
+            $out.created = $true
+            $out.action  = 'created'
         }
-        else {
-            [void](Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password -Method 'POST' `
-                     -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists/$storageName/entries" `
-                     -Body (@{ file = $certPath } | ConvertTo-Json -Compress) -InsecureTls:$InsecureTls)
-            $out.action = 'added'
+
+        $storageName = [string]$list.storage_name
+        $out.path    = [string]$list.file
+
+        if (-not $out.created) {
+            $entries = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                           -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists/$storageName/entries" -InsecureTls:$InsecureTls)
+            if (@($entries | Where-Object { $_.file -eq $certPath }).Count) {
+                $out.action = 'present'
+            }
+            else {
+                [void](Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password -Method 'POST' `
+                         -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists/$storageName/entries" `
+                         -Body (@{ file = $certPath } | ConvertTo-Json -Compress) -InsecureTls:$InsecureTls)
+                $out.action = 'added'
+            }
         }
 
         # Disk is not serving; the running process is. Poll the runtime list
         # until the entry lands (the reload takes a couple of seconds) so the
         # caller's T3 check that follows is not racing the reload.
-        $listEnc  = [Uri]::EscapeDataString($CrtListPath)
+        #
+        # $null back means the running process does not know this list AT ALL,
+        # which happens whenever no bind line references it. That is a statement
+        # about the config, not a failure, and no amount of waiting changes it -
+        # so stop polling and hand over the bind line. It covers more cases than
+        # "created this run": a list created on an earlier run, and the second
+        # node of a pair that shares one storage directory with the first, which
+        # sees the file already there and would otherwise report a hard failure
+        # for the one node that did nothing wrong.
         $deadline = (Get-Date).AddSeconds($LoadTimeoutSeconds)
+        $loaded   = $null
         do {
-            $rt = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
-                      -Path "/$ApiVersion/services/haproxy/runtime/ssl_crt_lists/entries?name=$listEnc" -InsecureTls:$InsecureTls)
-            if (@($rt | Where-Object { $_.file -eq $certPath }).Count) { $out.runtimeLoaded = $true; break }
+            $loaded = Get-HAProxyRuntimeCrtListEntries -BaseUrl $BaseUrl -User $User -Password $Password `
+                        -ApiVersion $ApiVersion -CrtListPath $out.path -InsecureTls:$InsecureTls
+            if ($null -eq $loaded) { break }
+            if (@($loaded | Where-Object { $_.file -eq $certPath }).Count) { $out.runtimeLoaded = $true; break }
             Start-Sleep -Seconds 2
         } while ((Get-Date) -lt $deadline)
+
+        if ($null -eq $loaded) {
+            $out.needsBind = $true
+            $out.bindLine  = "bind <address>:443 ssl crt-list $($out.path) alpn h2,http/1.1"
+            $out.ok        = $true
+            return $out
+        }
 
         if (-not $out.runtimeLoaded) {
             throw "The crt-list file now references '$certPath', but the running process has not loaded it after $LoadTimeoutSeconds seconds - disk and memory have diverged. A reload on the node should reconcile them."

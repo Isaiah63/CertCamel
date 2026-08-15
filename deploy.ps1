@@ -319,10 +319,33 @@ try {
                                         -CertStorageName $push.storedName -InsecureTls:$insecure
                             $nResult.crtList = $sync
                             if ($sync.ok) {
-                                if ($sync.action -eq 'added') {
-                                    Write-Log "  $nodeName : crt-list ok - appended $($push.storedName), and the running process loaded it" 'ok'
+                                if ($sync.action -eq 'created') {
+                                    Write-Log "  $nodeName : crt-list created - $($sync.path), containing $($push.storedName)" 'ok'
+                                    if ($sync.path -ne $crtListPath) {
+                                        Write-Log "  $nodeName : filed as '$($sync.path)', not '$crtListPath' - the API rewrites dots in a filename" 'warn'
+                                    }
+                                }
+                                elseif ($sync.action -eq 'added') {
+                                    if ($sync.runtimeLoaded) {
+                                        Write-Log "  $nodeName : crt-list ok - appended $($push.storedName), and the running process loaded it" 'ok'
+                                    } else {
+                                        Write-Log "  $nodeName : crt-list ok - appended $($push.storedName)" 'ok'
+                                    }
                                 } else {
                                     Write-Log "  $nodeName : crt-list ok - already referenced"
+                                }
+
+                                # Keyed on needsBind, not on 'created': a list that
+                                # an earlier run created is in exactly the same
+                                # state, and so is the second node of a pair that
+                                # shares one storage directory and therefore finds
+                                # the file already there. All three need the same
+                                # bind line, and none of them is serving yet.
+                                if ($sync.needsBind) {
+                                    Write-Log "  $nodeName : NOT served yet - no bind line references this list. Add it to the frontend, then reload:" 'warn'
+                                    Write-Log "      $($sync.bindLine)"
+                                    Write-Log "      haproxy -c -f /etc/haproxy/haproxy.cfg     # check it parses"
+                                    Write-Log "      systemctl reload haproxy                   # graceful, no dropped connections"
                                 }
                             }
                             else { Write-Log "  $nodeName : crt-list FAILED - $($sync.error)" 'error' }
@@ -440,6 +463,13 @@ try {
                                 Write-Log "  $($n.name) : T3* ok via the API - the running HAProxy has this serial loaded and in use. Not a wire check: set a verify address to prove what is actually served." 'ok'
                             } else {
                                 Write-Log "  $($n.name) : T3* FAILED via the API - $($v.error)" 'error'
+                                # A list created this run is referenced by nothing,
+                                # so this failure is expected and already explained
+                                # above. Say which it is, or the run reads as a
+                                # mystery failure at the last step.
+                                if ($n.ContainsKey('crtList') -and $n.crtList.needsBind) {
+                                    Write-Log "      expected - the crt-list was created this run and no bind line references it yet. Add the bind line above, reload, then deploy again." 'warn'
+                                }
                             }
                             continue
                         }
