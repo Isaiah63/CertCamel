@@ -152,6 +152,33 @@ function New-TrackerDirectories {
     }
 }
 
+function Expand-ListArgument {
+    <#
+      Rebuild a list that had to cross a `powershell.exe -File` boundary.
+
+      Arguments after -File are handed over as literal strings and bound one
+      token per parameter, even when the parameter is [string[]]. So
+      `-TargetList a b` binds only "a", and "b" slides into the next free
+      positional slot - which is how a target id came to be bound to
+      -VerifyTimeoutSeconds, failing with "Cannot convert value 'tmsuhuljv715'
+      to type System.Int32" the moment a deployment named two groups instead of
+      one. Commas do not rescue it either: -File does no parsing, so
+      `-TargetList a,b` arrives intact as the single string "a,b".
+
+      So callers join with commas and the receiving script splits here. Called
+      in-session with a genuine array the split is a no-op, which keeps the
+      hidden child process and the documented standalone invocation on one code
+      path. Nothing that travels this way - domain names, generated target ids -
+      can contain a comma.
+    #>
+    param([string[]]$Value)
+
+    if ($null -eq $Value) { return $null }
+    return @(@($Value) | ForEach-Object { $_ -split ',' } |
+             ForEach-Object { ([string]$_).Trim() } |
+             Where-Object { $_ })
+}
+
 function Get-CertTargetIds {
     <#
       The per-certificate target assignment, read defensively. PS 5.1's

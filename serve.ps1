@@ -1313,8 +1313,11 @@ function Invoke-Route {
 
             $id = [Guid]::NewGuid().ToString('n').Substring(0, 12)
             $resultPath = Join-Path $script:JobsDir "$id.result.json"
-            $scriptArgs = @((Join-Path $PSScriptRoot 'deploy.ps1'), '-ResultPath', $resultPath, '-Cert') + $certIds
-            if ($chosen.Count) { $scriptArgs += @('-TargetList') + $chosen }
+            # Comma-joined, not appended one per element: -File binds a single
+            # token per parameter, so a second bare value would slide into the
+            # next free positional slot. See Expand-ListArgument.
+            $scriptArgs = @((Join-Path $PSScriptRoot 'deploy.ps1'), '-ResultPath', $resultPath, '-Cert', ($certIds -join ','))
+            if ($chosen.Count) { $scriptArgs += @('-TargetList', ($chosen -join ',')) }
 
             $jobId = Start-ChildJob -Kind 'deploy' -ScriptArgs $scriptArgs
             $script:Jobs[$jobId].result = $resultPath
@@ -1923,9 +1926,10 @@ function Invoke-Route {
             $id = [Guid]::NewGuid().ToString('n').Substring(0, 12)
             $resultPath = Join-Path $script:JobsDir "$id.result.json"
 
-            $scriptArgs = @((Join-Path $PSScriptRoot 'renew.ps1'), '-ResultPath', $resultPath, '-Zone') + $zones
+            # Comma-joined - see the deploy handler above and Expand-ListArgument.
+            $scriptArgs = @((Join-Path $PSScriptRoot 'renew.ps1'), '-ResultPath', $resultPath, '-Zone', ($zones -join ','))
             if ($null -ne $deployTargets) {
-                if ($deployTargets.Count) { $scriptArgs += @('-TargetList') + $deployTargets }
+                if ($deployTargets.Count) { $scriptArgs += @('-TargetList', ($deployTargets -join ',')) }
                 else                      { $scriptArgs += '-NoDeploy' }
             }
 
