@@ -941,10 +941,38 @@ log_targets:
 
 <h3>Pointing Cert Camel at the pair</h3>
 
-<p>One group, two nodes, each reached by <strong>its own address</strong>:</p>
+<p>One group, two nodes, each reached by <strong>its own address</strong>. A node
+line takes up to three fields:</p>
 
-<pre><code>lb1    https://10.0.0.11:5555
-lb2    https://10.0.0.12:5555</code></pre>
+<pre><code>name   Data Plane API URL        verify address (optional)
+
+lb1    https://10.0.0.11:5555    10.0.0.11:443
+lb2    https://10.0.0.12:5555    10.0.0.12:443</code></pre>
+
+<p>The first two are how Cert Camel <em>deploys</em>. The third is how it
+<strong>checks the result</strong>: it opens a TLS connection there, asks for each
+name in turn, and compares the serial of what comes back. Different jobs, so
+different addresses &mdash; and this one has to reach a <em>specific node</em>,
+which is what catches a standby that missed an update.</p>
+
+<div class="callout note">
+  <div class="h">Leave it blank if your frontends bind per-domain addresses</div>
+  <p>The example above works because <code>bind *:443</code> means every address
+  on the box has a listener. If instead each domain has its own frontend on its
+  own address &mdash; <code>bind 203.0.113.7:443</code> and so on &mdash; then the
+  node's management address has no <code>:443</code> at all, and the only thing
+  left to point at is an address that floats between nodes. That would only ever
+  check whichever node currently holds it, which is exactly the blind spot this
+  field exists to remove.</p>
+  <p>So leave it empty. Cert Camel then asks <strong>that node's own Data Plane
+  API</strong> what its running HAProxy has loaded, and compares the same serial.
+  Per node, no extra listener, no spare address.</p>
+  <p><strong>It is weaker evidence, and the log says so.</strong> It proves the
+  right certificate is loaded and in use in the running process; it cannot prove
+  that a client asking for a given name is served it, because a frontend pointing
+  at the wrong crt-list would still pass. Where you <em>can</em> give a verify
+  address, do &mdash; it is the stronger check.</p>
+</div>
 
 <div class="callout warn">
   <div class="h">Never point it at the virtual address</div>
