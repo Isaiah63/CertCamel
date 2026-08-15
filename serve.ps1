@@ -1493,10 +1493,26 @@ function Invoke-Route {
             # configuration, not about the cache - a fresh install with targets
             # but no sweep yet still wants the panel, saying "not checked yet".
             $settings = Get-TrackerSettings
+
+            # Reconciliation is pure computation over the cache and settings -
+            # no network - so it is safe here even though the sweep that filled
+            # the cache is not.
+            $recon = @()
+            $reconError = $null
+            try {
+                $checker = Get-CheckerResults
+                $groups  = Get-CertificateGroups -Results @($checker.results) -Settings $settings `
+                                -ZoneCache (Get-ZoneCache)
+                $recon = @(Get-CrtListReconciliation -Settings $settings -Cache $cache -Groups @($groups.certs))
+            }
+            catch { $reconError = ($_.Exception.Message -split "`n")[0].Trim() }
+
             Send-Json $Stream @{
                 checkedAt   = $cache.checkedAt
                 targets     = @($cache.targets)
                 haveTargets = [bool](@($settings.targets).Count -gt 0)
+                groups      = $recon
+                groupError  = $reconError
             }
             return
         }
