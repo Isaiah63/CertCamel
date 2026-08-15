@@ -597,6 +597,37 @@ pre-ticked, changeable for the run in hand:</p>
 <p>A deployment is green only when <strong>every</strong> node passes. One node failing does not
 stop the others, and the exit code is non-zero.</p>
 
+<h3>The Load balancers page</h3>
+<p>Verification proves a certificate is <em>deployed</em>. The <strong>Load balancers</strong> page
+answers a different question that nothing else can: <strong>is any frontend actually reading the
+crt-list it was deployed to?</strong></p>
+<p>Cert Camel writes certificate storage and crt-list entries and <strong>never a bind line</strong>.
+So a wrong crt-list path gives a green deployment, a certificate sitting on disk, and nothing
+served. Neither tier above catches it &mdash; T3 needs an address that reaches one specific node,
+and the API check proves a certificate is loaded rather than referenced.</p>
+<p>Certificates are grouped by what serves them, worst first:</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>State</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>served</strong></td><td>a bind reads the expected crt-list</td></tr>
+    <tr><td><strong>not referenced</strong></td><td>nothing reads it. Deployed, and will never be served</td></tr>
+    <tr><td><strong>unknown</strong></td><td>a relative path &mdash; HAProxy resolves those against its own working directory, which cannot be checked from here, so it says so rather than guessing</td></tr>
+    <tr><td><strong>not managed here</strong></td><td>a TLS frontend reading a crt-list Cert Camel does not write. Not a fault &mdash; it is how you see what is still outside the tool</td></tr>
+  </tbody>
+</table></div>
+<p>When a path does not match, the fix is offered <strong>in both directions</strong>, because which
+side is wrong depends on what you intended: point HAProxy at Cert Camel&rsquo;s list (a bind edit and
+a reload), or point Cert Camel at HAProxy&rsquo;s (a settings change, no reload &mdash; usually right
+when adopting a load balancer that already works). The two paths sit side by side, since a typo in a
+long path is nearly invisible in prose. Cert Camel still never edits your configuration; it hands
+you the commands.</p>
+<div class="callout note">
+  <div class="h">A <code>crt</code> directory bind is not a fault</div>
+  <p>If a frontend binds a directory rather than a crt-list, everything in that directory is served
+  &mdash; the certificate is fine. It simply is not hot-loaded until the next reload, and the row
+  says so rather than reporting it as broken.</p>
+</div>
+
 <h2 id="auto">12. Unattended renewal</h2>
 <p><code>renew-due.ps1</code> renews only what the certificate authority says is due, then deploys
 and verifies. <code>First Time Setup.bat</code> can register it as a daily task.</p>
