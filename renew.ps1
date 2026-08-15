@@ -385,7 +385,7 @@ try {
                 # re-read the assignment, so a run-time override survives the hop
                 # between the two scripts.
                 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $deployScript `
-                    -Cert $certId -ResultPath $deployResult -TargetList @certTargets -CalledFromRenew `
+                    -Cert $certId -ResultPath $deployResult -TargetList $certTargets -CalledFromRenew `
                     -Source $Source 2>&1 |
                   ForEach-Object { Write-Output $_ }
                 $deployOk = ($LASTEXITCODE -eq 0)
