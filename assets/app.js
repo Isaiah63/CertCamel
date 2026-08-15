@@ -162,6 +162,44 @@
   }
   CertCamel.setBusy = setBusy;
 
+  /* A run log, coloured by the level each line already carries.
+
+     The scripts print "[17:51:52] [error] ...", and the level is the thing you
+     scan for - one failed node twenty lines up is easy to lose in a single grey
+     block, and that is exactly the line the log exists to show you.
+
+     Nothing is inferred beyond what the line already says. check-ssl.ps1 does
+     not use the bracket format, so its wording is matched with the same
+     patterns jobHadTrouble uses, which keeps "is this line red" and "should the
+     page offer a reload" from ever disagreeing.
+
+     The result's textContent is identical to the input, which is what lets
+     pollJob keep comparing against it to decide whether anything changed. */
+  function logLevel(line){
+    if (/\[error\]/i.test(line)) { return 'error'; }
+    if (/\[warn\]/i.test(line))  { return 'warn'; }
+    if (/\[ok\]/i.test(line))    { return 'ok'; }
+    if (jobHadTrouble(line))     { return 'error'; }
+    return '';
+  }
+
+  function renderLog(pre, text){
+    var parts = String(text === null || text === undefined ? '' : text).split('\n');
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < parts.length; i++) {
+      if (i) { frag.appendChild(document.createTextNode('\n')); }
+      var level = logLevel(parts[i]);
+      if (!level) { frag.appendChild(document.createTextNode(parts[i])); continue; }
+      var span = document.createElement('span');
+      span.className = 'll-' + level;
+      span.textContent = parts[i];
+      frag.appendChild(span);
+    }
+    pre.textContent = '';
+    pre.appendChild(frag);
+  }
+  CertCamel.renderLog = renderLog;
+
   CertCamel.runJob = function(title, method, path, body){
     if (jobTimer) { return; }
 
@@ -188,7 +226,9 @@
     jobTimer = window.setInterval(function(){
       api('GET', '/api/job/' + id, null, function(err, j){
         if (err) {
-          log.textContent += '\n' + err;
+          // Re-rendered rather than appended: assigning to textContent would
+          // flatten every coloured line back into one plain block.
+          renderLog(log, log.textContent + '\n' + err);
           window.clearInterval(jobTimer); jobTimer = null; setBusy(false);
           return;
         }
@@ -196,7 +236,7 @@
         // Only auto-scroll while the person is already following the tail;
         // yanking the view back down while they read older lines is hostile.
         atBottom = (log.scrollTop + log.clientHeight >= log.scrollHeight - 4);
-        if (j.log && j.log !== log.textContent) { log.textContent = j.log; }
+        if (j.log && j.log !== log.textContent) { renderLog(log, j.log); }
         if (atBottom) { log.scrollTop = log.scrollHeight; }
 
         if (!j.running) {
