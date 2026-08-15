@@ -2351,7 +2351,7 @@ $script:TargetCatalog = @{
             @{ Name = 'remoteName'; Label = 'Certificate filename on HAProxy'; Secret = $false; Type = 'text'
                Hint  = 'Inside the Data Plane API ssl_certs_dir. Leave blank for "<cert>.pem". This is the certificate IDENTITY to HAProxy - it must never change between renewals, so no dates in it.' }
             @{ Name = 'crtList';  Label = 'crt-list path (optional)'; Secret = $false; Type = 'text'
-               Hint  = 'e.g. /etc/haproxy/ssl/crt-list.txt, exactly as it appears on the bind line. When set, a pushed certificate the list does not reference yet is appended and hot-loaded, so a brand-new certificate starts serving without a config edit. Must live inside ssl_certs_dir.' }
+               Hint  = 'e.g. /etc/haproxy/ssl/crt-list.txt, exactly as it appears on the bind line. When set, a pushed certificate the list does not reference yet is appended and hot-loaded, so a brand-new certificate starts serving without a config edit. Must live inside ssl_certs_dir. {certId} is substituted, so /etc/haproxy/ssl/{certId}-crt-list.txt gives every certificate its own list - which is what you want when each domain has its own frontend.' }
             @{ Name = 'verifyPort'; Label = 'Port to verify on'; Secret = $false; Type = 'text'
                Hint  = 'Usually 443. Verification connects to each node here and reads what it actually serves.' }
             @{ Name = 'insecureTls'; Label = 'Skip TLS verification of the API endpoint'; Secret = $false; Type = 'bool'
