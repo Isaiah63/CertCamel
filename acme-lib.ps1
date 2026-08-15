@@ -2582,6 +2582,93 @@ function Get-DataPlaneConfigVersion {
     return [int]$v
 }
 
+function Get-HAProxyRuntimeCertificate {
+    <#
+      What this node's RUNNING HAProxy has loaded for one certificate file.
+
+      Exists for a topology the wire check cannot serve: one frontend per domain,
+      each bound to its own public address, with those addresses floating between
+      nodes. There the node's own management address has no :443 listener at all,
+      so there is nothing to connect to except a floating address - and that only
+      ever reaches whichever node currently holds it, leaving the standby
+      unchecked. Which is the exact failure verification exists to catch.
+
+      The Data Plane API address is per node, so asking it is per node by
+      construction. No floating address, no extra listener, no spare IP.
+
+      This is RUNTIME state, not a directory listing: the serial is what the
+      process has in memory, and `status` distinguishes loaded-and-in-use from
+      merely present on disk.
+
+      Weaker evidence than the wire check and must be reported as such. It proves
+      the right certificate is loaded; it does NOT prove a client asking for a
+      given name is served it, because a frontend pointing at the wrong crt-list
+      would still pass. See Test-ServedCertificate for the stronger tier.
+
+      Never throws - an unreachable node is a result, not an error.
+    #>
+    param(
+        [string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion,
+        [string]$StorageName, [switch]$InsecureTls, [int]$TimeoutSeconds = 10
+    )
+
+    $out = @{ found = $false; serial = $null; status = $null; notAfter = $null
+              subject = $null; sans = @(); file = $null; error = $null }
+
+    try {
+        # The runtime endpoint is keyed by FULL PATH, url-encoded - a bare
+        # filename returns 404. Read the path from the storage listing rather
+        # than reconstructing it, so ssl_certs_dir never has to be guessed at
+        # and a relocated directory cannot silently break this.
+        $list = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                    -Path "/$ApiVersion/services/haproxy/storage/ssl_certificates" `
+                    -InsecureTls:$InsecureTls -TimeoutSeconds $TimeoutSeconds)
+
+        $hit = @($list | Where-Object { $_.storage_name -eq $StorageName })[0]
+        if (-not $hit -or -not $hit.file) {
+            $out.error = "$StorageName is not in the API's certificate storage"
+            return $out
+        }
+        $out.file = [string]$hit.file
+
+        $r = Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                -Path ("/$ApiVersion/services/haproxy/runtime/ssl_certs/" + [Uri]::EscapeDataString($out.file)) `
+                -InsecureTls:$InsecureTls -TimeoutSeconds $TimeoutSeconds
+
+        $out.found   = $true
+        $out.serial  = [string]$r.serial
+        $out.status  = [string]$r.status
+        $out.subject = [string]$r.subject
+        if ($r.not_after) { $out.notAfter = [string]$r.not_after }
+
+        # "DNS:a.example.com, DNS:b.example.com" - and possibly IP: entries,
+        # which are dropped: this only ever answers questions about hostnames.
+        if ($r.subject_alternative_names) {
+            $out.sans = @(([string]$r.subject_alternative_names) -split ',' |
+                          ForEach-Object { $_.Trim() } |
+                          Where-Object { $_ -like 'DNS:*' } |
+                          ForEach-Object { $_.Substring(4).Trim().ToLowerInvariant() })
+        }
+    }
+    catch {
+        $msg = ($_.Exception.Message -split "`n")[0].Trim()
+
+        # A 404 from the RUNTIME endpoint after the file was found in storage is
+        # a specific and useful answer, not a lookup failure: the file is on
+        # disk and the running process has not loaded it. On a shared filesystem
+        # that is the difference between "deployed" and "actually live", and it
+        # is the case an ordinary directory listing cannot see at all. Say so,
+        # rather than passing on a raw API error about a socket command.
+        if ($out.file -and $msg -match 'HTTP 404') {
+            $out.error = "stored on disk but not loaded by the running HAProxy"
+        } else {
+            $out.error = $msg
+        }
+    }
+
+    return $out
+}
+
 function Get-HAProxyNodeStatus {
     <#
       Is this load balancer node answering, and what is it?

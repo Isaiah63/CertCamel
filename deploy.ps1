@@ -238,6 +238,11 @@ try {
 
                 $remoteName = Resolve-TargetSetting -Target $target -Binding $binding -Name 'remoteName' -Default "$certId.pem"
                 $remoteName = ([string]$remoteName).Replace('{certId}', $certId)
+                # Carried on the result so the verification pass below can ask
+                # the API about this file by name. It runs in a separate loop
+                # over results and cannot see this scope.
+                $tResult.remoteName = $remoteName
+
                 $crtListPath = [string](Resolve-TargetSetting -Target $target -Binding $binding -Name 'crtList' -Default '')
 
                 if (@($binding.overrides.Keys).Count) {
@@ -365,13 +370,72 @@ try {
                 $probes = $ordered
 
                 foreach ($t in $entry.targets) {
+                    # Re-resolved per target rather than relying on the push
+                    # loop's variables still holding the right values - with more
+                    # than one group they would be the LAST group's credentials.
+                    $vTarget = @($settings.targets | Where-Object { $_.id -eq $t.targetId })[0]
+
                     foreach ($n in $t.nodes) {
-                        if (-not $n.verifyHost) { Write-Log "  $($n.name) : no address to verify against" 'warn'; continue }
+                        if (-not $n.verifyHost) {
+                            # No address with a listener to connect to. Common
+                            # where each domain has its own frontend on its own
+                            # floating address: the node's management address has
+                            # no :443 at all, and the floating one only ever
+                            # reaches whichever node currently holds it - which is
+                            # the failure verification exists to catch.
+                            #
+                            # Ask this node's OWN Data Plane API instead. Weaker
+                            # evidence, and labelled as such: it proves the right
+                            # certificate is loaded in the running process, not
+                            # that a client asking for the name is served it.
+                            if (-not $vTarget) { Write-Log "  $($n.name) : no address to verify against" 'warn'; continue }
+
+                            $storage = $(if ($n.push -and $n.push.storedName) { $n.push.storedName } else { $t.remoteName })
+                            $apiV    = $(if ($n.push -and $n.push.apiVersion) { $n.push.apiVersion } else { 'v3' })
+
+                            $rt = Get-HAProxyRuntimeCertificate -BaseUrl $n.url `
+                                    -User (Get-TargetArg -Target $vTarget -Name 'user') `
+                                    -Password (Get-TargetSecret -TargetId $t.targetId -Name 'password') `
+                                    -ApiVersion $apiV -StorageName $storage `
+                                    -InsecureTls:([bool](Get-TargetArg -Target $vTarget -Name 'insecureTls' -Default $false)) `
+                                    -TimeoutSeconds $VerifyTimeoutSeconds
+
+                            $covers = $(if ($rt.found) { [bool](Test-NameCoveredBySans -Sans $rt.sans -Name $entry.name) } else { $false })
+                            $serialOk = ($rt.found -and $rt.serial -and $pre.serial -and
+                                         $rt.serial.TrimStart('0') -eq ([string]$pre.serial).TrimStart('0'))
+
+                            $v = @{
+                                node = $n.url; sni = $entry.name; method = 'api'
+                                ok = [bool]($serialOk -and $covers -and $rt.status -eq 'Used')
+                                servedSerial = $rt.serial; expectedSerial = $pre.serial
+                                notAfter = $rt.notAfter; loadedStatus = $rt.status
+                                servedCovers = $covers; contested = $false
+                                role = 'identity'; error = $rt.error
+                            }
+                            if (-not $v.ok -and -not $v.error) {
+                                $v.error = if (-not $rt.found)       { 'not present in the API' }
+                                           elseif (-not $serialOk)   { "loaded serial $($rt.serial), expected $($pre.serial)" }
+                                           elseif ($rt.status -ne 'Used') { "on disk but not in use (status $($rt.status))" }
+                                           else                      { "loaded certificate does not cover $($entry.name)" }
+                            }
+                            $n.verify += $v
+
+                            if ($v.ok) {
+                                Write-Log "  $($n.name) : T3* ok via the API - the running HAProxy has this serial loaded and in use. Not a wire check: set a verify address to prove what is actually served." 'ok'
+                            } else {
+                                Write-Log "  $($n.name) : T3* FAILED via the API - $($v.error)" 'error'
+                            }
+                            continue
+                        }
 
                         foreach ($p in $probes) {
                             $v = Test-ServedCertificate -ConnectHost $n.verifyHost -Port $n.verifyPort -SniName $p.sni `
                                      -ExpectedSerial $pre.serial -TimeoutSeconds $VerifyTimeoutSeconds
                             $v.role = $p.role
+                            # Recorded on both paths so a reader of the deploy
+                            # record can tell a wire check from an API one
+                            # without inferring it from which fields are present.
+                            $v.method = 'wire'
                             $n.verify += $v
 
                             if ($v.ok) {
