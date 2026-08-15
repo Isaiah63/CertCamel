@@ -388,6 +388,31 @@ function Send-Json {
         -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json))
 }
 
+function Add-TokenToDocLinks {
+    <#
+      Put this launch's token on the doc pages' link back to the tracker.
+
+      Those pages are shipped files that also open straight from disk, so their
+      masthead links to a plain "ssl-tracker.html" - correct there, and broken
+      when served here. Every view needs the token, so the link landed on the
+      app shell with no token, which then failed every API call it made. Not a
+      clean "reopen from Open Tracker.bat" either: it looked like the app had
+      crashed.
+
+      Rewritten on the way out rather than in the file, because the token is
+      different every launch and the file has to keep working from disk.
+
+      The token is already in the address bar of the page doing the linking, so
+      this puts it nowhere it was not. Only href= is touched: readme.html also
+      MENTIONS ssl-tracker.html in prose and in its file list, and those must
+      survive untouched.
+    #>
+    param([string]$Html)
+
+    if (-not $Html) { return $Html }
+    return [regex]::Replace($Html, 'href="(?:\./)?ssl-tracker\.html"', "href=`"/?t=$script:Token`"")
+}
+
 function Send-HttpsRedirect {
     <#
       Answer a plain-HTTP request that arrived on the TLS port.
@@ -1054,7 +1079,8 @@ function Invoke-Route {
         $file = Join-Path $PSScriptRoot 'haproxy-setup.html'
         if (-not (Test-Path $file)) { Send-Error $Stream 404 'haproxy-setup.html is missing.'; return }
         $html = Get-Content $file -Raw -Encoding UTF8
-        Send-Response -Stream $Stream -ContentType $script:Mime['.html'] -Body ([Text.Encoding]::UTF8.GetBytes($html))
+        Send-Response -Stream $Stream -ContentType $script:Mime['.html'] `
+            -Body ([Text.Encoding]::UTF8.GetBytes((Add-TokenToDocLinks $html)))
         return
     }
 
@@ -1062,7 +1088,8 @@ function Invoke-Route {
         $file = Join-Path $PSScriptRoot 'readme.html'
         if (-not (Test-Path $file)) { Send-Error $Stream 404 'readme.html is missing.'; return }
         $html = Get-Content $file -Raw -Encoding UTF8
-        Send-Response -Stream $Stream -ContentType $script:Mime['.html'] -Body ([Text.Encoding]::UTF8.GetBytes($html))
+        Send-Response -Stream $Stream -ContentType $script:Mime['.html'] `
+            -Body ([Text.Encoding]::UTF8.GetBytes((Add-TokenToDocLinks $html)))
         return
     }
 
