@@ -380,14 +380,19 @@ td.deploy{padding-top:.55rem; padding-bottom:.55rem;}
   border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
 #jobpanel{margin-bottom:1.9rem;}
 
-/* The console's own certificate. Set back rather than hidden: it should be
-   findable when somebody wonders what serves this page, and quiet the rest of
-   the time. Opacity only on the cells, never the row, so the badge and the
-   expiry pill keep their own colours and a real problem with it still reads as
-   a problem. */
-.trackerrow > td{opacity:.72;}
-.trackerrow:hover > td{opacity:1;}
-.trackerrow .badge{opacity:1;}
+/* The console's own certificate, in its own card below the table. Set apart
+   rather than dimmed: it answers different questions from the rows above it,
+   and a fault with it still has to read as a fault - hence the semantic colours
+   on the Renewal fact rather than a blanket opacity. */
+.trackercard{margin-top:1.6rem; border-style:dashed;}
+.trackercard h3{display:flex; align-items:center; gap:.6rem; margin:0 0 .3rem;}
+.trackerfacts{display:grid; grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));
+  gap:.9rem 1.4rem; margin:1rem 0 .2rem;}
+.trackerfacts .k{font-size:.68rem; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--faint); margin-bottom:.15rem;}
+.trackerfacts .v{font-size:.85rem; color:var(--text); word-break:break-word;}
+.trackerfacts .v.good{color:var(--green);}
+.trackerfacts .v.bad{color:var(--red);}
 
 /* Log levels. The line already says which it is - this only makes it findable
    without reading every line. Colour is the ONLY thing added: the level stays
