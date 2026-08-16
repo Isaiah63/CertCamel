@@ -268,8 +268,12 @@ Credential changes are recorded too, by key <em>name</em> only.</p>
 
 <div class="callout">
   <div class="h">What never reaches either log</div>
-  <p>No credential value, no private key, no certificate body. Every line goes through a redaction
-  pass on the way in, so a debug line added later cannot leak one by accident.</p>
+  <p>No credential value, no private key, no certificate body. Every stored credential is masked as
+  <code>[redacted]</code>, so a debug line added later cannot leak one by accident.</p>
+  <p>Where the masking happens depends on who writes the line. The audit trail and scheduled runs are
+  masked as they are written. A run started from the page is different: it is a separate process whose
+  output is captured whole, so nothing the tool writes can filter it &mdash; that one is masked when
+  the log is read, and the file itself is swept once the run finishes.</p>
 </div>
 
 <h2 id="admin">5. What needs administrator, and why</h2>

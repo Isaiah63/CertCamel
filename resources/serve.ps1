@@ -822,7 +822,22 @@ function Invoke-SaveSettings {
                 if (-not $n.url) { continue }
                 # A malformed URL here becomes an unexplained failure much later,
                 # during a deployment, so reject it at save time.
-                try { [void][Uri]$n.url } catch { throw "'$($n.url)' is not a valid URL." }
+                # Parses AND is one of the two schemes this can actually speak.
+                # [Uri] alone accepts file://, ftp:// and anything else with a
+                # colon in it, and Invoke-DataPlaneRequest would hand whatever
+                # came back to HttpWebRequest::Create. Nobody wants a file:// load
+                # balancer, so the narrow check costs nothing and removes the
+                # question entirely.
+                # IsAbsoluteUri as well as the scheme, because a bare "lb1" casts
+                # to a RELATIVE Uri quite happily rather than failing the cast.
+                # The scheme test alone would reject it, but on the relative type
+                # that property is not meaningfully defined - so this says what is
+                # actually wrong with it, which is that it is not a full address.
+                $parsed = $null
+                try { $parsed = [Uri]$n.url } catch { throw "'$($n.url)' is not a valid URL." }
+                if (-not $parsed.IsAbsoluteUri -or $parsed.Scheme -notin @('http', 'https')) {
+                    throw "'$($n.url)' must be a full http:// or https:// address."
+                }
                 $nodes += @{
                     name = $(if ($n.name) { [string]$n.name } else { ([Uri]$n.url).Host })
                     url  = [string]$n.url
@@ -1070,9 +1085,53 @@ function Start-ChildJob {
         err        = $err
         result     = $res
         startedAt  = (Get-Date).ToString('o')
+        # Whether the finished log has been masked in place - see
+        # Clear-JobLogSecrets, which runs once rather than on every poll.
+        swept      = $false
     }
 
     return $id
+}
+
+function Clear-JobLogSecrets {
+    <#
+      Mask any stored credential in a finished job's log files, once.
+
+      A job started from the page does not self-log: Start-ChildJob redirects the
+      child's stdout and stderr straight to disk, so Write-RunLog - and with it
+      Protect-LogLine - never sees a word of it. Only the scheduled runs, which
+      DO self-log, were ever redacted. That asymmetry made a documented promise
+      untrue: a debug line added to a child was supposed to be caught on the way
+      in, and instead landed in clear.
+
+      Reading is masked separately, so nothing unredacted can reach the page.
+      This is the other half - the bytes on disk, which outlive the session and
+      sit in jobs\ under log retention for ninety days.
+
+      Only once the child has EXITED. Rewriting a file it still has an open
+      handle on would either fail or race its next write, and the reader already
+      covers the window in between.
+    #>
+    param($Job)
+
+    if ($Job.swept) { return }
+
+    foreach ($f in @($Job.log, $Job.err)) {
+        if (-not $f -or -not (Test-Path $f)) { continue }
+        try {
+            $raw = [IO.File]::ReadAllText($f)
+            if (-not $raw) { continue }
+            $clean = Protect-LogLine $raw
+            # Only rewrite when something actually changed: the common case is a
+            # clean log, and this runs for every job that finishes.
+            if ($clean -ne $raw) {
+                [IO.File]::WriteAllText($f, $clean, [Text.Encoding]::UTF8)
+            }
+        }
+        catch { }   # a locked or vanished log is not worth failing a poll over
+    }
+
+    $Job.swept = $true
 }
 
 function Get-JobState {
@@ -1088,6 +1147,9 @@ function Get-JobState {
     }
     catch { $running = $false }
 
+    # The child has let go of its handles, so the files can be cleaned in place.
+    if (-not $running) { Clear-JobLogSecrets -Job $j }
+
     $log = ''
     # Share both read and write: the child still has these files open.
     foreach ($f in @($j.log, $j.err)) {
@@ -1102,6 +1164,11 @@ function Get-JobState {
             } catch { }
         }
     }
+
+    # Masked on the way out as well as on disk. While a job is still running its
+    # file has not been swept yet, and this is what stands between a credential
+    # echoed by a child and the panel somebody is watching it in.
+    $log = Protect-LogLine $log
 
     $result = $null
     if (-not $running -and (Test-Path $j.result)) {
@@ -1882,6 +1949,14 @@ function Invoke-Route {
                 finally { $fs.Dispose() }
             }
             catch { Send-Error $Stream 500 "Could not read that log: $($_.Exception.Message)"; return }
+
+            # Masked on the way out. Run logs from the page are the child's own
+            # stdout, captured by Start-ChildJob and never passed through
+            # Write-RunLog, so this is the only thing standing between a
+            # credential a child echoed and the Logs page. Finished logs are also
+            # cleaned on disk by Clear-JobLogSecrets; this covers the ones still
+            # being written, and any that predate that sweep.
+            $text = Protect-LogLine $text
 
             Send-Json $Stream @{ name = $name; content = $text }
             return
