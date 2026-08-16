@@ -129,13 +129,14 @@
   function buildDomainsEditor(toggleBtn){
     var card = el('div', 'card wide' + (domainsOpen ? '' : ' hidden'));
     card.appendChild(el('h4', null, 'domains.txt'));
-    card.appendChild(el('p', 'hint',
-      'One host per line. A line like "[Category Name]" groups everything below it until the ' +
-      'next one; lines before the first header are Uncategorized. "#" starts a comment. ' +
-      'Certificates are grouped by DNS zone, so a new hostname joins the right certificate on ' +
-      'its own - no other setup needed here.'));
-    // The one rule that is not self-evident from the file. Reaches people who
-    // already have a domains.txt and so never see the shipped sample's header.
+    card.appendChild(CC.guideHint(
+      'One host per line. "[Category Name]" groups everything below it, "#" starts a comment, ' +
+      'and certificates group by DNS zone on their own.', 'domains'));
+    /* NOT condensed, and the comment below is why: this is the one rule that is
+       not self-evident from the file, and it exists to reach people who already
+       have a domains.txt and so never see the shipped sample's header. Those are
+       exactly the people who will not click through to the guide either, so a
+       link here would reach nobody it was written for. */
     card.appendChild(el('p', 'hint',
       'Listing a domain and its wildcard together (example.com and *.example.com) is fine. ' +
       'The apex goes on the wildcard certificate, because *.example.com does not match a bare ' +
