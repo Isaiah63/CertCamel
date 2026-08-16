@@ -217,6 +217,11 @@ h2 .rule{flex:1; height:1px; background:linear-gradient(90deg,var(--border),tran
 .pill.hot .val{color:var(--amber);}
 .pill.bad{border-color:var(--red); background:var(--red-bg);}
 .pill.bad .val{color:var(--red);}
+/* Scheduled to renew by itself - the tile counterpart of .st.auto, and blue for
+   the same reason: it states what is going to happen rather than asking for
+   anything. NOT .pill.auto, which is already the automation tile's width. */
+.pill.sched{border-color:var(--blue); background:var(--blue-bg);}
+.pill.sched .val{color:var(--blue);}
 
 /* Table */
 .tablewrap{overflow-x:auto; margin:0; border:1px solid var(--border); border-radius:var(--radius);
@@ -253,6 +258,7 @@ tr.grouphead .gmeta{font-size:.75rem; color:var(--faint); font-weight:500; margi
   letter-spacing:0; text-transform:none;}
 tr.grouphead .gmeta.warn{color:var(--amber); font-weight:650;}
 tr.grouphead .gmeta.crit{color:var(--red); font-weight:650;}
+tr.grouphead .gmeta.sched{color:var(--blue); font-weight:650;}
 tbody tr.grouphead:first-child td{border-top:none; padding-top:.6rem;}
 
 /* Filter chips */

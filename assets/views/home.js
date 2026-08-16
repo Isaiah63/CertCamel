@@ -112,12 +112,32 @@
     });
     rows.sort(byUrgency);
 
-    var expiring = rows.filter(function(r){ return r.state === 'soon'; });
-    var expired  = rows.filter(function(r){ return r.state === 'gone'; });
-    var errored  = rows.filter(function(r){ return r.state === 'unknown'; });
+    /* The row badges already say "Renews <date>" for anything this tool renews
+       itself. The tiles and the callout below did not, so the SAME certificate
+       was counted as needing attention up here and reported as scheduled three
+       lines down - which is how a number in amber stops meaning anything.
+
+       Split on the same rule the badges and the expiry emails use: amber is only
+       for the ones where somebody actually has to act - renewed elsewhere, or in
+       a zone no DNS provider covers.
+
+       Before the forecast arrives scheduledRenewalFor() answers null for
+       everything, so the opening paint counts them all as manual. The re-render
+       renderAutomation() fires when it lands is what corrects that, exactly as
+       it does for the badges. */
+    var soonAll   = rows.filter(function(r){ return r.state === 'soon'; });
+    var scheduled = soonAll.filter(function(r){ return isScheduled(r); });
+    var expiring  = soonAll.filter(function(r){ return !isScheduled(r); });
+    var expired   = rows.filter(function(r){ return r.state === 'gone'; });
+    var errored   = rows.filter(function(r){ return r.state === 'unknown'; });
 
     pillsBox.appendChild(tile('Tracked', rows.length, rows.length === 1 ? 'domain' : 'domains'));
     pillsBox.appendChild(tile('Renew soon', expiring.length, 'within ' + RENEW_DAYS + ' days', expiring.length ? 'hot' : ''));
+    // Only when there is something to say. A standing "0" here would be one more
+    // number to read on an install that automates nothing.
+    if (scheduled.length) {
+      pillsBox.appendChild(tile('Renews itself', scheduled.length, 'already scheduled', 'sched'));
+    }
     pillsBox.appendChild(tile('Expired', expired.length, 'past due', expired.length ? 'bad' : ''));
     if (errored.length) { pillsBox.appendChild(tile('Unreachable', errored.length, 'check failed', 'hot')); }
     startAutomation();
@@ -132,8 +152,14 @@
         names(expired) + ' — visitors are seeing a browser security warning right now.'));
     }
     if (expiring.length) {
+      // Says why the list is shorter than the table looks. Without it, seeing
+      // five rows in the window and two names here reads as a bug.
       alertsBox.appendChild(callout('warn',
-        'Renewal needed within ' + RENEW_DAYS + ' days', names(expiring) + '.'));
+        'Renewal needed within ' + RENEW_DAYS + ' days',
+        names(expiring) + '.' + (scheduled.length
+          ? ' ' + scheduled.length + ' other' + (scheduled.length === 1 ? '' : 's') +
+            ' in this window renew automatically and are not listed here.'
+          : '')));
     }
     if (errored.length) {
       alertsBox.appendChild(callout('note',
@@ -168,10 +194,13 @@
 
     groups.forEach(function(g){
       g.items.sort(byUrgency);
-      g.expiring = g.items.filter(function(r){ return r.state === 'soon'; }).length;
-      g.expired  = g.items.filter(function(r){ return r.state === 'gone'; }).length;
-      g.errored  = g.items.filter(function(r){ return r.state === 'unknown'; }).length;
-      g.worst    = g.items.length ? g.items[0] : null;
+      // Same split as the tiles: a group whose certificates all renew on their
+      // own must not head itself in amber.
+      g.expiring  = g.items.filter(function(r){ return r.state === 'soon' && !isScheduled(r); }).length;
+      g.scheduled = g.items.filter(function(r){ return r.state === 'soon' && isScheduled(r); }).length;
+      g.expired   = g.items.filter(function(r){ return r.state === 'gone'; }).length;
+      g.errored   = g.items.filter(function(r){ return r.state === 'unknown'; }).length;
+      g.worst     = g.items.length ? g.items[0] : null;
     });
     groups.sort(function(a, b){ return byUrgency(a.worst, b.worst) || a.name.localeCompare(b.name); });
 
@@ -252,10 +281,11 @@
       var td = el('td'); td.colSpan = 5;
       td.appendChild(el('span', 'gname', g.name));
       var meta, cls = '';
-      if (g.expired)       { meta = g.expired + ' expired';       cls = 'crit'; }
-      else if (g.expiring) { meta = g.expiring + ' need renewal'; cls = 'warn'; }
-      else if (g.errored)  { meta = g.errored + ' unreachable';   cls = 'warn'; }
-      else                 { meta = 'all healthy'; }
+      if (g.expired)        { meta = g.expired + ' expired';       cls = 'crit'; }
+      else if (g.expiring)  { meta = g.expiring + ' need renewal'; cls = 'warn'; }
+      else if (g.errored)   { meta = g.errored + ' unreachable';   cls = 'warn'; }
+      else if (g.scheduled) { meta = g.scheduled + ' renewing';    cls = 'sched'; }
+      else                  { meta = 'all healthy'; }
       td.appendChild(el('span', 'gmeta' + (cls ? ' ' + cls : ''),
         g.items.length + (g.items.length === 1 ? ' domain · ' : ' domains · ') + meta));
       tr.appendChild(td);
@@ -275,9 +305,7 @@
         tr.appendChild(hcell);
 
         var status = el('td');
-        // Expired and unreachable are left alone whatever is scheduled: something
-        // has already gone wrong, and that has to keep reading as wrong.
-        var due = (r.state === 'soon' || r.state === 'ok') ? scheduledRenewalFor(r.raw.host) : null;
+        var due = scheduledFor(r);
         if (due) {
           var auto = el('span', 'st auto', 'Renews ' + fmtDate(due));
           auto.title = 'Renewed automatically by Cert Camel, from ' + new Date(due).toLocaleString() +
@@ -391,6 +419,19 @@
      rendered rows instead and looked right in isolation, but the table is
      rebuilt on every state refresh - so the badges reverted moments later. */
   var lastForecast = null;
+
+  /* The single rule the row badges, the tiles, the callout and the group
+     headers all ask, so they cannot drift apart again - which is exactly what
+     had happened: the badges were taught the split and the counts above them
+     were not.
+
+     Expired and unreachable are excluded whatever is scheduled. Something has
+     already gone wrong on those rows and it has to keep reading as wrong. */
+  function scheduledFor(r){
+    if (r.state !== 'soon' && r.state !== 'ok') { return null; }
+    return scheduledRenewalFor(r.raw.host);
+  }
+  function isScheduled(r){ return !!scheduledFor(r); }
 
   function scheduledRenewalFor(host){
     if (!lastForecast || !lastForecast.considered) { return null; }
