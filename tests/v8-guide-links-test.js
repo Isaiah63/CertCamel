@@ -16,7 +16,7 @@ const scripts = ['assets\\app.js', 'assets\\views\\home.js', 'assets\\views\\cer
 
 // Anchors declared by each shipped guide.
 const guides = {};
-['readme.html', 'haproxy-setup.html'].forEach(function(f){
+['readme.html', 'haproxy-setup.html', 'security.html'].forEach(function(f){
   const src = fs.readFileSync(ROOT + f, 'utf8');
   const ids = {};
   (src.match(/id="[^"]+"/g) || []).forEach(function(m){ ids[m.slice(4, -1)] = true; });
@@ -69,17 +69,19 @@ w.CertCamel.loadState(function(){
   w.CertCamel.navigate();
 
   // Every view that carries guide links, not just Settings - the domains editor
-  // on Certificates has one too, and a suite that only walked Settings would
-  // pass while that one rotted.
-  ['#/settings', '#/certificates'].forEach(function(h){
+  // on Certificates has one too, and Docs is now mostly deep links into the
+  // middle of a guide, which is the kind that rots without looking broken. A
+  // suite that only walked Settings would pass while those rotted.
+  ['#/settings', '#/certificates', '#/docs'].forEach(function(h){
     w.location.hash = h;
     w.dispatchEvent(new w.Event('hashchange'));
   });
 
-  const links = Array.from(d.querySelectorAll('a[href*="readme.html"], a[href*="haproxy-setup.html"]'));
+  const links = Array.from(d.querySelectorAll(
+    'a[href*="readme.html"], a[href*="haproxy-setup.html"], a[href*="security.html"]'));
 
   console.log('\n=== every guide link resolves ===');
-  check('settings rendered some guide links', links.length > 0, 'found none');
+  check('the views rendered some guide links', links.length > 0, 'found none');
 
   links.forEach(function(a){
     const href = a.getAttribute('href');
@@ -88,7 +90,11 @@ w.CertCamel.loadState(function(){
     const id   = hash === -1 ? null : href.slice(hash + 1);
     const known = guides[file];
 
-    check('"' + a.textContent.trim() + '" -> ' + href,
+    // The Docs cards carry a title AND a description; the title alone is the
+    // readable label here.
+    const label = (a.querySelector('.t') || a).textContent.trim();
+
+    check('"' + label + '" -> ' + href,
           !!known && (id === null || known[id] === true),
           !known ? 'no such guide file' : 'no id="' + id + '" in ' + file);
   });

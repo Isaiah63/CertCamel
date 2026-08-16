@@ -416,43 +416,6 @@ function Send-Json {
         -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json))
 }
 
-function Add-TokenToDocLinks {
-    <#
-      Put this launch's token on the doc pages' link back to the tracker.
-
-      Those pages are shipped files that also open straight from disk, so their
-      masthead links to a plain "ssl-tracker.html" - correct there, and broken
-      when served here. Every view needs the token, so the link landed on the
-      app shell with no token, which then failed every API call it made. Not a
-      clean "reopen from Open Tracker.bat" either: it looked like the app had
-      crashed.
-
-      Rewritten on the way out rather than in the file, because the token is
-      different every launch and the file has to keep working from disk.
-
-      Only href= is touched: readme.html also MENTIONS ssl-tracker.html in prose
-      and in its file list, and those must survive untouched.
-
-      ONLY for a caller that already proved it holds the token. The original
-      reasoning - "the token is already in the address bar of the page doing the
-      linking, so this puts it nowhere it was not" - is true of a person reading
-      the docs and false of everything else: these two routes sit ABOVE the API
-      token gate, so they answer anyone. Without $Authorized, any process on the
-      machine could GET /readme.html with no credential and read this launch's
-      token straight out of the body, then spend it on /api/download/<certId>
-      and walk off with every private key.
-
-      That is precisely the threat the token was minted to stop (see the note
-      where it is generated). The docs stay readable without one, because they
-      are shipped files that give nothing away; only the injection is gated.
-    #>
-    param([string]$Html, [bool]$Authorized)
-
-    if (-not $Html) { return $Html }
-    if (-not $Authorized) { return $Html }
-    return [regex]::Replace($Html, 'href="(?:\./)?ssl-tracker\.html"', "href=`"/?t=$script:Token`"")
-}
-
 function Send-HttpsRedirect {
     <#
       Answer a plain-HTTP request that arrived on the TLS port.
@@ -1163,14 +1126,48 @@ function Invoke-Route {
 
     $path = $Request.Path
 
-    # Read up here, not at the API gate below, because the doc routes have to
-    # know whether the caller ALREADY holds the token before deciding whether to
-    # write it into the page they are about to hand back. They sit above the
-    # gate, so they answer anyone.
-    $supplied = $null
-    if ($Request.Headers.ContainsKey('x-tracker-token')) { $supplied = $Request.Headers['x-tracker-token'] }
-    if (-not $supplied) { $supplied = Get-QueryValue -Query $Request.Query -Name 't' }
-    $hasToken = Test-Token $supplied
+    # Guard against DNS rebinding: a hostile page can point a name it controls
+    # at 127.0.0.1, but it cannot make the browser send our Host header.
+    #
+    # ABOVE the static routes, not inside the API branch where this started.
+    # The token gate is no help against rebinding, because rebinding goes for
+    # what needs no token - and /ssl-data.js is the entire estate: every
+    # hostname, issuer, expiry and serial, readable by any script that has
+    # made itself same-origin with us. This is what covers it.
+    #
+    # An allow-list of exact names, never a pattern. The configured tracker
+    # hostname joins it when one is set - it has to, or serving under a name
+    # would be rejected by our own guard - and it is compared literally, so
+    # widening this for HTTPS does not weaken what it was written to stop.
+    #
+    # A missing port is allowed only for the standard one, since a browser
+    # omits :443 from the header on an https:// URL. Everything else must
+    # carry the port it actually connected on.
+    $hostHeader = ''
+    if ($Request.Headers.ContainsKey('host')) { $hostHeader = $Request.Headers['host'] }
+
+    $hostName = $hostHeader
+    $hostPort = ''
+    $colon = $hostHeader.LastIndexOf(':')
+    if ($colon -ge 0 -and $hostHeader.IndexOf(']') -lt $colon) {
+        $hostName = $hostHeader.Substring(0, $colon)
+        $hostPort = $hostHeader.Substring($colon + 1)
+    }
+
+    $allowedHosts = @('127.0.0.1', 'localhost', '[::1]')
+    if ($script:WebHost) { $allowedHosts += $script:WebHost }
+
+    $hostOk = ($allowedHosts -contains $hostName.ToLowerInvariant()) -and
+              ($hostPort -match '^\d+$' -or (-not $hostPort -and $script:TlsCert))
+
+    # Now that this runs in front of the pages too, the rejection can land in
+    # front of a person rather than only in an XHR - so it says what to do, the
+    # same way the token gate below does. It gives nothing away: an address this
+    # server answers to is not a secret from whoever just typed one.
+    if (-not $hostOk) {
+        Send-Error $Stream 403 'This server does not answer to that address. Open the tracker from "Open Tracker.bat".'
+        return
+    }
 
     # --- static ------------------------------------------------------------ #
 
@@ -1182,21 +1179,23 @@ function Invoke-Route {
         return
     }
 
-    if ($path -eq '/haproxy-setup.html') {
-        $file = Join-Path $PSScriptRoot 'haproxy-setup.html'
-        if (-not (Test-Path $file)) { Send-Error $Stream 404 'haproxy-setup.html is missing.'; return }
+    # The guides. One route rather than three near-identical ones: they are
+    # shipped files handed back verbatim, and nothing here rewrites them any
+    # more. That changed when their mastheads stopped linking back to the app -
+    # the link needed this launch's token pasted into it, which is why the
+    # rewriting existed at all, and why it kept having to be reasoned about
+    # every time the token rules moved. They link to each other now, and the
+    # way back to the tracker is the tab it was opened from.
+    #
+    # An allow-list, not a directory: these three are the whole set, so a
+    # membership test does the job a traversal guard would otherwise have to.
+    $docPages = @('readme.html', 'haproxy-setup.html', 'security.html')
+    if ($docPages -contains $path.TrimStart('/')) {
+        $name = $path.TrimStart('/')
+        $file = Join-Path $PSScriptRoot $name
+        if (-not (Test-Path $file)) { Send-Error $Stream 404 "$name is missing."; return }
         $html = Get-Content $file -Raw -Encoding UTF8
-        Send-Response -Stream $Stream -ContentType $script:Mime['.html'] `
-            -Body ([Text.Encoding]::UTF8.GetBytes((Add-TokenToDocLinks -Html $html -Authorized $hasToken)))
-        return
-    }
-
-    if ($path -eq '/readme.html') {
-        $file = Join-Path $PSScriptRoot 'readme.html'
-        if (-not (Test-Path $file)) { Send-Error $Stream 404 'readme.html is missing.'; return }
-        $html = Get-Content $file -Raw -Encoding UTF8
-        Send-Response -Stream $Stream -ContentType $script:Mime['.html'] `
-            -Body ([Text.Encoding]::UTF8.GetBytes((Add-TokenToDocLinks -Html $html -Authorized $hasToken)))
+        Send-Response -Stream $Stream -ContentType $script:Mime['.html'] -Body ([Text.Encoding]::UTF8.GetBytes($html))
         return
     }
 
@@ -1245,42 +1244,22 @@ function Invoke-Route {
     if (-not $path.StartsWith('/api/')) { Send-Error $Stream 404 'Not found.'; return }
 
     # --- everything below is API and needs the token ----------------------- #
+    # Read here rather than at the top of the router: the API is the only thing
+    # that wants it now. The doc pages used to need to know whether the caller
+    # held one, back when they were handed a link with the token in it.
+    #
+    # WHICH of the two forms carried it is kept, not merely that one of them
+    # did: /api/download hands back a private key and takes the header form
+    # only, so no URL on its own is ever enough to fetch one. See that route.
+    $headerToken = $null
+    if ($Request.Headers.ContainsKey('x-tracker-token')) { $headerToken = $Request.Headers['x-tracker-token'] }
+    $supplied = $headerToken
+    if (-not $supplied) { $supplied = Get-QueryValue -Query $Request.Query -Name 't' }
+    $hasToken       = Test-Token $supplied
+    $tokenViaHeader = $hasToken -and -not [string]::IsNullOrEmpty($headerToken)
 
     if (-not $hasToken) {
         Send-Error $Stream 403 'Missing or invalid session token. Reopen the tracker from "Open Tracker.bat".'
-        return
-    }
-
-    # Guard against DNS rebinding: a hostile page can point a name it controls
-    # at 127.0.0.1, but it cannot make the browser send our Host header.
-    #
-    # An allow-list of exact names, never a pattern. The configured tracker
-    # hostname joins it when one is set - it has to, or serving under a name
-    # would be rejected by our own guard - and it is compared literally, so
-    # widening this for HTTPS does not weaken what it was written to stop.
-    #
-    # A missing port is allowed only for the standard one, since a browser
-    # omits :443 from the header on an https:// URL. Everything else must
-    # carry the port it actually connected on.
-    $hostHeader = ''
-    if ($Request.Headers.ContainsKey('host')) { $hostHeader = $Request.Headers['host'] }
-
-    $hostName = $hostHeader
-    $hostPort = ''
-    $colon = $hostHeader.LastIndexOf(':')
-    if ($colon -ge 0 -and $hostHeader.IndexOf(']') -lt $colon) {
-        $hostName = $hostHeader.Substring(0, $colon)
-        $hostPort = $hostHeader.Substring($colon + 1)
-    }
-
-    $allowedHosts = @('127.0.0.1', 'localhost', '[::1]')
-    if ($script:WebHost) { $allowedHosts += $script:WebHost }
-
-    $hostOk = ($allowedHosts -contains $hostName.ToLowerInvariant()) -and
-              ($hostPort -match '^\d+$' -or (-not $hostPort -and $script:TlsCert))
-
-    if (-not $hostOk) {
-        Send-Error $Stream 403 'Unexpected Host header.'
         return
     }
 
@@ -2071,6 +2050,24 @@ function Invoke-Route {
         }
 
         '^/api/download/(?<certId>[^/]+)$' {
+            # The header form of the token only, never ?t=.
+            #
+            # This is the one route that hands a secret BACK. Everything else
+            # the API knows is write-only: a stored credential returns as a
+            # boolean saying it exists, never as itself. A GET whose whole
+            # credential rides in the URL breaks that rule, because a URL is
+            # the leakiest place a live token can sit - browser history, a
+            # synced profile, the download list, any screenshot of the window.
+            # None of that would matter for a secret that died with the tab,
+            # but the server task starts at boot and mints one token for the
+            # machine's whole uptime, so an address copied out of history weeks
+            # later still spends. The page fetches this over XHR and saves the
+            # blob itself, so no address that can produce a private key exists.
+            if (-not $tokenViaHeader) {
+                Send-Error $Stream 403 'Download this from the tracker page rather than by opening its address.'
+                return
+            }
+
             $certKey = ([string]$Matches.certId).ToLowerInvariant()
             if (-not (Test-SafeCertName $certKey)) { Send-Error $Stream 400 'Invalid certificate name.'; return }
 

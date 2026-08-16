@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cert Camel &mdash; Security</title>
+<link rel="icon" href="data:image/png;base64,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">
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('certcamel-theme');
+    if (t === 'dark' || t === 'light') { document.documentElement.setAttribute('data-theme', t); }
+  } catch (e) { }
+})();
+</script>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#e9ebf1; --glow-1:rgba(99,102,241,.14); --glow-2:rgba(168,85,247,.12);
+  --surface:rgba(255,255,255,.62); --surface-solid:#f7f8fb;
+  --border:rgba(17,24,39,.11); --border-strong:rgba(17,24,39,.18);
+  --text:#0b0d12; --muted:#4d5666; --faint:#606875;
+  --accent:#6366f1; --accent-2:#a855f7;
+  --amber:#b45309; --amber-bg:rgba(245,158,11,.10);
+  --green:#15803d; --green-bg:rgba(34,197,94,.10);
+  --blue:#1d4ed8; --blue-bg:rgba(59,130,246,.10);
+  --red:#b91c1c; --red-bg:rgba(239,68,68,.10);
+  --shadow:0 1px 2px rgba(17,24,39,.04), 0 10px 30px -14px rgba(17,24,39,.20);
+  --radius:16px; --radius-sm:11px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#808a9c;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#808a9c;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box;}
+body{margin:0; min-height:100vh; color:var(--text); background:var(--bg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background-image:radial-gradient(58rem 58rem at 6% -10%,var(--glow-1),transparent 60%),
+    radial-gradient(48rem 48rem at 104% 2%,var(--glow-2),transparent 55%);
+  background-attachment:fixed; -webkit-font-smoothing:antialiased; line-height:1.65;}
+
+.shell{max-width:min(96rem,96vw); margin:0 auto; padding:clamp(1.25rem,3vw,2.25rem) clamp(1rem,3vw,2.5rem) 5rem;}
+
+.masthead{display:flex; align-items:center; gap:1.5rem; padding:.2rem 0 1.15rem;
+  border-bottom:1px solid var(--border); margin-bottom:1.6rem;}
+.masthead .side{flex:1 1 0; min-width:0;}
+.masthead .actions{display:flex; align-items:center; gap:.5rem; justify-content:flex-end;}
+.brand{display:flex; align-items:center; gap:.75rem; flex:none;}
+.brand .mark{display:block; flex:none; height:2.75rem;}
+.brand .mark img{height:100%; width:auto; display:block;}
+.brand h1{font-size:1.65rem; line-height:1.1; letter-spacing:-.025em; font-weight:850;
+  margin:0; padding-bottom:.06em; white-space:nowrap;
+  background:linear-gradient(135deg,var(--text) 38%,var(--accent) 145%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;}
+
+.back{display:inline-flex; align-items:center; gap:.45rem; text-decoration:none; color:var(--muted);
+  font-size:.85rem; font-weight:550; padding:.4rem .8rem; border:1px solid var(--border);
+  border-radius:999px; background:var(--surface); backdrop-filter:blur(14px); white-space:nowrap;}
+.back:hover{color:var(--text); border-color:var(--border-strong);}
+.tag{font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; font-weight:700; color:var(--faint);}
+.lede{font-size:clamp(1rem,2vw,1.12rem); color:var(--muted); max-width:52rem; margin:0 0 2rem;}
+
+@media (max-width:56rem){
+  .masthead{flex-wrap:wrap; justify-content:space-between;}
+  .masthead .side{flex:0 0 auto;}
+  .brand{order:-1; flex-basis:100%; margin-bottom:.4rem;}
+}
+
+.cols{display:grid; grid-template-columns:14rem 1fr; gap:2.5rem; align-items:start;}
+@media (max-width:60rem){.cols{grid-template-columns:1fr;}}
+nav.toc{position:sticky; top:1.5rem; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); padding:1rem 1.1rem; box-shadow:var(--shadow);}
+nav.toc h2{font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);
+  margin:0 0 .6rem; font-weight:800;}
+nav.toc ol{list-style:none; margin:0; padding:0; counter-reset:t;}
+nav.toc li{counter-increment:t; margin:.25rem 0;}
+nav.toc a{display:block; text-decoration:none; color:var(--muted); font-size:.84rem; padding:.15rem 0;}
+nav.toc a::before{content:counter(t) ". "; color:var(--faint);}
+nav.toc a:hover{color:var(--accent);}
+
+article h2{font-size:1.3rem; font-weight:750; letter-spacing:-.015em; margin:2.6rem 0 .7rem;
+  scroll-margin-top:1.5rem;}
+article h2:first-child{margin-top:0;}
+article h3{font-size:1rem; font-weight:700; margin:1.6rem 0 .4rem;}
+article p{margin:.7rem 0; max-width:62rem;}
+article ul,article ol{margin:.7rem 0; padding-left:1.3rem; max-width:62rem;}
+article li{margin:.3rem 0;}
+strong{font-weight:700;}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.87em;
+  background:var(--surface-solid); border:1px solid var(--border); border-radius:6px; padding:.1rem .35rem;}
+pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.82rem; line-height:1.55;
+  overflow-x:auto; margin:.9rem 0; padding:.9rem 1.1rem; color:var(--muted);
+  border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
+pre code{background:none; border:none; padding:0; font-size:1em;}
+
+.tablewrap{overflow-x:auto; margin:1rem 0; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);}
+table{border-collapse:collapse; width:100%; font-size:.9rem;}
+th,td{text-align:left; padding:.65rem 1rem; border-bottom:1px solid var(--border); vertical-align:top;}
+thead th{font-size:.68rem; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); font-weight:800;}
+tbody tr:last-child td{border-bottom:none;}
+
+.callout{border:1px solid var(--border); border-left-width:4px; border-radius:var(--radius-sm);
+  padding:.85rem 1.1rem; margin:1.2rem 0; background:var(--surface); max-width:62rem;}
+.callout .h{font-weight:700; font-size:.92rem; margin-bottom:.15rem;}
+.callout p{margin:.3rem 0 0; font-size:.92rem;}
+.callout.warn{border-left-color:var(--amber); background:var(--amber-bg);} .callout.warn .h{color:var(--amber);}
+.callout.crit{border-left-color:var(--red); background:var(--red-bg);} .callout.crit .h{color:var(--red);}
+.callout.note{border-left-color:var(--blue); background:var(--blue-bg);} .callout.note .h{color:var(--blue);}
+.callout.good{border-left-color:var(--green); background:var(--green-bg);} .callout.good .h{color:var(--green);}
+
+footer{margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border);
+  color:var(--faint); font-size:.82rem;}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header class="masthead">
+  <span class="tag side">Security</span>
+
+  <div class="brand">
+    <span class="mark">
+      <img src="assets/logo.png" alt="" width="244" height="256">
+    </span>
+    <h1>Cert Camel</h1>
+  </div>
+
+  <div class="side actions">
+    <a class="back" href="readme.html">Read me</a>
+    <a class="back" href="haproxy-setup.html">HAProxy setup</a>
+  </div>
+</header>
+
+<p class="lede">What Cert Camel protects, what it does not, and what it leaves on your disk. This page
+leads with the exposures rather than the reassurances &mdash; they are the parts worth being
+deliberate about rather than surprised by.</p>
+
+<div class="cols">
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#keys">Private keys on disk</a></li>
+    <li><a href="#loopback">Loopback, the token, the Host check</a></li>
+    <li><a href="#credentials">Credentials</a></li>
+    <li><a href="#logs">What is recorded</a></li>
+    <li><a href="#admin">What needs administrator</a></li>
+    <li><a href="#not">What it does not do</a></li>
+    <li><a href="#report">Reporting something</a></li>
+  </ol>
+</nav>
+
+<article>
+
+<h2 id="keys">1. Private keys on disk</h2>
+
+<div class="callout crit">
+  <div class="h">This is the largest exposure here, and it is unavoidable</div>
+  <p><code>certs\</code> and <code>acme-state\</code> contain <strong>unencrypted private
+  keys</strong>. That is how PEM works, and every ACME client on every platform is the same. Nothing
+  in this tool can change it &mdash; a load balancer has to be handed a key it can actually use.</p>
+  <p>Both folders are excluded from git. <strong>Gitignore does not stop file sync.</strong> If this
+  folder lives inside OneDrive, Dropbox, Google Drive or similar, exclude those two folders &mdash;
+  otherwise your private keys are being copied to somebody else's servers.</p>
+</div>
+
+<p>Worth separating from the other thing people mean by &ldquo;keys&rdquo;: your <em>API
+credentials</em> &mdash; DNS tokens, load balancer and SMTP passwords &mdash; live in a different
+store and <strong>are</strong> encrypted. See <a href="#credentials">Credentials</a>.</p>
+
+<p><strong>Download</strong> on a certificate saves the certificate, its chain and its private key as
+one PEM into your Downloads folder, in the clear. That is the point of the button, and it is also a
+second copy of the key in a folder nothing is watching. Delete it once deployed.</p>
+
+<h2 id="loopback">2. What loopback, the token and the Host check actually do</h2>
+
+<p>The page is served from <code>127.0.0.1</code>, and every API request needs a token minted fresh
+each time the server starts.</p>
+
+<p><strong>Loopback is not access control.</strong> Every other program running on this PC can reach
+<code>127.0.0.1</code>, and so can any web page you happen to have open in a browser. That is
+precisely why the token exists &mdash; not to keep out the network, which cannot reach it anyway,
+but to keep out other software on the same machine.</p>
+
+<p>Three consequences follow, and they are worth knowing because they decide what a URL can and
+cannot do:</p>
+
+<ul>
+  <li><strong>The token does not stay in the address.</strong> It arrives on the query string,
+  because that is the only way the server can hand it to a page it is opening, and the page stores
+  it for the tab and rewrites the address immediately. Nothing live is left in history, in a browser
+  profile syncing to an account, or in a screenshot. Started at boot, the server serves one token
+  for as long as the machine stays up &mdash; so an address copied out of history weeks later would
+  otherwise still work.</li>
+  <li><strong>No address produces a private key.</strong> The download is a request the page makes
+  with the token in a header; opening the same address directly is refused. It is the only secret
+  the API hands back at all &mdash; every stored credential comes back as a yes/no that one exists,
+  never as itself.</li>
+  <li><strong>Requests must carry a <code>Host</code> header this server recognises</strong> &mdash;
+  <code>127.0.0.1</code>, <code>localhost</code>, or the tracker hostname you configured. A hostile
+  page can point a name it owns at <code>127.0.0.1</code>, but it cannot forge the header the
+  browser sends. The check runs in front of the pages and their data, not only the API, because that
+  kind of attack goes for whatever needs no token &mdash; and <code>ssl-data.js</code> is your whole
+  estate: every hostname, issuer, expiry and serial.</li>
+</ul>
+
+<div class="callout warn">
+  <div class="h">It is not designed to be exposed to a network</div>
+  <p>There is no login, no user accounts and no roles. The token is the only thing between a caller
+  and everything the tool can do.</p>
+  <p>The web server is also <strong>single-threaded</strong>, with a fifteen-second receive timeout:
+  one client that connects and sends nothing blocks it for that long. Fine on loopback, and not fine
+  on a network anyone else can reach, where a vulnerability scanner alone would stall it
+  repeatedly.</p>
+</div>
+
+<h2 id="credentials">3. Credentials</h2>
+
+<p>DNS API tokens, load balancer passwords and any SMTP password are encrypted with <strong>Windows
+DPAPI</strong> and stored in <code>secrets.xml</code>. They are never written to
+<code>settings.json</code>, and never sent to the browser &mdash; the page is told only whether a
+credential exists.</p>
+
+<p>A blank credential field means &ldquo;keep what is stored&rdquo;, so an unchanged form cannot
+wipe a credential nobody retyped.</p>
+
+<p>DPAPI protects the <em>file</em>, not the session. Copy <code>secrets.xml</code> to another
+machine and it is useless, but anything already running as you on this one can decrypt it. That is
+the normal bar for a local tool; it is not a vault.</p>
+
+<div class="callout note">
+  <div class="h">Credentials are bound to one Windows account on one machine</div>
+  <p>A feature &mdash; copy the folder to a colleague and nobody inherits your API keys &mdash; and a
+  trap. Change which account runs Cert Camel and it can no longer decrypt its own credentials: DNS
+  automation and deployments start failing while everything else looks fine. Re-enter them as the new
+  account.</p>
+  <p>The same applies to backups. <code>certs\</code> and <code>acme-state\</code> restore to new
+  hardware; credentials do not.</p>
+</div>
+
+<h2 id="logs">4. What is recorded, and what never is</h2>
+
+<p><code>audit.log</code> records one line per state change &mdash; when, who, whether a person or
+the scheduler did it, what changed, and whether it worked. It is append-only and deliberately exempt
+from log retention, because deleting audit records to reclaim disk is the opposite of the point.
+Credential changes are recorded too, by key <em>name</em> only.</p>
+
+<div class="callout">
+  <div class="h">What never reaches either log</div>
+  <p>No credential value, no private key, no certificate body. Every line goes through a redaction
+  pass on the way in, so a debug line added later cannot leak one by accident.</p>
+</div>
+
+<h2 id="admin">5. What needs administrator, and why</h2>
+
+<div class="tablewrap"><table>
+  <thead><tr><th>Task</th><th>Admin?</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Watching certificates</td><td>No</td><td>Nothing is installed</td></tr>
+    <tr><td>Renewing and deploying</td><td>No</td><td>Posh-ACME is fetched into the folder, not the system</td></tr>
+    <tr><td>Tasks that run while you are signed out</td><td><strong>Yes</strong></td><td>Needs the <em>Log on as a batch job</em> right</td></tr>
+    <tr><td>Starting the page at boot on a server</td><td><strong>Yes</strong></td><td>Same</td></tr>
+    <tr><td>Serving under a hostname</td><td><strong>Yes</strong></td><td>Only to write the <code>hosts</code> file entry</td></tr>
+  </tbody>
+</table></div>
+
+<p>If setup is run without elevation it still works, but the scheduled tasks fall back to running
+<strong>only while you are signed in</strong> &mdash; and it says so at the time. On a server that is
+silently fatal: the renewal never fires, Task Scheduler still reports the task as healthy, and the
+first symptom is an expired certificate.</p>
+
+<h2 id="not">6. What it does not do</h2>
+
+<ul>
+  <li>No telemetry, no analytics, no phoning home.</li>
+  <li>No CDN and no external fetch of any kind &mdash; the page loads nothing from the internet, so
+  it works on an isolated network. That includes these guides: they ship in the folder and are served
+  from it, which is why they are readable exactly when a DNS or TLS problem has broken everything
+  else.</li>
+  <li>No build step and no package manager. What you download is what runs.</li>
+  <li>Nothing that belongs to you is committed to git &mdash; domains, credentials, certificates and
+  logs are all excluded, so the folder can be handed on clean.</li>
+</ul>
+
+<h2 id="report">7. Reporting something</h2>
+
+<p>There is no public issue tracker yet. If you find a security problem, get in touch through
+wherever you obtained this, and please do that rather than posting it somewhere public.</p>
+
+<p>This is a one-person beta project. There is no security team and no response-time promise, which
+is itself worth weighing before you deploy it somewhere that matters.</p>
+
+<footer>
+  <p>Cert Camel is beta software, MIT licensed, and comes with no warranty.</p>
+</footer>
+
+</article>
+</div>
+</div>
+</body>
+</html>

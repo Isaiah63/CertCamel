@@ -7,15 +7,30 @@
   var el = CC.el;
 
   var DOCS = [
-    {href: 'readme.html', title: 'Read me', desc: 'How renewal works, what the buttons do, and the verification tiers behind the Deployed column.'},
-    {href: 'haproxy-setup.html', title: 'HAProxy setup guide', desc: 'Step by step: the Data Plane API, a dedicated user, TLS on the API itself, and pointing Cert Camel at it.'}
+    {href: 'readme.html', title: 'Read me', desc: 'The complete manual: how certificates are grouped, wildcards, certificate authorities, staging, logs and the audit trail, alerts, and every status the page can show you.'},
+    {href: 'haproxy-setup.html', title: 'HAProxy setup guide', desc: 'Step by step: the Data Plane API, a dedicated user, TLS on the API itself, and pointing Cert Camel at it.'},
+    {href: 'security.html', title: 'Security', desc: 'What the loopback binding and the token actually protect against, where credentials are stored and what breaks when the account changes, what reaches the logs and what never does.'}
+  ];
+
+  /* Deep links into the guides above, framed as the job rather than the
+     chapter. Three pages is an honest count and also a short-looking one; the
+     manual is eighteen sections and nothing on this page said so. These are
+     the four people arrive looking for. */
+  var JUMPS = [
+    {href: 'readme.html#dns',      label: 'Connect your DNS'},
+    {href: 'readme.html#auto',     label: 'Renew unattended'},
+    {href: 'readme.html#output',   label: 'What you get on disk'},
+    {href: 'readme.html#trouble',  label: 'When it breaks'}
   ];
 
   function render(){
     var host = document.getElementById('view-docs');
     host.textContent = '';
     host.appendChild(el('h2', null, 'Docs'));
-    host.appendChild(el('p', 'mini', 'Each guide opens in its own tab.'));
+    /* No note about tabs any more. They still open in their own tab, but the
+       guides no longer link back here - the way back is the tab you came from,
+       which needs no explaining until something claims otherwise. */
+    host.appendChild(el('p', 'mini', 'Everything ships in the folder and is served from it, so the guides work with no internet.'));
 
     var list = el('div', 'doclist');
     DOCS.forEach(function(d){
@@ -26,6 +41,15 @@
       list.appendChild(a);
     });
     host.appendChild(list);
+
+    host.appendChild(el('div', 'docsec', 'Straight to a section'));
+    var jumps = el('div', 'jumps');
+    JUMPS.forEach(function(j){
+      var a = el('a', null, j.label);
+      a.href = j.href; a.target = '_blank'; a.rel = 'noopener';
+      jumps.appendChild(a);
+    });
+    host.appendChild(jumps);
 
     /* What ACME client is actually installed.
        Pinned once fetched and it does not move on its own - deliberately, since

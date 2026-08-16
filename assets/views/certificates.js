@@ -11,6 +11,16 @@
 
   function certDays(c){ return c.notAfter ? daysUntil(c.notAfter) : null; }
 
+  /* Both download entry points - the row menu and the detail card - go through
+     here. It used to be an <a href> in each place with the token on the query
+     string; it is a fetch now, because that address hands back a private key
+     and an address is a thing browsers keep. CC.download does the saving. */
+  function downloadCert(c){
+    CC.download('/api/download/' + encodeURIComponent(c.certId),
+                c.certId + '-full.pem',
+                function(err){ if (err) { window.alert(err); } });
+  }
+
   // --- Row actions menu -------------------------------------------------- //
   // Only one open at a time, and it lives on document.body rather than inside
   // the cell: .tablewrap sets overflow-x:auto, which per spec makes overflow-y
@@ -57,18 +67,13 @@
       var menu = el('div', 'rowmenu');
       menu.setAttribute('role', 'menu');
 
+      // Every entry is a button now. The one <a> this ever built was the
+      // download link, and that became a fetch when the token came out of the
+      // URL, so the branch it needed went with it.
       items.forEach(function(it){
-        var node;
-        if (it.kind === 'link') {
-          node = el('a', null, it.label);
-          node.href = it.href;
-          // The browser handles the download; just get the menu out of the way.
-          node.addEventListener('click', function(){ closeRowMenu(); });
-        } else {
-          node = el('button', null, it.label);
-          node.type = 'button';
-          node.addEventListener('click', function(){ closeRowMenu(); it.run(); });
-        }
+        var node = el('button', null, it.label);
+        node.type = 'button';
+        node.addEventListener('click', function(){ closeRowMenu(); it.run(); });
         node.title = it.title || '';
         node.setAttribute('role', 'menuitem');
         menu.appendChild(node);
@@ -94,7 +99,7 @@
       window.addEventListener('scroll', closeRowMenu, true);
       window.addEventListener('resize', closeRowMenu);
 
-      var first = menu.querySelector('button,a');
+      var first = menu.querySelector('button');
       if (first) { first.focus(); }
     });
 
@@ -370,10 +375,9 @@
 
       if (c.hasLocalCert) {
         items.push({
-          kind: 'link',
           label: 'Download certificate files',
           title: 'Download the certificate, chain and private key as one PEM file',
-          href: '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(CC.TOKEN)
+          run: function(){ downloadCert(c); }
         });
       }
       /* The deployment cell used to be the ONLY way to reach this, with nothing
@@ -491,8 +495,9 @@
       acts.appendChild(rb);
     }
     if (c.hasLocalCert) {
-      var dl = el('a', 'btn sm', 'Download');
-      dl.href = '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(CC.TOKEN);
+      var dl = el('button', 'btn sm', 'Download');
+      dl.type = 'button';
+      dl.addEventListener('click', function(){ downloadCert(c); });
       acts.appendChild(dl);
     }
     card.appendChild(acts);
