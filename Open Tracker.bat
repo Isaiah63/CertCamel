@@ -7,7 +7,7 @@ rem serve.ps1 decides what to do: if a server is already running - because the
 rem startup task launched one at boot - it opens the browser at that one and
 rem exits. Otherwise it starts a server here and this window keeps it alive.
 rem Either way the double-click does the right thing.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0serve.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0resources\serve.ps1"
 
 rem Exit code 10 means it attached to the server the boot task is already
 rem running and put the page in front of you. This window hosted nothing, so

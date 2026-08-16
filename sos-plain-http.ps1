@@ -42,7 +42,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'acme-lib.ps1')
+# This one script stays at the folder root rather than moving into resources\
+# with the rest: it is the way back in when the console will not serve, and a
+# recovery tool you have to go looking for is not much of one. So unlike its
+# siblings it has to reach DOWN into resources\ for the library.
+. (Join-Path $PSScriptRoot 'resources\acme-lib.ps1')
 
 function Say { param([string]$T, [string]$C = 'Gray') Write-Host $T -ForegroundColor $C }
 

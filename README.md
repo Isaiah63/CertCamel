@@ -188,7 +188,7 @@ a CA that publishes no ARI.
 Try it safely first:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\renew-due.ps1 -WhatIfOnly
+powershell -ExecutionPolicy Bypass -File .\resources\renew-due.ps1 -WhatIfOnly
 ```
 
 That reports what it would renew and stops.
@@ -237,7 +237,7 @@ monthly trigger to reach for instead. `First Time Setup.bat` can register it.
 - API access to your DNS provider — Cloudflare, DNS Made Easy and NS1 are wired
   up; adding another is a catalog entry, not new code
 - No admin rights to monitor or renew. Nothing is installed system-wide; renewal
-  fetches [Posh-ACME](https://poshac.me) into `lib\` inside this folder.
+  fetches [Posh-ACME](https://poshac.me) into `resources\lib\` inside this folder.
   Administrator is needed only for the two things that genuinely require it:
   registering tasks that run while you are signed out, and starting the page at
   boot on a server
@@ -366,7 +366,7 @@ the shipped sample that setup copies from on a first run.
 
 ## Posh-ACME, and keeping it current
 
-Renewal runs on [Posh-ACME](https://poshac.me), fetched into `lib\` by First Time
+Renewal runs on [Posh-ACME](https://poshac.me), fetched into `resources\lib\` by First Time
 Setup rather than committed here. The Docs page shows which version you have.
 
 **A fresh install always gets the newest**, because setup asks for the latest.
@@ -380,7 +380,7 @@ certificate profiles, the shrinking lifetimes above) and DNS plugins get fixed.
 
 ```powershell
 # update to the current release
-. .\acme-lib.ps1
+. .\resources\acme-lib.ps1
 Install-PoshAcmeLocal -Force
 ```
 
@@ -389,10 +389,10 @@ which makes going back a deletion rather than a reinstall:
 
 ```powershell
 # list what is installed
-Get-ChildItem .\lib\Posh-ACME
+Get-ChildItem .\resources\lib\Posh-ACME
 
 # revert - remove the newer folder and the older one takes over again
-Remove-Item .\lib\Posh-ACME\<newer-version> -Recurse
+Remove-Item .\resources\lib\Posh-ACME\<newer-version> -Recurse
 ```
 
 Restart the tracker afterwards either way, and renew something against
@@ -1052,7 +1052,7 @@ Enable-ScheduledTask  -TaskName "Cert Camel Renew"
 Unregister-ScheduledTask -TaskName "Cert Camel Renew" -Confirm:$false
 
 # See what would renew, without renewing anything
-powershell -ExecutionPolicy Bypass -File .\renew-due.ps1 -WhatIfOnly
+powershell -ExecutionPolicy Bypass -File .\resources\renew-due.ps1 -WhatIfOnly
 ```
 
 ### The Automation panel on Home
@@ -1109,39 +1109,60 @@ three appear as alerts at the top of Home rather than inside the boxes:
 
 ## Files
 
+The folder is split in two, and the split answers "what am I supposed to
+touch?" Everything at the top level is something you run, something you read,
+or something that is yours. The program lives in `resources\`, and you can go
+your whole life without opening it.
+
 ```
 Open Tracker.bat      start the server and open the page  <- use this
-ssl-tracker.html      the app shell (sidebar + view containers; needs the server)
-assets\app.css        all styling
-assets\app.js         router, API client, shared state, the job runner
-assets\views\         one file per sidebar page (home, certificates, settings, docs)
+First Time Setup.bat  one-time setup
+Check Now.bat         refresh the data
+sos-plain-http.ps1    turn HTTPS back off when the console will not load
+
 readme.html           the documentation as a browser page
 haproxy-setup.html    step-by-step HAProxy Data Plane API guide
+security.html         what is protected, what is not, and what is on your disk
+LICENSE               MIT
+
 domains.txt           the list you edit                   (yours, gitignored)
 domains.example.txt   the shipped sample
-Check Now.bat         refresh the data
-First Time Setup.bat  one-time setup
 
-check-ssl.ps1         the checker (parallel, records SANs and serials)
-serve.ps1             the local server
-renew.ps1             performs one renewal, then deploys it
-deploy.ps1            pushes to load balancers and verifies every node
-renew-due.ps1         renews whatever the CA says is due, sends expiry alerts (scheduled task)
-monthly-report.ps1    sends the monthly summary email, if turned on (scheduled task)
-acme-lib.ps1          shared settings, secrets, grouping and alert-sending logic
-setup.ps1             what setup runs
+resources\            everything the program needs to run - not yours to edit
+  serve.ps1           the local server
+  check-ssl.ps1       the checker (parallel, records SANs and serials)
+  renew.ps1           performs one renewal, then deploys it
+  deploy.ps1          pushes to load balancers and verifies every node
+  renew-due.ps1       renews whatever the CA says is due, sends expiry alerts (scheduled task)
+  monthly-report.ps1  sends the monthly summary email, if turned on (scheduled task)
+  acme-lib.ps1        shared settings, secrets, grouping and alert-sending logic
+  setup.ps1           what setup runs
+  ssl-tracker.html    the app shell (sidebar + view containers; needs the server)
+  assets\app.css      all styling
+  assets\app.js       router, API client, shared state, the job runner
+  assets\views\       one file per sidebar page (home, certificates, settings, docs)
+  lib\                Posh-ACME
+  tests\              the jsdom suites
 
-generated, none committed:
+generated, none committed - all of it at the top level, where you can see it:
   ssl-data.js         checker output
   settings.json       your configuration
   secrets.xml         DNS/SMTP credentials, DPAPI-encrypted
   zones.json          cached zone list from your DNS provider
   alert-state.json    which expiry thresholds have already been emailed, per host
+  audit.log           one line per state change, append-only
+  server.log          the headless server's own diagnostics
   certs\              issued certificates and private keys
   acme-state\         ACME account and order state
   jobs\               renewal logs
-  lib\                Posh-ACME
 ```
+
+**Moving or updating this folder? Re-run setup.** A scheduled task stores the
+absolute path of the script it runs, so copying the folder — or taking an update
+that moves a script, as the move into `resources\` did — leaves every task
+pointing at where the script used to be. The task still reports healthy and
+renewal silently stops. Home flags it on sight, and the repair is one command
+from an elevated PowerShell: `resources\setup.ps1 -RepairTasks`.
 
 ## Status and licence
 
