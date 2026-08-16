@@ -314,7 +314,13 @@ function New-DefaultAlertSettings {
             host = ''; port = 587; encryption = 'starttls'; from = ''; to = @()
             authRequired = $false; username = ''
         }
+        # Now only for certificates this tool will NOT renew - see
+        # Send-ExpiryAlerts. Counting down towards something already handled is
+        # noise, and noise is what stops the alerts that matter being read.
         expiry            = @{ enabled = $false; thresholds = @(30, 14, 7) }
+        # "This renews tomorrow, here, and goes there." The heads-up that
+        # replaces the countdown for everything renewed from here.
+        scheduledRenewal  = @{ enabled = $false }
         renewalSuccess    = @{ enabled = $false }
         deploymentFailure = @{ enabled = $false }
         monthlySummary    = @{ enabled = $false }
@@ -641,6 +647,66 @@ function Get-LogSettings {
     if ($days -lt 1) { $days = 1 }
     if ($mb   -lt 1) { $mb   = 1 }
     return @{ retentionDays = $days; maxSizeMb = $mb }
+}
+
+function Get-DisplayTimeZone {
+    <#
+      The timezone times are SHOWN in. Display only - it changes no schedule.
+
+      Worth being exact about, because the opposite assumption is easy to make
+      and expensive: renewals fire from Windows Task Scheduler, which runs in
+      the machine's own local time and knows nothing about this setting. Setting
+      this to Eastern on a machine running UTC does not move the 03:20 run - it
+      only makes the 03:20 in an email mean what the reader thinks it means.
+
+      Falls back to the machine's own zone, which is also the honest default:
+      with no setting, the time shown IS the time the schedule fires.
+    #>
+    param([hashtable]$Settings)
+
+    $id = ''
+    if ($Settings -and $Settings.ContainsKey('timeZone') -and $Settings.timeZone) {
+        $id = [string]$Settings.timeZone
+    }
+    if (-not $id) { return [TimeZoneInfo]::Local }
+    try { return [TimeZoneInfo]::FindSystemTimeZoneById($id) }
+    catch { return [TimeZoneInfo]::Local }   # a renamed or removed zone must not break an email
+}
+
+function Format-TrackerTime {
+    <#
+      A timestamp as somebody reading it should see it: in the configured zone,
+      with the zone named. The abbreviation is included deliberately - "03:20"
+      in an email to a team spread across zones is ambiguous in exactly the way
+      that gets a renewal window missed.
+    #>
+    param(
+        $Time,
+        [hashtable]$Settings,
+        [string]$Format = 'd MMM yyyy HH:mm'
+    )
+
+    if (-not $Time) { return '' }
+    try { $dt = [datetime]$Time } catch { return [string]$Time }
+
+    $tz = Get-DisplayTimeZone -Settings $Settings
+
+    # Convert from whatever this is INTO the display zone. A parsed 'o' string
+    # carries its own offset; a bare local DateTime does not, and treating one
+    # as the other is how a time lands an hour out twice a year.
+    $utc = $(if ($dt.Kind -eq [DateTimeKind]::Utc) { $dt }
+             elseif ($dt.Kind -eq [DateTimeKind]::Local) { $dt.ToUniversalTime() }
+             else { [datetime]::SpecifyKind($dt, [DateTimeKind]::Local).ToUniversalTime() })
+
+    $shown = [TimeZoneInfo]::ConvertTimeFromUtc($utc, $tz)
+    $abbr  = $(if ($tz.IsDaylightSavingTime($shown)) { $tz.DaylightName } else { $tz.StandardName })
+
+    # "Eastern Standard Time" -> "EST": the initials of a multi-word Windows
+    # zone name are the abbreviation people actually use.
+    $short = -join (@($abbr -split '\s+') | Where-Object { $_ } | ForEach-Object { $_.Substring(0,1) })
+    if ($short.Length -lt 2) { $short = $abbr }
+
+    return ($shown.ToString($Format) + ' ' + $short)
 }
 
 function Get-WebSettings {
@@ -1209,6 +1275,58 @@ function Write-EmailAuditEvent {
     try { Write-AuditEvent @p } catch { }
 }
 
+function Format-DeploymentSummary {
+    <#
+      A deployment result turned into lines somebody can read in an email:
+      one per node, saying whether that node ended up serving the certificate.
+
+      Per NODE rather than per target, because a pair where one node took the
+      certificate and the other did not is the failure worth catching, and a
+      target-level "partly" hides exactly that. This is the same reason
+      verification checks each node separately in the first place.
+
+      Reads the result file deploy.ps1 writes. Returns nothing when there is no
+      file or nothing in it - a deployment that never ran has nothing to report,
+      and inventing "unknown" lines would only add noise.
+    #>
+    param([string]$ResultPath)
+
+    $lines = @()
+    if (-not $ResultPath -or -not (Test-Path $ResultPath)) { return $lines }
+
+    try { $r = (Get-Content $ResultPath -Raw -Encoding UTF8) | ConvertFrom-Json }
+    catch { return $lines }
+    if (-not $r -or -not $r.results) { return $lines }
+
+    foreach ($cert in @($r.results)) {
+        foreach ($t in @($cert.targets)) {
+            $label = $(if ($t.label) { [string]$t.label } else { [string]$t.targetId })
+            foreach ($n in @($t.nodes)) {
+                $name = $(if ($n.name) { [string]$n.name } else { [string]$n.url })
+
+                # A node passes on evidence: it was pushed to AND something
+                # confirmed it is serving the certificate. Reported separately
+                # because they fail for different reasons and want different
+                # fixes - a rejected upload is a credential or a path, a failed
+                # verify is usually a bind line.
+                $pushed = [bool]($n.push -and $n.push.ok)
+                $checks = @($n.verify)
+                $served = ($checks.Count -gt 0) -and (@($checks | Where-Object { $_.ok }).Count -gt 0)
+
+                $state = if (-not $pushed)      { 'FAILED - the node did not accept it' }
+                         elseif ($checks.Count -eq 0) { 'pushed, not verified' }
+                         elseif ($served)       { 'serving it' }
+                         else                   { 'FAILED - pushed, but not serving it' }
+
+                $lines += "  $label / $name : $state"
+            }
+        }
+    }
+
+    if ($lines.Count) { $lines = @('Deployment:') + $lines }
+    return $lines
+}
+
 function Send-RenewalOutcomeAlert {
     <#
       One certificate's renewal (and, on the normal path, deployment) just
@@ -1217,11 +1335,21 @@ function Send-RenewalOutcomeAlert {
       point of an alert about a renewal is that it must never become the
       reason the renewal is recorded as failed.
     #>
-    param([hashtable]$Settings, [string]$DisplayName, [bool]$Ok, $Deployed, [string]$ErrorMessage)
+    param(
+        [hashtable]$Settings, [string]$DisplayName, [bool]$Ok, $Deployed, [string]$ErrorMessage,
+        # Per-node lines from the deployment, so the email answers "what worked
+        # and what did not" rather than only "something did not". Built by the
+        # caller from the deploy result file - see Format-DeploymentSummary.
+        [string[]]$Detail = @()
+    )
 
     try {
         $alerts = $Settings.alerts
         if (-not $alerts) { return }
+
+        $stamp = Format-TrackerTime -Time (Get-Date) -Settings $Settings -Format 'd MMM yyyy HH:mm:ss'
+        $tail = ''
+        if (@($Detail).Count) { $tail = "`r`n`r`n" + (@($Detail) -join "`r`n") }
 
         if ($Ok) {
             if (-not $alerts.renewalSuccess.enabled) { return }
@@ -1230,13 +1358,13 @@ function Send-RenewalOutcomeAlert {
                      else                       { 'issued' }
             $subject = "Cert Camel: $DisplayName renewed"
             $receipt = Send-AlertEmail -Settings $Settings -Subject $subject `
-                -Body "$DisplayName was $where successfully, $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))."
+                -Body "$DisplayName was $where successfully, $stamp.$tail"
         }
         else {
             if (-not $alerts.deploymentFailure.enabled) { return }
             $subject = "Cert Camel: $DisplayName FAILED"
             $receipt = Send-AlertEmail -Settings $Settings -Subject $subject `
-                -Body "$DisplayName did not fully succeed, $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')).`r`n`r`n$ErrorMessage`r`n`r`nCheck the tracker for the full log."
+                -Body "$DisplayName did not fully succeed, $stamp.`r`n`r`n$ErrorMessage$tail`r`n`r`nCheck the tracker for the full log."
         }
         Write-EmailAuditEvent -Receipt $receipt -Subject $subject
     }
@@ -1252,6 +1380,106 @@ function Send-RenewalOutcomeAlert {
     }
 }
 
+function Send-ScheduledRenewalAlerts {
+    <#
+      "This is going to renew tomorrow" - sent once, the run before it happens.
+
+      Replaces counting down days for anything this tool actually renews. A
+      threshold email says a certificate is getting old; this says what is about
+      to happen, to which names, when, and where the result will be pushed. That
+      is the thing somebody would act on, and the only window in which acting is
+      still cheap.
+
+      TIMING. Renewal happens when the daily task next runs AND the CA's window
+      is open. So a certificate is "renewing next run" when its RenewAfter falls
+      before that run - which this checks by looking one interval ahead. Run
+      daily, that is tomorrow's run, and the email lands roughly 24 hours early.
+
+      Sent ONCE per renewal cycle, keyed by the RenewAfter it was sent for.
+      Without that key a certificate whose window opened but whose renewal keeps
+      failing would send this every single day; with it, a genuinely new window
+      sends a genuinely new heads-up.
+    #>
+    param(
+        [hashtable]$Settings,
+        # The per-certificate verdicts renew-due.ps1 has just computed.
+        [array]$Considered,
+        # When the next unattended run is expected. Null when nothing is
+        # scheduled - in which case nothing is "about to" happen and this is
+        # skipped entirely rather than promising a run that will not come.
+        $NextRun,
+        [array]$Groups
+    )
+
+    if (-not $Settings.alerts) { return }
+    $cfg = $Settings.alerts
+    if (-not ($cfg.ContainsKey('scheduledRenewal') -and $cfg.scheduledRenewal.enabled)) { return }
+    if (-not $NextRun) { return }
+
+    $state = @{}
+    if (Test-Path $script:AlertStateFile) {
+        try { $state = ConvertTo-HashtableDeep ((Get-Content $script:AlertStateFile -Raw -Encoding UTF8) | ConvertFrom-Json) }
+        catch { $state = @{} }
+    }
+    if ($null -eq $state) { $state = @{} }
+
+    $byId = @{}
+    foreach ($c in @($Groups.certs)) { $byId[[string]$c.certId] = $c }
+
+    $changed = $false
+    foreach ($entry in @($Considered)) {
+        if ($entry.due) { continue }          # already renewing this run, not "scheduled"
+        if (-not $entry.renewAfter) { continue }
+
+        $when = $null
+        try { $when = [datetime]$entry.renewAfter } catch { continue }
+        if ($when -gt $NextRun) { continue }  # not yet - it will be caught on a later run
+
+        $certId = [string]$entry.certId
+        $key    = "sched:$certId"
+        $stamp  = $when.ToString('o')
+        if ($state.ContainsKey($key) -and $state[$key].ContainsKey('renewAfter') -and
+            [string]$state[$key].renewAfter -eq $stamp) { continue }
+
+        $cert = $byId[$certId]
+        $names   = @($(if ($cert) { $cert.names } else { @() }))
+        $targets = @()
+        foreach ($tid in @($(if ($cert) { $cert.targets } else { @() }))) {
+            $t = @($Settings.targets | Where-Object { $_.id -eq $tid })[0]
+            $targets += $(if ($t -and $t.label) { [string]$t.label } else { [string]$tid })
+        }
+
+        $whenText = Format-TrackerTime -Time $NextRun -Settings $Settings
+        $body = New-Object Text.StringBuilder
+        [void]$body.AppendLine("$($entry.name) is scheduled to renew automatically.")
+        [void]$body.AppendLine("")
+        [void]$body.AppendLine("When:       $whenText")
+        [void]$body.AppendLine("Certificate: $certId")
+        if ($names.Count)   { [void]$body.AppendLine("Covers:      $($names -join ', ')") }
+        [void]$body.AppendLine("Why now:     the certificate authority's renewal window opened $(Format-TrackerTime -Time $when -Settings $Settings)")
+        if ($targets.Count) { [void]$body.AppendLine("Deploys to:  $($targets -join ', ')") }
+        else {
+            # Said plainly rather than omitted. A certificate with no targets
+            # renews and then goes nowhere, and the day before is a much better
+            # time to find that out than the day after.
+            [void]$body.AppendLine("Deploys to:  nothing - no load balancers are assigned to this certificate")
+        }
+        [void]$body.AppendLine("")
+        [void]$body.AppendLine("No action is needed. You will get a second email with the result.")
+
+        try {
+            Send-AlertEmail -Settings $Settings `
+                -Subject "Renewal scheduled: $($entry.name)" -Body $body.ToString()
+            $state[$key] = @{ renewAfter = $stamp; notifiedAt = (Get-Date).ToString('o') }
+            $changed = $true
+        } catch { }
+    }
+
+    if ($changed) {
+        try { Write-TextFileAtomic -Path $script:AlertStateFile -Content ($state | ConvertTo-Json -Depth 5) } catch { }
+    }
+}
+
 function Send-ExpiryAlerts {
     <#
       Compares every watched host's days-remaining against the configured
@@ -1262,12 +1490,28 @@ function Send-ExpiryAlerts {
       pushes days-remaining back above every threshold, which clears the
       record so the next approach to expiry can alert again.
 
-      Takes the raw checker results (every watched host, including ones this
-      tool does not renew) rather than the renewable-certificate list, so an
-      externally-managed certificate still gets a warning if whatever renews
-      it elsewhere falls behind.
+      NOW ONLY FOR CERTIFICATES THIS TOOL WILL NOT RENEW.
+
+      Counting down days towards an event that is already handled is noise, and
+      noise is what stops people reading the alerts that matter: a certificate
+      Cert Camel renews gets a scheduled-renewal email the day before it happens
+      and an outcome email after, which say more than "23 days left" ever did.
+
+      Two kinds of host still need the countdown, and they are the same kind of
+      problem - nothing here is going to renew them:
+
+        - marked "managed elsewhere". Watched precisely so you find out when
+          somebody else's automation stops, and this is the only thing that
+          would ever tell you.
+        - not covered by any configured DNS provider. Get-CertificateGroups
+          files these under `unmapped` and renewal skips them entirely, so they
+          expire silently however carefully they are watched.
+
+      Pass -Groups to make that distinction. Without it every watched host gets
+      the old behaviour, which keeps the function honest if a caller has not
+      been updated: over-warning is the safe direction.
     #>
-    param([hashtable]$Settings, [array]$Results)
+    param([hashtable]$Settings, [array]$Results, $Groups)
 
     if (-not $Settings.alerts -or -not $Settings.alerts.expiry.enabled) { return }
     $thresholds = @($Settings.alerts.expiry.thresholds | Sort-Object -Descending)
@@ -1283,12 +1527,27 @@ function Send-ExpiryAlerts {
     }
     if ($null -eq $state) { $state = @{} }
 
+    # Hosts that Cert Camel really does renew - everything on a certificate it
+    # manages and has a provider for. Those are the ones that no longer need a
+    # countdown, because the scheduled-renewal and outcome emails cover them.
+    $renewedHere = @{}
+    if ($Groups -and $Groups.certs) {
+        foreach ($c in @($Groups.certs)) {
+            if ($c.external) { continue }
+            foreach ($h in @($c.hosts)) {
+                $hn = ([string]$h).Trim().TrimEnd('.').ToLowerInvariant()
+                if ($hn) { $renewedHere[$hn] = $true }
+            }
+        }
+    }
+
     $changed = $false
     $now = Get-Date
 
     foreach ($r in @($Results)) {
         if (-not $r.ok -or -not $r.notAfter) { continue }
         $hostName = [string]$r.host
+        if ($renewedHere.ContainsKey($hostName.Trim().TrimEnd('.').ToLowerInvariant())) { continue }
         $days = [math]::Floor(([datetime]$r.notAfter - $now).TotalDays)
 
         $prevAlerted = $null

@@ -107,6 +107,25 @@
       'beside this page. They never leave this PC, and they do not travel if you copy this folder ' +
       'to another machine.'));
 
+    /* Display only. It formats times in emails, run logs and the audit trail —
+       it does NOT move any schedule. Renewals fire from Windows Task Scheduler
+       in the machine's own local time, which knows nothing about this setting,
+       so the warning below matters: choosing Eastern on a UTC machine makes an
+       emailed "03:20" readable, it does not make the run happen at 03:20 EST. */
+    var tzf = el('div', 'field');
+    tzf.appendChild(el('label', null, 'Timezone for displayed times'));
+    var tzs = document.createElement('select');
+    tzs.id = 'set-timezone';
+    tzf.appendChild(tzs);
+    tzf.appendChild(el('p', 'hint',
+      'Used for times in alert emails, run logs and the audit trail, and shown with the zone ' +
+      'named so a time is never ambiguous. Leave it on the machine’s own zone unless the people ' +
+      'reading the emails are somewhere else.'));
+    var tzWarn = el('p', 'hint bad hidden');
+    tzWarn.id = 'set-timezone-warn';
+    tzf.appendChild(tzWarn);
+    p.appendChild(tzf);
+
     p.appendChild(el('h4', null, 'Log retention'));
     p.appendChild(el('p', 'hint',
       'Applies to run logs — the narrative of each check, renewal and deployment. Whichever limit ' +
@@ -978,8 +997,14 @@
       return box;
     }
 
-    var expiryBox = toggle('al-expiry-enabled', 'Certificate expiring soon',
-      'One email per certificate per threshold crossed, not repeated every day after.');
+    toggle('al-scheduled-renewal', 'Renewal scheduled (the day before)',
+      'Sent the run before it happens: which certificate, which names, when, and which load ' +
+      'balancers it will be pushed to. The window in which acting is still cheap.');
+
+    var expiryBox = toggle('al-expiry-enabled', 'Expiring soon — only what this tool will NOT renew',
+      'Certificates marked “managed elsewhere”, and any whose zone no DNS provider covers. ' +
+      'Nothing here renews those, so a countdown is the only warning they will ever get. ' +
+      'Everything Cert Camel does renew is covered by the two emails above and below instead.');
     var thresholdsField = el('div', 'field');
     thresholdsField.appendChild(el('label', null, 'Days before expiry'));
     var thresholdsInput = document.createElement('input');
@@ -990,7 +1015,8 @@
     thresholdsField.appendChild(el('p', 'hint', 'Comma-separated. One alert is sent the first time a check finds a certificate at or under each number.'));
     card2.appendChild(thresholdsField);
 
-    toggle('al-renewal-success', 'Renewal succeeded', 'Confirms both issuance and every deployment check passed.');
+    toggle('al-renewal-success', 'Renewal succeeded',
+      'Confirms issuance, and lists each load balancer node with whether it ended up serving it.');
     toggle('al-deployment-failure', 'Automated deployment failed',
       'The most important one: the only signal an unattended renewal has stopped working.');
     toggle('al-monthly-summary', 'Monthly summary', 'Sent on the 1st: everything due that month, and anything currently failing.');
@@ -1026,6 +1052,7 @@
         enabled: root.querySelector('.al-expiry-enabled').checked,
         thresholds: thresholds.length ? thresholds : [30, 14, 7]
       },
+      scheduledRenewal:  {enabled: root.querySelector('.al-scheduled-renewal').checked},
       renewalSuccess:    {enabled: root.querySelector('.al-renewal-success').checked},
       deploymentFailure: {enabled: root.querySelector('.al-deployment-failure').checked},
       monthlySummary:    {enabled: root.querySelector('.al-monthly-summary').checked}
@@ -1193,6 +1220,7 @@
         targets:     targets,
         alerts:      alertsResult ? alertsResult.value : null,
         logs:        {retentionDays: logDays, maxSizeMb: logMb},
+        timeZone:    document.getElementById('set-timezone').value,
         web:         {https: webOn, hostname: webHost, port: webPort,
                       hsts: document.getElementById('set-web-hsts').checked}
       }
@@ -1240,6 +1268,38 @@
     var s = (CC.state && CC.state.settings) || {};
 
     document.getElementById('set-contact').value = s.contact || '';
+    var tzs = document.getElementById('set-timezone');
+    if (tzs && !tzs.options.length) {
+      var machine = s.machineZone || '';
+      var opt0 = document.createElement('option');
+      opt0.value = '';
+      opt0.textContent = 'This machine’s zone' + (machine ? ' (' + machine + ')' : '');
+      tzs.appendChild(opt0);
+      (s.timeZones || []).forEach(function(z){
+        var o = document.createElement('option');
+        o.value = z.id; o.textContent = z.label || z.id;
+        tzs.appendChild(o);
+      });
+    }
+    if (tzs) {
+      tzs.value = s.timeZone || '';
+      var warn = document.getElementById('set-timezone-warn');
+      function tzCheck(){
+        // Only when they actually differ. The schedule fires in machine time no
+        // matter what is chosen here, so this is the one case where a displayed
+        // time and the real one can disagree.
+        var differs = !!tzs.value && !!s.machineZone && tzs.value !== s.machineZone;
+        warn.classList.toggle('hidden', !differs);
+        if (differs) {
+          warn.textContent = 'This machine runs in ' + s.machineZone + '. Renewals fire on the ' +
+            'machine’s clock, so a scheduled time shown in ' + tzs.value + ' is the same moment ' +
+            'expressed differently — not a different run time.';
+        }
+      }
+      tzs.onchange = tzCheck;
+      tzCheck();
+    }
+
     document.getElementById('set-log-days').value = (s.logs && s.logs.retentionDays) || 90;
     document.getElementById('set-log-mb').value   = (s.logs && s.logs.maxSizeMb) || 200;
 
@@ -1282,6 +1342,7 @@
 
     root.querySelector('.al-expiry-enabled').checked = !!(a.expiry && a.expiry.enabled);
     root.querySelector('.al-expiry-thresholds').value = ((a.expiry && a.expiry.thresholds) || [30, 14, 7]).join(', ');
+    root.querySelector('.al-scheduled-renewal').checked = !!(a.scheduledRenewal && a.scheduledRenewal.enabled);
     root.querySelector('.al-renewal-success').checked = !!(a.renewalSuccess && a.renewalSuccess.enabled);
     root.querySelector('.al-deployment-failure').checked = !!(a.deploymentFailure && a.deploymentFailure.enabled);
     root.querySelector('.al-monthly-summary').checked = !!(a.monthlySummary && a.monthlySummary.enabled);
