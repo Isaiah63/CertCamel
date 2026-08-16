@@ -104,7 +104,8 @@ $script:PluginCatalog = @{
     DMEasy = @{
         Label = 'DNS Made Easy'
         Args  = @(
-            @{ Name = 'DMEKey';        Label = 'API Key';    Secret = $false; Type = 'text' }
+            @{ Name = 'DMEKey';        Label = 'API Key';    Secret = $false; Type = 'text'
+               Hint  = 'DNS Made Easy control panel: Config > Account Information > API Keys. Only the MAIN account can generate an API key - sub-accounts with full administrator rights cannot, however they are permissioned, and the option simply is not there rather than being refused. If you administer this zone through a sub-account you will need the account owner to issue the key.' }
             @{ Name = 'DMESecret';     Label = 'Secret Key'; Secret = $true;  Type = 'text' }
             @{ Name = 'DMEUseSandbox'; Secret = $false; Type = 'bool'
                Label = 'Use the DNS Made Easy sandbox (sandbox.dnsmadeeasy.com)'
