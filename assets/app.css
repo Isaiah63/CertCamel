@@ -291,6 +291,12 @@ a.filternote.bad:hover{text-decoration:underline;}
 .st.soon{color:var(--amber); background:var(--amber-bg); border-color:var(--amber);}
 .st.gone{color:var(--red); background:var(--red-bg); border-color:var(--red);}
 .st.unknown{color:var(--blue); background:var(--blue-bg); border-color:var(--blue);}
+/* Scheduled to renew by itself. Blue rather than green: nothing has been
+   confirmed yet, it is a statement about what is going to happen - and
+   deliberately not amber, because amber is for the rows where somebody still
+   has to do something. Wider than the others: it carries a date. */
+.st.auto{color:var(--blue); background:var(--blue-bg); border-color:var(--blue);
+  text-transform:none; letter-spacing:.02em;}
 tr.soon td.days{color:var(--amber);}
 tr.gone td.days{color:var(--red);}
 
