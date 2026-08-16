@@ -455,7 +455,21 @@
     if (!c.external) {
       var rb = el('button', 'btn sm primary', 'Renew now');
       rb.type = 'button';
-      rb.addEventListener('click', function(){ openPicker('renew', [c.certId]); });
+      /* Straight to the job, deliberately NOT through openPicker('renew', ...).
+         That dialog exists to ask which load balancer groups to push to
+         afterwards, and for this certificate the answer is always none - it
+         deploys nowhere, which is the entire reason it is split out. Asking
+         anyway made the one certificate that CANNOT be deployed the only one
+         you had to answer a deployment question for.
+
+         Nothing is lost by skipping it. Its summary line was the name and the
+         issuer, both already in the grid above, and its rate-limit warning now
+         sits under the button - where it is read before clicking rather than
+         after. */
+      rb.addEventListener('click', function(){
+        CC.runJob('Renewing ' + (c.displayName || c.certId), 'POST', '/api/renew',
+                  {zones: [c.certId], targets: []});
+      });
       acts.appendChild(rb);
     }
     if (c.hasLocalCert) {
@@ -464,6 +478,10 @@
       acts.appendChild(dl);
     }
     card.appendChild(acts);
+    if (!c.external && !c.caStaging) {
+      card.appendChild(el('p', 'hint',
+        'Renewing places a production order, which counts against the certificate authority rate limits.'));
+    }
     return card;
   }
 
