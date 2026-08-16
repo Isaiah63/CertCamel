@@ -102,10 +102,6 @@
     f.appendChild(i);
     f.appendChild(el('p', 'hint', 'The certificate authority sends expiry warnings here. Required.'));
     p.appendChild(f);
-    p.appendChild(el('p', 'hint',
-      'Credentials on the other pages are encrypted with Windows DPAPI and stored in secrets.xml ' +
-      'beside this page. They never leave this PC, and they do not travel if you copy this folder ' +
-      'to another machine.'));
 
     /* Display only. It formats times in emails, run logs and the audit trail —
        it does NOT move any schedule. Renewals fire from Windows Task Scheduler
