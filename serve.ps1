@@ -368,6 +368,31 @@ function Send-Response {
     # This UI is local-only; nothing here should ever be framed or sniffed.
     [void]$sb.AppendLine("X-Content-Type-Options: nosniff")
     [void]$sb.AppendLine("X-Frame-Options: DENY")
+
+    # HSTS, but ONLY when actually serving over TLS, and deliberately without
+    # includeSubDomains or preload.
+    #
+    # Sent over plain HTTP it is meaningless - browsers ignore the header on a
+    # non-TLS response - so guarding on $script:TlsCert is not caution, it is
+    # the specification.
+    #
+    # The omissions matter more than the header. includeSubDomains would apply
+    # this policy to every sibling name under the same domain, which for a
+    # console named tracker.example.com means the whole of example.com - a
+    # setting made here would break unrelated sites elsewhere. preload is worse
+    # and close to irreversible: it asks browser vendors to ship the policy, and
+    # getting back off that list takes months.
+    #
+    # And the thing to know before turning this on: once a browser holds an HSTS
+    # policy for this name, a certificate error becomes a hard failure with NO
+    # "proceed anyway" option. That is the entire point of it, and it is also
+    # how you lock yourself out of your own console if the certificate lapses.
+    # Cert Camel renews the certificate it serves, and the Renewal row under
+    # Settings > Tracker address says whether it really is doing so - check that
+    # is green before leaving this on.
+    if ($script:TlsCert) {
+        [void]$sb.AppendLine("Strict-Transport-Security: max-age=31536000")
+    }
     [void]$sb.AppendLine("Connection: close")
     if ($ExtraHeaders) {
         foreach ($k in $ExtraHeaders.Keys) { [void]$sb.AppendLine("${k}: $($ExtraHeaders[$k])") }
