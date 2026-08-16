@@ -134,8 +134,99 @@
       'when, and deleting that to reclaim disk is the opposite of what it is for — it rotates to a ' +
       'dated file instead, and the older files are kept.'));
 
+    p.appendChild(buildUpdateSection());
     p.appendChild(buildAddressSection());
     return p;
+  }
+
+  // --- Update ------------------------------------------------------------------- //
+  /* Pulls new code from git. Safe to offer because everything belonging to the
+     operator is gitignored — settings.json, secrets.xml, domains.txt,
+     ssl-data.js, zones.json, alert-state.json — so an update replaces code and
+     leaves data untouched.
+
+     Deliberately never a merge: fast-forward only. The worst outcome of an
+     update on a machine whose job is running unattended should be "it refused",
+     not a conflicted working tree nobody is sitting in front of. */
+  function buildUpdateSection(){
+    var wrap = el('div', 'sub');
+    wrap.appendChild(el('h4', null, 'Update'));
+    wrap.appendChild(el('p', 'hint',
+      'Pulls the latest code from the repository this copy was cloned from. Your settings, ' +
+      'credentials, domain list and certificates are not touched — none of them are in the ' +
+      'repository. Local edits to tracked files stop an update rather than being overwritten.'));
+
+    var rows = el('div', 'addrcheck');
+    rows.id = 'set-update-rows';
+    wrap.appendChild(rows);
+
+    var actions = el('div', 'page-actions');
+    var check = el('button', 'btn', 'Check for updates');
+    check.type = 'button';
+    check.addEventListener('click', function(){ runUpdateCheck(true); });
+    actions.appendChild(check);
+    wrap.appendChild(actions);
+    return wrap;
+  }
+
+  function runUpdateCheck(loud){
+    var out = document.getElementById('set-update-rows');
+    if (!out) { return; }
+    out.textContent = '';
+    out.appendChild(el('p', 'hint', 'Checking…'));
+
+    api('GET', '/api/update', null, function(err, r){
+      out.textContent = '';
+      if (err) { out.appendChild(el('p', 'hint bad', err)); return; }
+
+      out.appendChild(addrRow('This copy', true, r.current || '—'));
+
+      if (!r.isRepo) {
+        out.appendChild(addrRow('Updates', false, r.reason));
+        return;
+      }
+      out.appendChild(addrRow('Branch', true, r.branch + ' → ' + r.remote));
+
+      // Dirty is its own row rather than folded into the status, because it is
+      // the one condition the operator can act on without leaving the machine.
+      if (!r.clean) {
+        var d = addrRow('Local edits', false,
+          r.dirty.length + ' tracked file(s) changed: ' + r.dirty.join(', '));
+        out.appendChild(d);
+      }
+
+      var upToDate = (r.behind === 0);
+      var statusRow = addrRow('Updates', upToDate || r.canUpdate, r.reason);
+      out.appendChild(statusRow);
+
+      if (r.incoming && r.incoming.length) {
+        var pre = el('pre', 'log');
+        pre.textContent = r.incoming.join('\n');
+        out.appendChild(pre);
+      }
+
+      if (!r.canUpdate) { return; }
+
+      var apply = el('button', 'btn', 'Update now');
+      apply.type = 'button';
+      apply.addEventListener('click', function(){
+        apply.disabled = true;
+        setStatus('Updating…');
+        api('POST', '/api/update', {}, function(e2, res){
+          apply.disabled = false;
+          if (e2) { setStatus(e2, 'bad'); runUpdateCheck(false); return; }
+          // Said plainly: the running server is the old code until it is
+          // restarted, and a half-updated process is the confusing state.
+          setStatus('Updated ' + res.from + ' → ' + res.to + ' (' + res.applied +
+                    ' commit(s)). RESTART Cert Camel for it to take effect — the running ' +
+                    'server is still the old code.', 'good');
+          runUpdateCheck(false);
+        });
+      });
+      var act = el('div', 'page-actions');
+      act.appendChild(apply);
+      out.appendChild(act);
+    });
   }
 
   // --- Tracker address ---------------------------------------------------------- //
