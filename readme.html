@@ -846,8 +846,12 @@ those two apart is most of the point.</p>
 <div class="callout">
   <div class="h">What never reaches either log</div>
   <p>No credential value, no private key, no certificate body. Credential changes are recorded by key
-  <em>name</em> only &mdash; <code>fake-pair:password removed</code> &mdash; and every line goes
-  through a redaction pass on the way in, so a debug line added later cannot leak one by accident.</p>
+  <em>name</em> only &mdash; <code>fake-pair:password removed</code>.</p>
+  <p>Every stored credential is masked as <code>[redacted]</code>, so a debug line added later cannot
+  leak one by accident. Where that happens depends on who is writing: the audit trail and a scheduled
+  run are masked as the line is written, while a run started from this page is the child process&rsquo;s
+  own output, captured whole &mdash; so it is masked when the log is read, and the file itself is
+  swept once the run finishes.</p>
 </div>
 
 <h3>Retention</h3>

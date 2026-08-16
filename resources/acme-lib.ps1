@@ -507,6 +507,12 @@ function Save-SecretStore {
     $tmp = "$($script:SecretsFile).tmp"
     $Store | Export-Clixml -Path $tmp -Force
     Move-Item -Path $tmp -Destination $script:SecretsFile -Force
+
+    # Drop the redaction masks so the next log line re-reads them. Get-SecretMasks
+    # also re-reads when the file's write time moves, which is what catches a
+    # change made by a different process; this is the same thing for the change
+    # made by THIS one, without waiting on filesystem timestamp resolution.
+    $script:SecretMasks = $null
 }
 
 # --------------------------------------------------------------------------- #
@@ -526,18 +532,34 @@ function Save-SecretStore {
 $script:RunLogPath   = $null
 $script:RunLogSource = 'cli'
 $script:SecretMasks  = $null
+$script:SecretMasksStamp = $null
 
 function Get-SecretMasks {
     <#
-      Plaintext secret values, read once per run, so a log line can never carry
-      one even if some future change starts echoing more than it should.
+      Plaintext secret values, so a log line can never carry one even if some
+      future change starts echoing more than it should.
 
       Nothing currently leaks - that was verified before any of this was built -
       so this is a guard against tomorrow rather than a fix for today. The values
       are already resident during a run (the Data Plane API password is used on
       every push), so holding them costs no exposure that did not already exist.
+
+      Cached against secrets.xml's WRITE TIME rather than "once per run". Once
+      per run is right for a script that lives for one renewal and wrong for
+      serve.ps1, which starts at boot and runs for the machine's whole uptime:
+      a credential added afterwards would never enter the mask list, so the one
+      secret redaction most needs to catch - the new one - would be the only one
+      it could not see. Save-SecretStore drops the cache for changes made in
+      this process; the stamp catches the ones made by any other, which is what
+      a CLI script or a second console does.
     #>
-    if ($null -ne $script:SecretMasks) { return $script:SecretMasks }
+    $stamp = $null
+    try { if (Test-Path $script:SecretsFile) { $stamp = (Get-Item $script:SecretsFile).LastWriteTimeUtc } } catch { }
+
+    if ($null -ne $script:SecretMasks -and $stamp -eq $script:SecretMasksStamp) {
+        return $script:SecretMasks
+    }
+    $script:SecretMasksStamp = $stamp
 
     $masks = @()
     try {

@@ -871,8 +871,13 @@ sweep records itself even when nothing was due, so an empty stretch means
 
 **What is never recorded:** no credential value, no private key, no certificate
 body. Credential changes are logged by key *name* only (`fake-pair:password
-removed`), and every line goes through a redaction pass on the way in so a future
-debug line cannot leak one by accident.
+removed`).
+
+Every stored credential is masked as `[redacted]`, so a future debug line cannot
+leak one by accident. Where the masking happens depends on who writes the line:
+the audit trail and scheduled runs are masked as they are written, while a run
+started from the page is the child process's own output captured whole — so it is
+masked on read, and the file is swept once the run finishes.
 
 ### Retention
 
