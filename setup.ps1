@@ -350,9 +350,54 @@ if ($wantHttps -match '^[Yy]') {
             # Stopped here on purpose. Without a DNS credential that covers the
             # zone, nothing below can succeed, and adding the name to
             # domains.txt would leave an entry that can never renew.
-            Write-Host "        No configured DNS credential covers that name, so a certificate" -ForegroundColor Yellow
-            Write-Host "        cannot be issued for it yet. Add a DNS provider under" -ForegroundColor Yellow
-            Write-Host "        Settings > DNS Automation, then come back to Settings > General." -ForegroundColor Yellow
+            Write-Host "        No configured DNS credential covers that name, so this step" -ForegroundColor Yellow
+            Write-Host "        cannot issue and renew it for you automatically." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "        You can still get HTTPS working now by creating one DNS record" -ForegroundColor Gray
+            Write-Host "        by hand. The certificate is real and lasts about 90 days." -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "        It will NOT renew itself until a DNS provider covers this zone," -ForegroundColor DarkGray
+            Write-Host "        because renewal validates through the API. Add one under Settings" -ForegroundColor DarkGray
+            Write-Host "        > DNS Automation whenever you have the credential and this" -ForegroundColor DarkGray
+            Write-Host "        certificate gets picked up automatically - renewal handles" -ForegroundColor DarkGray
+            Write-Host "        certificates it did not issue." -ForegroundColor DarkGray
+            Write-Host ""
+
+            $manual = Read-Host "        Issue it now with a manual DNS record? (Y/N)"
+            if ($manual -match '^[Yy]') {
+                Write-Host ""
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+                    -File (Join-Path $root 'issue-tracker-cert.ps1') -HostName $webName -Port $webPort
+                Write-Host ""
+                $st = Get-TrackerAddressStatus -HostName $webName -Port $webPort `
+                        -Settings (Get-TrackerSettings) -ZoneCache (Get-ZoneCache)
+
+                if (-not $st.hosts.ok) {
+                    if (Test-Elevated) {
+                        $addHost2 = Read-Host "        Add $webName to the hosts file? (Y/N)"
+                        if ($addHost2 -match '^[Yy]') {
+                            try { [void](Add-HostsEntry -HostName $webName); Write-Host "        Added." -ForegroundColor Green }
+                            catch { Write-Host "        Could not: $($_.Exception.Message)" -ForegroundColor Yellow }
+                        }
+                    } else {
+                        Write-Host "        The hosts file needs administrator. Add this line yourself:" -ForegroundColor Yellow
+                        Write-Host ("            127.0.0.1  {0}" -f $webName) -ForegroundColor White
+                    }
+                }
+
+                if ($st.certificate.ok) {
+                    $sNow = Get-TrackerSettings
+                    if (-not $sNow.ContainsKey('web') -or -not $sNow.web) { $sNow.web = @{} }
+                    $sNow.web.https = $true; $sNow.web.hostname = $webName
+                    $sNow.web.port = $webPort; $sNow.web.hsts = $false
+                    Save-TrackerSettings -Settings $sNow
+                    Write-Host ""
+                    Write-Host ("        HTTPS is on. Next start: https://{0}:{1}" -f $webName, $webPort) -ForegroundColor Green
+                }
+            }
+            else {
+                Write-Host "        Skipped. Settings > General will pick this up later." -ForegroundColor DarkGray
+            }
         }
         else {
             if (-not $st.certificate.covered -and -not $st.certificate.watched) {
