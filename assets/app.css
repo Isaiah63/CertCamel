@@ -524,6 +524,16 @@ tr.open > td{border-bottom:none;}
   max-width:64rem; margin:0 0 1.3rem;}
 .card > .hint{max-width:52rem;}
 .card.wide{max-width:none;}
+/* A card inside a panel is a grouping, not a second pane of glass. --surface is
+   translucent, so a nested card stacks its own tint on the one behind it and
+   ends up reading heavier than its container; dropping the blur and shadow
+   leaves the border doing the grouping, which is all it was ever for. */
+.card .card{box-shadow:none; backdrop-filter:none; margin:0 0 .9rem;}
+.card .card:last-child{margin-bottom:0;}
+/* .page-actions carries a border-top for the page's own Save row at the bottom.
+   Reusing it for a button INSIDE a card dragged that divider in with it - the
+   stray line that sat above "Check for updates". Same spacing, no line. */
+.card-actions{display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.9rem;}
 /* Card titles were the same colour as body text, so nothing marked where one
    card stopped and the next began. --group-name rather than --accent: the note
    at the top of this file records --accent landing near 4.1:1 as small bold
@@ -577,7 +587,13 @@ tr.open > td{border-bottom:none;}
 .field input[type=number],.field select{
   font:inherit; font-size:.88rem; width:100%; color:var(--text); padding:.5rem .75rem;
   border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg);}
-.field .hint{font-size:.76rem; color:var(--faint); margin:.3rem 0 0;}
+/* A hint is small and quiet wherever it sits. This was .field .hint, so the very
+   same class rendered at full body size and full body colour the moment it was
+   appended straight to a panel instead of into a field - which is why the
+   settings panes had explanatory paragraphs shouting at the size of real
+   content, next to identical ones behaving themselves. */
+.hint{font-size:.76rem; color:var(--faint); margin:.55rem 0;}
+.field .hint{margin:.3rem 0 0;}
 .check{display:flex; align-items:flex-start; gap:.55rem; font-size:.88rem;
   font-weight:500; letter-spacing:0; text-transform:none; color:var(--text);}
 .provider{border:1px solid var(--border); border-radius:var(--radius-sm);

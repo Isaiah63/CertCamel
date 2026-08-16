@@ -100,15 +100,29 @@
 
   // --- General ---------------------------------------------------------------- //
 
+  /* One card per concern. General was a single flat surface with five unrelated
+     things stacked down it, and headings marking only three of them - so there
+     was nothing to show where one setting ended and the next began, and the
+     eye had to work it out from the wording. The other panels already group
+     this way; this one simply had not caught up. */
+  function section(parent, heading){
+    var c = el('div', 'card');
+    c.appendChild(el('h4', null, heading));
+    parent.appendChild(c);
+    return c;
+  }
+
   function buildGeneralPanel(){
     var p = panel('general');
+
+    var contact = section(p, 'Contact');
     var f = el('div', 'field');
     f.appendChild(el('label', null, 'Contact email'));
     var i = document.createElement('input');
     i.type = 'email'; i.id = 'set-contact'; i.autocomplete = 'off';
     f.appendChild(i);
     f.appendChild(el('p', 'hint', 'The certificate authority sends expiry warnings here. Required.'));
-    p.appendChild(f);
+    contact.appendChild(f);
 
     /* Display only. It formats times in emails, run logs and the audit trail —
        it does NOT move any schedule. Renewals fire from Windows Task Scheduler
@@ -127,10 +141,10 @@
     var tzWarn = el('p', 'hint bad hidden');
     tzWarn.id = 'set-timezone-warn';
     tzf.appendChild(tzWarn);
-    p.appendChild(tzf);
+    section(p, 'Displayed times').appendChild(tzf);
 
-    p.appendChild(el('h4', null, 'Log retention'));
-    p.appendChild(guideHint(
+    var logs = section(p, 'Log retention');
+    logs.appendChild(guideHint(
       'Applies to run logs. Whichever limit is reached first, the oldest go.', 'logs'));
 
     var grid = el('div', 'fields');
@@ -147,9 +161,9 @@
     si.type = 'number'; si.min = '1'; si.max = '51200'; si.id = 'set-log-mb'; si.autocomplete = 'off';
     size.appendChild(si);
     grid.appendChild(size);
-    p.appendChild(grid);
+    logs.appendChild(grid);
 
-    p.appendChild(guideHint(
+    logs.appendChild(guideHint(
       'The audit trail is deliberately not covered by either limit.', 'logs'));
 
     p.appendChild(buildUpdateSection());
@@ -167,7 +181,7 @@
      update on a machine whose job is running unattended should be "it refused",
      not a conflicted working tree nobody is sitting in front of. */
   function buildUpdateSection(){
-    var wrap = el('div', 'sub');
+    var wrap = el('div', 'card');
     wrap.appendChild(el('h4', null, 'Update'));
     wrap.appendChild(guideHint(
       'Pulls new code. Nothing of yours is in the repository, so nothing of yours is touched.',
@@ -177,7 +191,10 @@
     rows.id = 'set-update-rows';
     wrap.appendChild(rows);
 
-    var actions = el('div', 'page-actions');
+    // card-actions, not page-actions: the latter carries the divider that
+    // belongs above the page's own Save button, and it was drawing a stray line
+    // across the middle of this card.
+    var actions = el('div', 'card-actions');
     var check = el('button', 'btn', 'Check for updates');
     check.type = 'button';
     check.addEventListener('click', function(){ runUpdateCheck(true); });
@@ -240,7 +257,7 @@
           runUpdateCheck(false);
         });
       });
-      var act = el('div', 'page-actions');
+      var act = el('div', 'card-actions');
       act.appendChild(apply);
       out.appendChild(act);
     });
@@ -258,7 +275,7 @@
      four. */
 
   function buildAddressSection(){
-    var wrap = el('div');
+    var wrap = el('div', 'card');
     wrap.appendChild(el('h4', null, 'Tracker address'));
     wrap.appendChild(el('p', 'hint',
       'By default this page is served over plain HTTP at 127.0.0.1 on whichever port is free — ' +
@@ -295,7 +312,7 @@
     grid.appendChild(pf);
     fields.appendChild(grid);
 
-    var actions = el('div', 'page-actions');
+    var actions = el('div', 'card-actions');
     var check = el('button', 'btn', 'Check');
     check.type = 'button';
     check.addEventListener('click', function(){ runPreflight(true); });
