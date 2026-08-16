@@ -2123,10 +2123,36 @@ function Get-CertificateGroups {
         # the second. Deleting the line would drop it from monitoring instead,
         # which is worse. check-ssl.ps1 reads domains.txt directly and never
         # calls this function, so what is watched is unaffected either way.
+        # The console's own address gets its OWN certificate, never a seat on the
+        # zone's SAN certificate - the same split the wildcard already gets, and
+        # for a sharper reason.
+        #
+        # Sharing means the console's certificate is re-issued every time
+        # somebody adds or removes an unrelated production name, and that every
+        # such change is one more chance to take down the thing you would use to
+        # find out. It also means the console's name travels to every load
+        # balancer the zone certificate is deployed to, which nothing asked for.
+        # Separate, it renews on its own schedule, is deployed nowhere, and
+        # editing the production list cannot touch it.
+        $trackerName = ''
+        if ($Settings -and $Settings.ContainsKey('web') -and $Settings.web) {
+            $w = $Settings.web
+            if ($w.ContainsKey('hostname') -and $w.hostname) {
+                $trackerName = ([string]$w.hostname).Trim().TrimEnd('.').ToLowerInvariant()
+            }
+        }
+        $trackerHere = $false
+
         $kinds = @()
         if ($g -and @($g.names).Count) {
             $snames = @($g.names)
             if ($wantsWildcard) { $snames = @($snames | Where-Object { $_ -ne $zone }) }
+
+            # Pulled out BEFORE the SAN kind is built, or it would appear on both.
+            if ($trackerName -and (@($snames) -contains $trackerName)) {
+                $snames = @($snames | Where-Object { $_ -ne $trackerName })
+                $trackerHere = $true
+            }
 
             # The guard matters: a zone listing only its apex plus a wildcard
             # now yields the wildcard alone, rather than an empty SAN order.
@@ -2148,6 +2174,15 @@ function Get-CertificateGroups {
             $kinds += @{
                 kind = 'wildcard'; id = "wildcard.$zone"; display = "*.$zone"
                 names = @("*.$zone", $zone)
+            }
+        }
+        if ($trackerHere) {
+            # Appended last so it sorts to the end of the list by default - it is
+            # infrastructure for this tool, not one of the certificates somebody
+            # came here to manage.
+            $kinds += @{
+                kind = 'tracker'; id = $trackerName; display = $trackerName
+                names = @($trackerName)
             }
         }
 
@@ -2231,6 +2266,7 @@ function Get-CertificateGroups {
                 deferredNames = @($(if ($g -and $k.kind -eq 'san') { $g.deferredNames } else { @() }))
                 categories    = @($(if ($g) { $g.categories } else { @() }))
                 wildcard      = ($k.kind -eq 'wildcard')
+                tracker       = ($k.kind -eq 'tracker')
                 external      = $external
                 targets       = @($targets)
                 caId          = $ca.id
@@ -4020,17 +4056,31 @@ function Add-TrackerDomainEntry {
 
     if ($text -and -not $text.EndsWith("`n")) { $text += "`r`n" }
 
+    # Written INTO the file, not just explained in the UI. domains.txt is
+    # hand-edited, often months later by somebody tidying up names they do not
+    # recognise, and this one looks like an internal hostname that wandered in
+    # by mistake. Removing it takes the certificate out of the renewal set -
+    # renew-due.ps1 builds that set from what the checker still watches - and
+    # the console then stops serving HTTPS the day the certificate expires,
+    # with the thing that would have warned about it being the thing that went
+    # down. The note is cheaper than that conversation.
+    $note = "# The address of the tracker page itself - Cert Camel serves this console" + "`r`n" +
+            "# with the certificate covering this name. Leave it here: remove the line" + "`r`n" +
+            "# and it stops being renewed, and the console stops serving HTTPS when the" + "`r`n" +
+            "# certificate expires. Change it from Settings > General instead."
+    $block = $note + "`r`n" + $entry
+
     if ($text -match '(?m)^\s*\[' + [regex]::Escape($Category) + '\]\s*$') {
         # The category exists already: append under it rather than opening a
         # second block with the same name.
         $text = [regex]::Replace(
             $text,
             '(?m)^(\s*\[' + [regex]::Escape($Category) + '\]\s*)$',
-            ('$1' + "`r`n" + $entry),
+            ('$1' + "`r`n" + $block),
             1)
     }
     else {
-        $text += "`r`n[$Category]`r`n$entry`r`n"
+        $text += "`r`n[$Category]`r`n$block`r`n"
     }
 
     Write-TextFileAtomic -Path $script:DomainsFile -Content $text
