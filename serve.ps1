@@ -677,6 +677,16 @@ function Invoke-SaveSettings {
 
     $settings = Get-TrackerSettings
 
+    # Credential keys written during this save. The trail already records a
+    # credential being REMOVED (Write-SecretPruneAudit), and the Logs view
+    # already offers a "credential changes" filter - but nothing recorded one
+    # being SET, so on a normal install that filter was permanently empty and a
+    # Cloudflare token being replaced looked exactly like a timezone change.
+    #
+    # Key names only, never values, which is the same rule the prune audit and
+    # Write-AuditEvent itself already follow.
+    $secretsSet = @()
+
     if ($null -ne $Payload.contact) { $settings.contact = [string]$Payload.contact }
 
     # Display only - see Get-DisplayTimeZone. Validated against the machine's own
@@ -704,6 +714,7 @@ function Invoke-SaveSettings {
             # form cannot wipe a credential nobody retyped.
             if ($c.PSObject.Properties['eabHmacKey'] -and $c.eabHmacKey) {
                 Set-TrackerSecret -Key "ca:$id`:eabHmacKey" -Value ([string]$c.eabHmacKey)
+                $secretsSet += "ca:$id`:eabHmacKey"
             }
 
             $keptCas += @{
@@ -766,7 +777,10 @@ function Invoke-SaveSettings {
                 if ($a.Secret) {
                     # Blank means "keep what is stored", so an unchanged form
                     # cannot wipe a credential that was never retyped.
-                    if ($val) { Set-TrackerSecret -Key "$id`:$($a.Name)" -Value ([string]$val) }
+                    if ($val) {
+                        Set-TrackerSecret -Key "$id`:$($a.Name)" -Value ([string]$val)
+                        $secretsSet += "$id`:$($a.Name)"
+                    }
                 }
                 elseif ($a.Type -eq 'bool') { $plain[$a.Name] = [bool]$val }
                 else { $plain[$a.Name] = [string]$val }
@@ -848,7 +862,10 @@ function Invoke-SaveSettings {
                 if ($a.Secret) {
                     # Blank means "keep what is stored", so an unchanged form
                     # cannot wipe a credential nobody retyped.
-                    if ($val) { Set-TrackerSecret -Key "$id`:$($a.Name)" -Value ([string]$val) }
+                    if ($val) {
+                        Set-TrackerSecret -Key "$id`:$($a.Name)" -Value ([string]$val)
+                        $secretsSet += "$id`:$($a.Name)"
+                    }
                 }
                 elseif ($a.Type -eq 'bool') { $plain[$a.Name] = [bool]$val }
                 else { $plain[$a.Name] = [string]$val }
@@ -913,6 +930,7 @@ function Invoke-SaveSettings {
         # prune - there is no list an id can fall out of.
         if ($smtp -and $smtp.PSObject.Properties['password'] -and $smtp.password) {
             Set-TrackerSecret -Key 'alerts:smtpPassword' -Value ([string]$smtp.password)
+            $secretsSet += 'alerts:smtpPassword'
         }
 
         $thresholds = @()
@@ -1010,6 +1028,16 @@ function Invoke-SaveSettings {
     }
     Write-AuditEvent -Event 'settings' -Object ($touched -join ', ') -Outcome 'ok' `
         -Detail "settings saved$(if ($touched.Count) { '' } else { ' (no sections present)' })"
+
+    # Its own line rather than folded into the one above, so "show me every time
+    # a credential changed" is one filter rather than a read of every settings
+    # save. Deliberately after the save: this records what was stored, not what
+    # was attempted.
+    if ($secretsSet.Count) {
+        Write-AuditEvent -Event 'secret' -Object (($secretsSet | Sort-Object -Unique) -join ', ') `
+            -Outcome 'ok' `
+            -Detail "stored $(@($secretsSet | Sort-Object -Unique).Count) credential(s) from a settings save"
+    }
 
     return @{ ok = $true }
 }
