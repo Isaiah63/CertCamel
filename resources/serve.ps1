@@ -63,7 +63,7 @@ $script:RunLogSource = 'ui'
 # file the server currently has open - which would fail into an empty catch and
 # retry silently forever. It carries its own rotation instead.
 
-$script:DiagFile    = Join-Path $PSScriptRoot 'server.log'
+$script:DiagFile    = Join-Path $script:Root 'server.log'
 $script:DiagMaxBytes = 2mb
 
 function Initialize-DiagLog {
@@ -71,7 +71,7 @@ function Initialize-DiagLog {
         if ((Test-Path $script:DiagFile) -and (Get-Item $script:DiagFile).Length -gt $script:DiagMaxBytes) {
             # One generation back is enough: this is a breadcrumb trail for "why
             # did the service misbehave last night", not an audit record.
-            $old = Join-Path $PSScriptRoot 'server.1.log'
+            $old = Join-Path $script:Root 'server.1.log'
             if (Test-Path $old) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
             Move-Item -LiteralPath $script:DiagFile -Destination $old -Force -ErrorAction SilentlyContinue
         }
@@ -200,7 +200,9 @@ function Write-SessionFile {
         pid       = $PID
         service   = [bool]$ServiceMode
         startedAt = (Get-Date).ToString('o')
-        folder    = $PSScriptRoot
+        # The FOLDER, not resources\ - this is what a person is told to look at
+        # when two installs are running and they need to know which is which.
+        folder    = $script:Root
     }
     try {
         Write-TextFileAtomic -Path $script:SessionFile -Content ($payload | ConvertTo-Json)
@@ -1170,9 +1172,14 @@ function Invoke-Route {
     }
 
     # --- static ------------------------------------------------------------ #
+    # Served from BOTH roots, and which one is not arbitrary. The app shell and
+    # its assets ship with the program, so they are under resources\ with the
+    # scripts. The guides and ssl-data.js sit in the folder itself - the guides
+    # because someone is meant to find and open them without going hunting, and
+    # ssl-data.js because it is generated output like every other file up there.
 
     if ($path -eq '/' -or $path -eq '/index.html' -or $path -eq '/ssl-tracker.html') {
-        $file = Join-Path $PSScriptRoot 'ssl-tracker.html'
+        $file = Join-Path $script:AppDir 'ssl-tracker.html'
         if (-not (Test-Path $file)) { Send-Error $Stream 404 'ssl-tracker.html is missing.'; return }
         $html = Get-Content $file -Raw -Encoding UTF8
         Send-Response -Stream $Stream -ContentType $script:Mime['.html'] -Body ([Text.Encoding]::UTF8.GetBytes($html))
@@ -1192,7 +1199,7 @@ function Invoke-Route {
     $docPages = @('readme.html', 'haproxy-setup.html', 'security.html')
     if ($docPages -contains $path.TrimStart('/')) {
         $name = $path.TrimStart('/')
-        $file = Join-Path $PSScriptRoot $name
+        $file = Join-Path $script:Root $name
         if (-not (Test-Path $file)) { Send-Error $Stream 404 "$name is missing."; return }
         $html = Get-Content $file -Raw -Encoding UTF8
         Send-Response -Stream $Stream -ContentType $script:Mime['.html'] -Body ([Text.Encoding]::UTF8.GetBytes($html))
@@ -1200,7 +1207,7 @@ function Invoke-Route {
     }
 
     if ($path -eq '/ssl-data.js') {
-        $file = Join-Path $PSScriptRoot 'ssl-data.js'
+        $file = Join-Path $script:Root 'ssl-data.js'
         # No data yet is normal on a first run; hand back an empty global so the
         # page shows its own "no data" state rather than a script error.
         $js = if (Test-Path $file) { Get-Content $file -Raw -Encoding UTF8 } else { 'window.SSL_DATA = null;' }
@@ -1215,7 +1222,7 @@ function Invoke-Route {
         # lookup. Resolve to a full path and require it land inside the assets
         # directory; ".." or an absolute path either fails to resolve under it
         # or gets caught by the prefix check below.
-        $assetsRoot = Join-Path $PSScriptRoot 'assets'
+        $assetsRoot = Join-Path $script:AppDir 'assets'
         $relative   = $path.Substring('/assets/'.Length) -replace '/', '\'
         $requested  = Join-Path $assetsRoot $relative
 
@@ -2375,7 +2382,9 @@ Write-SessionFile -ActualPort $actualPort -Url $url
 
 Write-Diag ""
 Write-Diag "  SSL Certificate Tracker" 'Cyan'
-Write-Diag "  $PSScriptRoot" 'DarkGray'
+# The folder, not resources\ - this line exists so somebody reading the console
+# knows WHICH install is talking, and they know it by the folder they opened.
+Write-Diag "  $script:Root" 'DarkGray'
 Write-Diag ""
 Write-Diag "  Listening on 127.0.0.1:$actualPort (this PC only)" 'Green'
 

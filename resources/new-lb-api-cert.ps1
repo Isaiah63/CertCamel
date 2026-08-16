@@ -55,7 +55,10 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'acme-lib.ps1')
 
-$caDir  = Join-Path $PSScriptRoot 'lb-ca'
+# $script:Root, not $PSScriptRoot: this writes a CA and its private keys, which
+# belong with the operator's other key material in the folder above rather than
+# buried in resources\ where nothing thinks to back it up.
+$caDir  = Join-Path $script:Root 'lb-ca'
 $caPfx  = Join-Path $caDir 'lb-ca.pfx'
 $caCrt  = Join-Path $caDir 'lb-ca.crt'
 if (-not $OutDir) { $OutDir = Join-Path $caDir $Node }

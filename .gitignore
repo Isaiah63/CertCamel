@@ -60,7 +60,11 @@ fable-prompt-*.md
 # build step, and nothing it ships references Node or npm, so a downloaded copy
 # runs without installing anything. tests\README.md says how to set them up for
 # anyone who wants to run them - it is only `npm install jsdom`.
-tests/node_modules/
+# Not "tests/node_modules/": a pattern with a slash inside it is anchored to
+# this file's directory, so that one stopped matching the moment tests\ moved
+# into resources\ - and 700-odd jsdom files queued themselves for commit. The
+# bare form matches at any depth, which is what was meant all along.
+node_modules/
 
 # The shortcut setup.ps1 creates so the launcher has the camel on it rather than
 # the generic batch-file icon. NOT committed: a .lnk bakes in an ABSOLUTE path,

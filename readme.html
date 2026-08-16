@@ -922,41 +922,63 @@ validation reuse periods shrink alongside it.</p>
 times as often by 2029. That is the actual argument for automating this.</p>
 
 <h2 id="files">18. Files</h2>
+<p>The folder is split in two, and the split is the answer to &ldquo;what am I supposed to touch?&rdquo;
+Everything at the top level is either something you run, something you read, or something that is
+yours. The program itself lives in <code>resources\</code>, and you can go your whole life without
+opening it.</p>
 <pre><code>Open Tracker.bat      start the server and open the page  &lt;- use this
-ssl-tracker.html      the app shell (sidebar + view containers; needs the server)
-assets\app.css        all styling
-assets\app.js         router, API client, shared state, the job runner
-assets\views\         one file per sidebar page (home, certificates, settings, docs)
+First Time Setup.bat  one-time setup
+Check Now.bat         refresh the data
+sos-plain-http.ps1    turn HTTPS back off when the console will not load
+
 readme.html           this page
 haproxy-setup.html    step-by-step HAProxy Data Plane API guide
 security.html         what is protected, what is not, and what is on your disk
+LICENSE               MIT
+
 domains.txt           the list you edit                   (yours, gitignored)
 domains.example.txt   the shipped sample
-Check Now.bat         refresh the data
-First Time Setup.bat  one-time setup
 
-check-ssl.ps1         the checker (parallel, records SANs and serials)
-serve.ps1             the local server
-renew.ps1             performs one renewal, then deploys it
-deploy.ps1            pushes to load balancers and verifies every node
-renew-due.ps1         renews whatever the CA says is due, sends expiry alerts (scheduled task)
-monthly-report.ps1    sends the monthly summary email, if turned on (scheduled task)
-acme-lib.ps1          shared settings, secrets, grouping and alert-sending logic
-setup.ps1             what setup runs
+resources\            everything the program needs to run - not yours to edit
+  serve.ps1           the local server
+  check-ssl.ps1       the checker (parallel, records SANs and serials)
+  renew.ps1           performs one renewal, then deploys it
+  deploy.ps1          pushes to load balancers and verifies every node
+  renew-due.ps1       renews whatever the CA says is due, sends expiry alerts (scheduled task)
+  monthly-report.ps1  sends the monthly summary email, if turned on (scheduled task)
+  acme-lib.ps1        shared settings, secrets, grouping and alert-sending logic
+  setup.ps1           what setup runs
+  ssl-tracker.html    the app shell (sidebar + view containers; needs the server)
+  assets\app.css      all styling
+  assets\app.js       router, API client, shared state, the job runner
+  assets\views\       one file per sidebar page (home, certificates, settings, docs)
+  lib\                Posh-ACME
+  tests\              the jsdom suites
 
-generated, none committed:
+generated, none committed - all of it stays at the top level, where you can see it:
   ssl-data.js         checker output
   settings.json       your configuration
   secrets.xml         DNS/SMTP credentials, DPAPI-encrypted
   zones.json          cached zone list from your DNS provider
   alert-state.json    which expiry thresholds have already been emailed, per host
+  audit.log           one line per state change, append-only
+  server.log          the headless server's own diagnostics
   certs\              issued certificates and private keys
   acme-state\         ACME account and order state
-  jobs\               renewal logs
-  lib\                Posh-ACME</code></pre>
+  jobs\               renewal logs</code></pre>
+<div class="callout warn">
+  <div class="h">Moving or updating this folder? Re-run setup</div>
+  <p>A scheduled task stores the <strong>absolute path</strong> of the script it runs, so copying
+  this folder elsewhere &mdash; or taking an update that moves a script, as the move into
+  <code>resources\</code> did &mdash; leaves every task pointing at where the script used to be. The
+  task still reports healthy and renewal silently stops.</p>
+  <p><strong>Home</strong> flags this on sight, and the repair is one command from an elevated
+  PowerShell: <code>resources\setup.ps1 -RepairTasks</code>. It rewrites each registered task to the
+  current location and changes nothing else about its schedule.</p>
+</div>
 <p>Requires Windows PowerShell 5.1, which ships with Windows. Monitoring needs nothing installed.
 Renewal adds <a href="https://poshac.me" target="_blank" rel="noopener">Posh-ACME</a>, downloaded
-into <code>lib\</code> inside this folder rather than installed system-wide &mdash; no admin rights
+into <code>resources\lib\</code> inside this folder rather than installed system-wide &mdash; no admin rights
 at any point.</p>
 
 </article>

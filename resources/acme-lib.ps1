@@ -21,7 +21,19 @@
 # Paths and constants
 # --------------------------------------------------------------------------- #
 
-$script:Root         = $PSScriptRoot
+# Two roots, because the program and the operator's data no longer share a
+# folder. Everything the scripts SHIP with lives beside them in resources\;
+# everything the operator owns or the tool produces stays one level up, where
+# it can be seen without going looking - which is the entire point of the split.
+#
+#   $script:AppDir   resources\   scripts, assets, the vendored Posh-ACME
+#   $script:Root     the folder   settings, secrets, certs, logs, the guides
+#
+# When adding a path, the question is not "where is the file" but "whose file is
+# it". Getting that backwards writes certs\ inside resources\, where nobody
+# excludes it from file sync and nobody thinks to back it up.
+$script:AppDir       = $PSScriptRoot
+$script:Root         = Split-Path $PSScriptRoot -Parent
 $script:SettingsFile = Join-Path $script:Root 'settings.json'
 $script:SecretsFile  = Join-Path $script:Root 'secrets.xml'
 $script:ZonesFile    = Join-Path $script:Root 'zones.json'
@@ -32,7 +44,7 @@ $script:AuditFile    = Join-Path $script:Root 'audit.log'
 # Rotation, not deletion: see Invoke-LogRetention for why the audit trail is
 # exempt from the size cap that governs run logs.
 $script:AuditMaxBytes = 5mb
-$script:LibDir       = Join-Path $script:Root 'lib'
+$script:LibDir       = Join-Path $script:AppDir 'lib'
 $script:AcmeState    = Join-Path $script:Root 'acme-state'
 $script:CertsDir     = Join-Path $script:Root 'certs'
 $script:JobsDir      = Join-Path $script:Root 'jobs'
@@ -905,12 +917,17 @@ function Get-AutomationStatus {
                 # path, so copying this folder leaves the task pointing at the
                 # old one - renewal silently stops and the first symptom is an
                 # expiry warning weeks later. Worth catching on sight.
+                #
+                # It also catches an UPGRADE, not just a copy: the scripts moved
+                # into resources\ once, so a task registered before that move
+                # names a path that no longer exists. Same silent failure, and
+                # the same fix - re-run setup.
                 foreach ($a in $d.Actions) {
                     if (-not $a.Arguments) { continue }
                     $m = [regex]::Match([string]$a.Arguments, '-File\s+"?([^"]+)"?\s*$')
                     if ($m.Success) {
                         $entry.commandPath = $m.Groups[1].Value.Trim()
-                        $expected = Join-Path $script:Root $def.script
+                        $expected = Join-Path $script:AppDir $def.script
                         try {
                             $entry.pathMatches = ([IO.Path]::GetFullPath($entry.commandPath) -eq [IO.Path]::GetFullPath($expected))
                         }
@@ -951,8 +968,8 @@ function Install-CamelServerTask {
     $def = @($script:ScheduledTaskNames) | Where-Object { $_.key -eq 'server' }
     if (-not $def) { throw "No 'server' entry in the scheduled task map." }
 
-    $serve = Join-Path $script:Root 'serve.ps1'
-    if (-not (Test-Path $serve)) { throw "serve.ps1 is missing from $script:Root." }
+    $serve = Join-Path $script:AppDir 'serve.ps1'
+    if (-not (Test-Path $serve)) { throw "serve.ps1 is missing from $script:AppDir." }
 
     $argLine = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Port {1} -ServiceMode' -f $serve, $Port
     $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argLine
@@ -1015,7 +1032,7 @@ function New-TrackerShortcut {
     if (-not $dir -or -not (Test-Path $dir)) { throw "Could not find the $Where folder." }
 
     $lnk = Join-Path $dir "$Name.lnk"
-    $ico = Join-Path $script:Root 'assets\certcamel.ico'
+    $ico = Join-Path $script:AppDir 'assets\certcamel.ico'
 
     $shell = New-Object -ComObject WScript.Shell
     try {

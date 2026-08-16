@@ -28,7 +28,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$root       = $PSScriptRoot
+# The folder above this one: the script ships in resources\, but the list it
+# reads and the data it writes belong to the operator and live up there.
+$root       = Split-Path $PSScriptRoot -Parent
 $domainList = Join-Path $root 'domains.txt'
 $outFile    = Join-Path $root 'ssl-data.js'
 $tmpFile    = "$outFile.tmp"

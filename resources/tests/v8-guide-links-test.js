@@ -15,9 +15,16 @@ const scripts = ['assets\\app.js', 'assets\\views\\home.js', 'assets\\views\\cer
   .map(p => fs.readFileSync(ROOT + p, 'utf8'));
 
 // Anchors declared by each shipped guide.
+//
+// One level ABOVE ROOT, unlike everything else this suite reads. ROOT is
+// resources\, where the app shell and its assets ship; the guides sit in the
+// folder itself so somebody can find and open them without going hunting. The
+// app links to them as bare filenames because the server serves them at the
+// root of the URL space either way.
+const GUIDE_DIR = path.join(ROOT, '..') + path.sep;
 const guides = {};
 ['readme.html', 'haproxy-setup.html', 'security.html'].forEach(function(f){
-  const src = fs.readFileSync(ROOT + f, 'utf8');
+  const src = fs.readFileSync(GUIDE_DIR + f, 'utf8');
   const ids = {};
   (src.match(/id="[^"]+"/g) || []).forEach(function(m){ ids[m.slice(4, -1)] = true; });
   guides[f] = ids;

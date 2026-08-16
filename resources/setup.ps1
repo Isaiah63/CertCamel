@@ -22,14 +22,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$root        = $PSScriptRoot
+# Two roots, matching acme-lib: $appDir is resources\, where the scripts and the
+# app shell ship; $root is the folder itself, which holds the operator's files
+# and the things they double-click. Registering a task against the wrong one is
+# the mistake this split exists to make obvious.
+$appDir      = $PSScriptRoot
+$root        = Split-Path $PSScriptRoot -Parent
 $domainList  = Join-Path $root 'domains.txt'
 $domainSeed  = Join-Path $root 'domains.example.txt'
-$checker     = Join-Path $root 'check-ssl.ps1'
-$tracker     = Join-Path $root 'ssl-tracker.html'
+$checker     = Join-Path $appDir 'check-ssl.ps1'
+$tracker     = Join-Path $appDir 'ssl-tracker.html'
 $launcher    = Join-Path $root 'Open Tracker.bat'
 
-. (Join-Path $root 'acme-lib.ps1')
+. (Join-Path $appDir 'acme-lib.ps1')
 
 # Task names come from the shared map in acme-lib.ps1 rather than being spelled
 # out here. They used to be literals in both this file and nothing else; now
@@ -106,10 +111,19 @@ $taskName = Get-SetupTaskName 'check'
 # --------------------------------------------------------------------------- #
 # -RepairTasks: fix the principals and get out
 # --------------------------------------------------------------------------- #
-# Re-registers each EXISTING task with its own action, trigger and settings
-# preserved, changing only the principal. Deliberately not rebuilt from
-# scratch: whatever schedule or limits are already there stay exactly as they
-# are, and a task that was never registered is not conjured into being.
+# Re-registers each EXISTING task with its own trigger and settings preserved,
+# fixing two things: the principal, and the path to the script it runs.
+# Deliberately not rebuilt from scratch: whatever schedule or limits are already
+# there stay exactly as they are, and a task that was never registered is not
+# conjured into being.
+#
+# The PATH half exists because a task stores an absolute one. Copy the folder
+# somewhere else, or take an update that moves the scripts - as the move into
+# resources\ did - and every task still names where the script used to be. The
+# task keeps reporting healthy and renewal silently stops, which is the failure
+# Get-AutomationStatus flags as pathMatches=false. This is the repair for it,
+# and it is why the principal check below cannot short-circuit the loop: a task
+# can be correctly S4U and still point at nothing.
 
 if ($RepairTasks) {
     Write-Host ""
@@ -137,16 +151,39 @@ if ($RepairTasks) {
             $missing++
             continue
         }
-        if ($t.Principal.LogonType -eq 'S4U' -or $t.Principal.LogonType -eq 'Password') {
-            Write-Host ("  {0,-28} already runs signed-out" -f $def.name) -ForegroundColor Green
+        $principalOk = ($t.Principal.LogonType -eq 'S4U' -or $t.Principal.LogonType -eq 'Password')
+
+        # Rewrite only the -File argument, keeping everything after it: the
+        # server task carries "-Port 8787 -ServiceMode" and losing that would
+        # start it on a random port that "Open Tracker.bat" cannot predict.
+        $expected = Join-Path $appDir $def.script
+        $actions  = @($t.Actions)
+        $pathOk   = $true
+        foreach ($a in $actions) {
+            if (-not $a.Arguments) { continue }
+            $m = [regex]::Match([string]$a.Arguments, '-File\s+"?([^"]+?)"?(\s|$)')
+            if (-not $m.Success) { continue }
+            $current = $m.Groups[1].Value.Trim()
+            $same = $false
+            try { $same = ([IO.Path]::GetFullPath($current) -eq [IO.Path]::GetFullPath($expected)) } catch { }
+            if ($same) { continue }
+            $pathOk = $false
+            $a.Arguments = [string]$a.Arguments -replace [regex]::Escape($current), $expected.Replace('$', '$$')
+        }
+
+        if ($principalOk -and $pathOk) {
+            Write-Host ("  {0,-28} already correct" -f $def.name) -ForegroundColor Green
             $already++
             continue
         }
         try {
             $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType S4U -RunLevel Limited
-            Register-ScheduledTask -TaskName $def.name -Action $t.Actions -Trigger $t.Triggers `
+            Register-ScheduledTask -TaskName $def.name -Action $actions -Trigger $t.Triggers `
                 -Settings $t.Settings -Principal $principal -Force -ErrorAction Stop | Out-Null
-            Write-Host ("  {0,-28} fixed" -f $def.name) -ForegroundColor Green
+            $what = @()
+            if (-not $principalOk) { $what += 'principal' }
+            if (-not $pathOk)      { $what += 'script path' }
+            Write-Host ("  {0,-28} fixed ({1})" -f $def.name, ($what -join ' and ')) -ForegroundColor Green
             $fixed++
         }
         catch {
@@ -320,7 +357,7 @@ Write-Host ""
 $wantHttps = Read-Host "        Set up HTTPS for this page now? (Y/N)"
 
 if ($wantHttps -match '^[Yy]') {
-    . (Join-Path $root 'acme-lib.ps1')
+    . (Join-Path $appDir 'acme-lib.ps1')
 
     $webName = (Read-Host "        Hostname for this page (e.g. tracker.example.com)").Trim()
     $webPort = 0
@@ -367,7 +404,7 @@ if ($wantHttps -match '^[Yy]') {
             if ($manual -match '^[Yy]') {
                 Write-Host ""
                 & powershell.exe -NoProfile -ExecutionPolicy Bypass `
-                    -File (Join-Path $root 'issue-tracker-cert.ps1') -HostName $webName -Port $webPort
+                    -File (Join-Path $appDir 'issue-tracker-cert.ps1') -HostName $webName -Port $webPort
                 Write-Host ""
                 $st = Get-TrackerAddressStatus -HostName $webName -Port $webPort `
                         -Settings (Get-TrackerSettings) -ZoneCache (Get-ZoneCache)
@@ -419,7 +456,7 @@ if ($wantHttps -match '^[Yy]') {
                     $zoneForCert = $(if ($st.zone.zone) { $st.zone.zone } else { $webName })
                     Write-Host ""
                     & powershell.exe -NoProfile -ExecutionPolicy Bypass `
-                        -File (Join-Path $root 'renew.ps1') -Zone $zoneForCert -Source 'cli'
+                        -File (Join-Path $appDir 'renew.ps1') -Zone $zoneForCert -Source 'cli'
                     Write-Host ""
                     $st = Get-TrackerAddressStatus -HostName $webName -Port $webPort `
                             -Settings (Get-TrackerSettings) -ZoneCache (Get-ZoneCache)
@@ -469,7 +506,7 @@ if ($wantHttps -match '^[Yy]') {
 # --------------------------------------------------------------------------- #
 
 $renewTask   = Get-SetupTaskName 'renew'
-$renewScript = Join-Path $root 'renew-due.ps1'
+$renewScript = Join-Path $appDir 'renew-due.ps1'
 
 Write-Host ""
 Write-Host "  [+] Unattended renewal" -ForegroundColor Cyan
@@ -529,7 +566,7 @@ if ($wantRenew -match '^[Yy]') {
 # cmdlet does not expose.
 
 $reportTask   = Get-SetupTaskName 'report'
-$reportScript = Join-Path $root 'monthly-report.ps1'
+$reportScript = Join-Path $appDir 'monthly-report.ps1'
 
 Write-Host ""
 Write-Host "  [+] Monthly summary email" -ForegroundColor Cyan
@@ -716,5 +753,5 @@ elseif (Test-Path $tracker) {
     # the session token serve.ps1 hands it and shows an explanatory error
     # without one, rather than the read-only page it used to fall back to.
     Write-Host "  'Open Tracker.bat' is missing, so there is nothing to launch." -ForegroundColor Yellow
-    Write-Host "  Run serve.ps1 directly instead: powershell -ExecutionPolicy Bypass -File `"$(Join-Path $root 'serve.ps1')`"" -ForegroundColor DarkGray
+    Write-Host "  Run serve.ps1 directly instead: powershell -ExecutionPolicy Bypass -File `"$(Join-Path $appDir 'serve.ps1')`"" -ForegroundColor DarkGray
 }
