@@ -4069,6 +4069,15 @@ function Get-TrackerAddressStatus {
         zone        = @{ ok = $false; detail = 'No hostname given.'; zone = ''; provider = '' }
         certificate = @{ ok = $false; detail = ''; certId = ''; notAfter = $null
                          exact = $false; covered = $false; watched = $false }
+        # Who keeps this certificate alive, and where it is on disk.
+        #
+        # Both matter more here than anywhere else in the tool: this is the
+        # certificate the console serves ITSELF with, so if it quietly stops
+        # being renewed the thing that would have warned you is the thing that
+        # goes down. And whoever has to replace it by hand at 2am needs the path,
+        # not a hunt.
+        renewal     = @{ ok = $false; detail = ''; managed = $false
+                         renewAfter = $null; file = ''; fileExists = $false }
         portCheck   = @{ ok = $false; detail = '' }
         hosts       = @{ ok = $false; detail = ''; line = ''; address = '' }
     }
@@ -4147,6 +4156,55 @@ function Get-TrackerAddressStatus {
                 }
             }
         } catch { }
+    }
+
+    # --- renewal: will anything actually keep this alive, and where is it? --- #
+    # Read from the last sweep rather than recomputed: renew-due.ps1 already
+    # works this out with the right ACME server selected, and recomputing it
+    # would mean importing Posh-ACME into the long-lived listener - which
+    # serve.ps1 deliberately does not do. See Get-RenewalForecast.
+    if ($cert) {
+        # certs\<certId>\<certId>-full.pem - the per-certificate directory
+        # renew.ps1 writes to (renew.ps1:293), NOT certs\ directly. Built the
+        # same way here so the path shown is the path that exists.
+        $out.renewal.file = Join-Path (Join-Path $script:CertsDir $cert.certId) "$($cert.certId)-full.pem"
+        $out.renewal.fileExists = Test-Path $out.renewal.file
+
+        $forecast = Get-RenewalForecast
+        $entry = $null
+        if ($forecast -and $forecast.considered) {
+            $entry = @($forecast.considered | Where-Object { $_.certId -eq $cert.certId })[0]
+        }
+
+        if (-not $forecast) {
+            $out.renewal.detail = 'No renewal sweep has run yet, so this cannot be confirmed. Run one from the Certificates page.'
+        }
+        elseif (-not $entry) {
+            # The failure this row exists to catch. renew-due.ps1 only considers
+            # certificates the checker still knows about, so removing the name
+            # that backs this one from domains.txt silently drops it out of the
+            # renewal set - and the console's own certificate then expires with
+            # nothing left running to complain about it.
+            $out.renewal.detail = "$($cert.certId) is NOT in the renewal set - nothing will renew it, and this page stops serving HTTPS when it expires. Check it is still in domains.txt and not marked as managed elsewhere."
+        }
+        else {
+            $out.renewal.ok      = $true
+            $out.renewal.managed = $true
+            if ($entry.renewAfter) {
+                $out.renewal.renewAfter = [string]$entry.renewAfter
+                try {
+                    $when = ([datetime]$entry.renewAfter).ToString('d MMM yyyy')
+                    $out.renewal.detail = "renewed automatically - the CA's renewal window opens $when"
+                } catch { $out.renewal.detail = 'renewed automatically' }
+            }
+            elseif ($entry.due) {
+                $out.renewal.detail = "renewed automatically - due now ($($entry.reason))"
+            }
+            else {
+                # No ARI from this CA, so renewal falls back to a day threshold.
+                $out.renewal.detail = 'renewed automatically - this CA offers no renewal window, so the day threshold applies'
+            }
+        }
     }
 
     # --- port ---------------------------------------------------------------- #

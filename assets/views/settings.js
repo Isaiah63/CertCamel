@@ -260,6 +260,22 @@
       }
       out.appendChild(certRow);
 
+      /* Only once a certificate actually covers the name - before that there is
+         nothing to renew and nothing on disk, and two empty rows would just be
+         noise on the path someone is still working through. */
+      if (r.renewal && r.certificate.covered) {
+        out.appendChild(addrRow('Renewal', r.renewal.ok, r.renewal.detail));
+
+        // The path is worth showing even when the file is missing: "it should be
+        // here and is not" is the more useful answer to "where do I put the one
+        // I got by hand".
+        var fileRow = addrRow('Certificate file', r.renewal.fileExists, r.renewal.file);
+        if (!r.renewal.fileExists) {
+          fileRow.appendChild(el('span', 'addrnote', 'not on disk yet'));
+        }
+        out.appendChild(fileRow);
+      }
+
       out.appendChild(addrRow('Port', r.portCheck.ok, r.portCheck.detail));
 
       var hostsRow = addrRow('Hosts file', r.hosts.ok, r.hosts.detail);
