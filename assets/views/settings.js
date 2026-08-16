@@ -84,6 +84,29 @@
     return p;
   }
 
+  /* These panes had grown into documentation - paragraphs of explanation
+     standing where a field should be. The guide carries all of it already, and
+     carries it better, so the pane keeps the one line needed to make the choice
+     and points at the section that explains the rest.
+
+     Deliberately NOT applied to every long blurb. Where the text warns about a
+     consequence of the control beside it - HSTS being hard to take back, a
+     hostname becoming public the moment a certificate is issued - it stays on
+     the page in full. Moving that behind a click is not tidying, it is hiding.
+
+     Nor is it applied where the guide has nothing to link to: the timezone
+     field is the case in point, and its explanation stays because it is the
+     only place the distinction is written down at all. */
+  function guideHint(text, anchor, linkText){
+    var p = el('p', 'hint', text + ' ');
+    var a = el('a', null, linkText || 'Read more');
+    a.href = anchor.indexOf('.html') === -1 ? 'readme.html#' + anchor : anchor;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    p.appendChild(a);
+    return p;
+  }
+
   function setStatus(text, cls){
     var s = document.getElementById('set-status');
     if (!s) { return; }
@@ -123,10 +146,8 @@
     p.appendChild(tzf);
 
     p.appendChild(el('h4', null, 'Log retention'));
-    p.appendChild(el('p', 'hint',
-      'Applies to run logs — the narrative of each check, renewal and deployment. Whichever limit ' +
-      'is reached first, the oldest are removed. Every trim is itself recorded in the audit trail, ' +
-      'so a gap is always accounted for.'));
+    p.appendChild(guideHint(
+      'Applies to run logs. Whichever limit is reached first, the oldest go.', 'logs'));
 
     var grid = el('div', 'fields');
     var days = el('div', 'field');
@@ -144,10 +165,8 @@
     grid.appendChild(size);
     p.appendChild(grid);
 
-    p.appendChild(el('p', 'hint',
-      'The audit trail is deliberately not covered by either limit. It records who changed what and ' +
-      'when, and deleting that to reclaim disk is the opposite of what it is for — it rotates to a ' +
-      'dated file instead, and the older files are kept.'));
+    p.appendChild(guideHint(
+      'The audit trail is deliberately not covered by either limit.', 'logs'));
 
     p.appendChild(buildUpdateSection());
     p.appendChild(buildAddressSection());
@@ -166,10 +185,9 @@
   function buildUpdateSection(){
     var wrap = el('div', 'sub');
     wrap.appendChild(el('h4', null, 'Update'));
-    wrap.appendChild(el('p', 'hint',
-      'Pulls the latest code from the repository this copy was cloned from. Your settings, ' +
-      'credentials, domain list and certificates are not touched — none of them are in the ' +
-      'repository. Local edits to tracked files stop an update rather than being overwritten.'));
+    wrap.appendChild(guideHint(
+      'Pulls new code. Nothing of yours is in the repository, so nothing of yours is touched.',
+      'files'));
 
     var rows = el('div', 'addrcheck');
     rows.id = 'set-update-rows';
@@ -446,11 +464,10 @@
 
   function buildAuthoritiesPanel(){
     var p = panel('authorities');
-    p.appendChild(el('p', 'hint',
-      'Each certificate picks an issuer on its own row in Certificates. Anything not pinned uses ' +
-      'the default below. Staging is per authority - staging certificates are not trusted by ' +
-      'browsers, but they do not count against rate limits, so leave it on until a renewal ' +
-      'completes cleanly.'));
+    p.appendChild(guideHint(
+      'Each certificate picks its issuer in Certificates; anything unpinned uses the default ' +
+      'below. Staging is per authority — untrusted by browsers, but free of rate limits.',
+      'cas'));
     var cas = el('div'); cas.id = 'cas';
     p.appendChild(cas);
     var add = el('button', 'btn sm', 'Add a certificate authority');
@@ -678,14 +695,9 @@
     var p = panel('deployments');
     p.appendChild(el('p', 'hint',
       'Where issued certificates get pushed. One entry per group of load balancers that share ' +
-      'credentials — each node is still pushed to, and verified, individually. Assign a group ' +
-      'to a certificate on its row in Certificates.'));
-    var hint = el('p', 'hint', 'Never set one of these up before? See the ');
-    var link = el('a', null, 'HAProxy setup guide');
-    link.href = 'haproxy-setup.html'; link.target = '_blank'; link.rel = 'noopener';
-    hint.appendChild(link);
-    hint.appendChild(document.createTextNode('.'));
-    p.appendChild(hint);
+      'credentials. Assign a group to a certificate on its row in Certificates.'));
+    p.appendChild(guideHint('Never set one of these up before?',
+      'haproxy-setup.html', 'HAProxy setup guide'));
     var targets = el('div'); targets.id = 'targets';
     p.appendChild(targets);
     var add = el('button', 'btn sm', 'Add a load balancer group');
@@ -865,12 +877,13 @@
     }).join('\n');
     nodesBox.placeholder = 'lb1 https://10.0.0.11:5555\nlb2 https://10.0.0.12:5555';
     nodesField.appendChild(nodesBox);
-    nodesField.appendChild(el('p', 'hint',
-      'name, then the Data Plane API base URL — host and port only, with no /v3 or /v2 on the ' +
-      'end. Optionally a third value: the address to verify against, if the site is not served ' +
-      'from the same host as the API. That one may carry its own port (host:8443) when a node ' +
-      'does not use the group’s verify port. Verification always connects to each node ' +
-      'directly, never through a VIP.'));
+    // Condensed, but the VIP sentence stays: pointing this at a virtual address
+    // only ever checks whichever node happens to hold it, which is the exact
+    // failure the field exists to catch.
+    nodesField.appendChild(guideHint(
+      'name, then the Data Plane API base URL — no /v3 or /v2 on the end. An optional third ' +
+      'value is the address to verify against, which must be the node itself, never a VIP.',
+      'haproxy-setup.html'));
     card.appendChild(nodesField);
 
     var argHost = el('div', 'fields');
@@ -933,10 +946,10 @@
       encSel.appendChild(opt);
     });
     encField.appendChild(encSel);
-    encField.appendChild(el('p', 'hint',
-      'Implicit TLS (a server that expects encryption from the first byte, historically port ' +
-      '465) is not offered - PowerShell’s mail client does not support it reliably. If your ' +
-      'provider offers both, use STARTTLS on 587.'));
+    encField.appendChild(guideHint(
+      'Implicit TLS (port 465) is not offered — PowerShell’s mail client cannot do it ' +
+      'reliably. If your provider offers both, use STARTTLS on 587.',
+      'alerts'));
     grid.appendChild(encField);
 
     var from = field(grid, 'al-smtp-from', 'From address', '', 'email', null, 'certcamel@example.com');
