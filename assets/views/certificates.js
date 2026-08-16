@@ -375,6 +375,23 @@
           href: '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(CC.TOKEN)
         });
       }
+      /* The deployment cell used to be the ONLY way to reach this, with nothing
+         saying so - a status column that happened to be clickable. That is not
+         somewhere anybody looks for an action, and it cost a real misdiagnosis:
+         a group read as needing a push when the certificate was simply never
+         assigned to it. It is offered here whether or not anything is assigned
+         yet, because "none yet" is exactly the case that needs finding. */
+      if (!c.external) {
+        var hasTargets = (c.targets || []).length;
+        items.push({
+          label: hasTargets ? 'Change load balancers' : 'Assign load balancers',
+          title: hasTargets
+            ? 'Change which load balancer groups this certificate deploys to'
+            : 'Choose which load balancer groups this certificate deploys to. ' +
+              'Until one is chosen, renewal pushes it nowhere.',
+          run: function(){ openPicker('assign', [c.certId]); }
+        });
+      }
       if (!c.external && c.hasLocalCert && (c.targets || []).length) {
         items.push({
           label: 'Deploy to load balancers',
@@ -500,8 +517,21 @@
     }
 
     if (!assigned.length) {
-      td.appendChild(assignButton('not deployed',
-        'No load balancer assigned. Click to choose where this certificate should go.'));
+      /* "not deployed" and "not assigned" are different facts, and reading the
+         first when the second is true is what sends somebody hunting for a push
+         that was never going to happen. Renewal only pushes to ASSIGNED groups,
+         so an unassigned certificate is not waiting to be deployed - it is
+         waiting to be told where, and nothing will ever change that on its own.
+
+         Only worth distinguishing when there is somewhere to assign it to. With
+         no groups configured at all, "not deployed" is simply the truth. */
+      var haveGroups = (((state.settings || {}).targets) || []).length > 0;
+      td.appendChild(assignButton(
+        haveGroups ? 'not assigned' : 'not deployed',
+        haveGroups
+          ? 'Not assigned to any load balancer, so renewal will never push it anywhere. ' +
+            'Click to choose where it should go.'
+          : 'No load balancers configured yet. Click to set one up.'));
       return td;
     }
     if (!dep.last) {
