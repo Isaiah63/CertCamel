@@ -70,6 +70,8 @@ function XHR(){
     if (this._u.indexOf('/api/settings/test-email') === 0) r = { ok:true };
     if (this._u.indexOf('/api/targets/test') === 0) r = { ok:true, nodes:[{targetId:'office', node:'lb1', url:'u', ok:true, apiVersion:'v3', certificates:['a.pem'], error:null}] };
     this.status = 200; this.readyState = 4; this.responseText = JSON.stringify(r);
+    // The download path asks for a blob and reads .response, not .responseText.
+    this.response = this.responseType === 'blob' ? 'PEM BYTES' : this.responseText;
     if (this.onreadystatechange) this.onreadystatechange();
   };
 }
@@ -93,6 +95,17 @@ w.alert = m => errors.push('alert: ' + m);
 const store = {};
 Object.defineProperty(w, 'localStorage', { value: { getItem:k=>store[k]||null, setItem:(k,v)=>store[k]=v, removeItem:k=>delete store[k] }, configurable:true });
 
+// Saving a file is a blob URL clicked on the page's behalf, and jsdom has
+// neither: createObjectURL is unimplemented, and clicking a real <a> would be
+// a navigation it refuses. Record the save instead - what we care about is the
+// filename and that the bytes came from an object URL rather than an address.
+const saves = [];
+w.URL.createObjectURL = () => 'blob:stub';
+w.URL.revokeObjectURL = () => {};
+w.HTMLAnchorElement.prototype.click = function(){
+  saves.push(this.getAttribute('download') + ' from ' + this.href);
+};
+
 try {
   w.eval(appJs);
   w.eval(homeJs);
@@ -102,6 +115,15 @@ try {
 } catch (e) { errors.push('SCRIPT LOAD THREW: ' + e.message + '\n' + e.stack); }
 
 console.log('load errors: ' + (errors.length ? errors.join('\n') : 'none'));
+
+// The token comes in on the query string because that is the only way the
+// server can hand it to a page it is opening, and comes straight back out:
+// the server task runs from boot, so one token is live for the machine's whole
+// uptime and must not be left sitting in history or in a screenshot.
+console.log('\n=== the token leaves the address bar ===');
+console.log('  token still held: ' + (w.CertCamel.TOKEN === 'abc'));
+console.log('  query string cleared: ' + (w.location.search === ''));
+console.log('  kept for a reload: ' + (w.sessionStorage.getItem('certcamel.token') === 'abc'));
 
 // DOMContentLoaded already fired before we eval'd app.js, so drive boot manually.
 w.CertCamel.loadState(function(){
@@ -118,13 +140,21 @@ w.CertCamel.loadState(function(){
   console.log('  #view-home hidden again: ' + d.getElementById('view-home').classList.contains('hidden'));
   const certRows = d.querySelectorAll('#certtable tbody tr');
   console.log('  certificate rows rendered: ' + certRows.length);
-  // The download link moved into the row actions menu, which renders on
-  // document.body rather than inside the table - so open the menu first.
+  // Download lives in the row actions menu, which renders on document.body
+  // rather than inside the table - so open the menu first. It is a button
+  // rather than a link because the token no longer travels in a URL: the page
+  // fetches the PEM with the header and saves the blob.
   const menuTrigger = d.querySelector('#certtable .menu-trigger');
   menuTrigger.click();
-  const dl = d.querySelector('.rowmenu a');
-  console.log('  download link has token: ' + (dl && dl.href.indexOf('t=abc') !== -1));
+  const dl = Array.from(d.querySelectorAll('.rowmenu button'))
+                  .find(b => b.textContent.indexOf('Download') === 0);
   console.log('  download label: ' + (dl && dl.textContent));
+  const beforeDl = calls.length;
+  dl.click();
+  const dlCall = calls.slice(beforeDl).find(c => c.indexOf('GET /api/download/') === 0);
+  console.log('  download went over XHR: ' + dlCall);
+  console.log('  NO token in the download URL: ' + (dlCall.indexOf('t=') === -1));
+  console.log('  saved to a file: ' + saves[0]);
   d.dispatchEvent(new w.KeyboardEvent('keydown', {key:'Escape'}));   // tidy up before the next step
 
   console.log('\n=== picker still works from the new view ===');

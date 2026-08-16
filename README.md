@@ -314,10 +314,15 @@ Two things worth knowing before you pick a name:
   already renew and it joins that zone's certificate. Give it a zone of its own
   and it gets a certificate of its own.
 
-**Turning it on takes effect at the next start**, because the certificate is
-loaded once when the server starts. Save, then restart — `Stop-ScheduledTask
--TaskName 'Cert Camel Server'` and `Start-ScheduledTask` if it runs at boot,
-otherwise close the console and re-open `Open Tracker.bat`.
+**Turning it on takes effect at the next start**, because whether to speak TLS
+at all is settled as the listener comes up. Save, then restart —
+`Stop-ScheduledTask -TaskName 'Cert Camel Server'` and `Start-ScheduledTask` if
+it runs at boot, otherwise close the console and re-open `Open Tracker.bat`.
+
+Which *certificate* it serves is not pinned that way: a running server re-asks
+which one covers its own name — at once when the file changes, otherwise every
+couple of minutes — so a renewal, or a certificate appearing in a folder it
+wasn't watching, is picked up without a restart.
 
 **Plain HTTP on that port gets a 302 to the HTTPS URL**, so an old bookmark or a
 typed `127.0.0.1` still lands somewhere. It is deliberately a *temporary*
@@ -818,6 +823,19 @@ the countdown is always right even if the checker hasn't run in a while.
 
 - The server listens on `127.0.0.1` only and requires a per-launch random token.
   Loopback alone isn't access control — anything else on the PC can reach it.
+- The token is handed over on the address line and taken straight back out: the
+  tab keeps it and rewrites the address, so it isn't left in history, in a synced
+  browser profile, or in a screenshot. Started at boot the server serves one
+  token for the machine's whole uptime, so a copied address would otherwise stay
+  spendable for weeks.
+- Every request must also carry a `Host` header the server recognises —
+  `127.0.0.1`, `localhost`, or your configured tracker hostname. That covers the
+  page and its data, not just the API, so a page that rebinds a name it owns to
+  loopback can't read your certificate inventory out of `ssl-data.js`.
+- Downloading a certificate is a request the page makes with the token in a
+  header, never a link you can follow: no address produces a private key. It's
+  the only secret the API hands back at all — stored credentials return as a
+  yes/no that one exists, never as themselves.
 - DNS credentials are encrypted with **Windows DPAPI** (`secrets.xml`), scoped to
   your Windows account on this machine.
 - `certs\` and `acme-state\` hold **private keys**. They are gitignored, but

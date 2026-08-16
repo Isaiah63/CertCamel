@@ -354,16 +354,13 @@ td.acts .btn{margin-left:.35rem;}
   color:var(--text); cursor:pointer; padding:.45rem .7rem; border:none; border-radius:8px;
   background:none; white-space:nowrap;}
 .rowmenu button:hover{background:var(--group-bg);}
-.rowmenu a{display:block; font:inherit; font-size:.84rem; color:var(--text); text-decoration:none;
-  padding:.45rem .7rem; border-radius:8px; white-space:nowrap;}
-.rowmenu a:hover{background:var(--group-bg);}
 
 /* Visible keyboard focus. There was none anywhere in the app before this - an
    oversight from the redesign, and one that matters more now there is a menu
    meant to be driven from the keyboard. :focus-visible so a mouse click does
    not leave a ring behind. */
 :focus-visible{outline:2px solid var(--group-name); outline-offset:2px; border-radius:4px;}
-.rowmenu button:focus-visible,.rowmenu a:focus-visible{outline-offset:-2px;}
+.rowmenu button:focus-visible{outline-offset:-2px;}
 .badge{display:inline-block; font-size:.62rem; font-weight:700; letter-spacing:.06em;
   text-transform:uppercase; padding:.14rem .45rem; border-radius:999px; margin-left:.45rem;
   color:var(--amber); background:var(--amber-bg); border:1px solid var(--amber);}
@@ -679,6 +676,17 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 .doclink:hover{border-color:var(--accent);}
 .doclink .t{font-weight:700; font-size:1rem;}
 .doclink .d{color:var(--muted); font-size:.85rem; margin-top:.25rem;}
+/* Deep links into a guide, under the guide cards. Deliberately NOT .doclink:
+   giving a jump-to-a-section link the same card weight as a whole guide made
+   the page read as seven guides instead of three. Pill shaped, matching the
+   masthead links on the guides themselves. */
+.jumps{display:flex; flex-wrap:wrap; gap:.5rem; max-width:44rem; margin:.2rem 0 0;}
+.jumps a{display:inline-flex; align-items:center; text-decoration:none; color:var(--muted);
+  font-size:.84rem; padding:.35rem .75rem; border:1px solid var(--border);
+  border-radius:999px; background:var(--surface);}
+.jumps a:hover{color:var(--text); border-color:var(--border-strong);}
+.docsec{font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);
+  font-weight:800; margin:1.8rem 0 .7rem;}
 
 .empty{border:1px dashed var(--border-strong); border-radius:var(--radius); padding:2.2rem 1.5rem;
   text-align:center; color:var(--muted); max-width:44rem;}

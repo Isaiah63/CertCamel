@@ -7,9 +7,38 @@
   var RENEW_DAYS = 30;   // flag for renewal at or under this many days left
   var STALE_DAYS = 2;    // nag to re-run the checker after this long
 
+  /* The token arrives in the query string - that is the only way serve.ps1 can
+     hand it to a page it is opening - and is taken straight back out of the
+     address again.
+
+     A URL is the leakiest place a live credential can sit: it is written to
+     history, synced to a signed-in browser profile, restored with the session,
+     and caught in every screenshot of the window. That would be tolerable for
+     a secret that died with the tab, but the server task starts at boot and
+     mints one token for the machine's whole uptime, so an address copied out
+     of history three weeks later still opens the API.
+
+     sessionStorage, so a reload survives without the query string having to
+     come back. It is per-tab and per-origin, and the whole origin is this app;
+     anything able to read it is already running as you and can read
+     secrets.xml directly. replaceState rather than pushState, because pushing
+     would leave the ?t= entry sitting in history - the exact thing being
+     removed. */
   var TOKEN = (function(){
+    var key = 'certcamel.token';
     var m = /(?:^|[?&])t=([a-f0-9]+)/.exec(location.search);
-    return m ? m[1] : null;
+    if (m) {
+      var stored = false;
+      try { window.sessionStorage.setItem(key, m[1]); stored = true; } catch (e) { /* storage disabled */ }
+      // Only clean the address once the token has somewhere else to live.
+      // Stripping it with nowhere to put it would turn F5 into "No session".
+      if (stored) {
+        try { window.history.replaceState(null, '', location.pathname + location.hash); }
+        catch (e) { /* old browser: a token in the URL beats a page that cannot reload */ }
+      }
+      return m[1];
+    }
+    try { return window.sessionStorage.getItem(key); } catch (e) { return null; }
   })();
 
   if (!TOKEN) {
@@ -101,9 +130,9 @@
   };
 
   // --- API client ----------------------------------------------------------- //
-  // Unchanged from the single-page version: the token travels as a header, the
-  // server also accepts it as a query param for the one GET that is a browser
-  // navigation (the file download link) rather than an XHR.
+  // The token travels as a header on every call without exception. The server
+  // still accepts ?t= for the initial page load, which has nowhere else to put
+  // it, but no /api/ call relies on that and /api/download refuses it outright.
 
   function api(method, path, body, cb){
     var x = new XMLHttpRequest();
@@ -120,6 +149,43 @@
     x.send(body ? JSON.stringify(body) : null);
   }
   CertCamel.api = api;
+
+  /* The one response that is a file rather than JSON, so it cannot go through
+     api() above - and the one that must never be reachable from an address
+     alone, which is why it is an XHR carrying the header instead of an <a>
+     carrying ?t=. The server refuses the query form on this route; see the
+     comment there for what it is protecting.
+
+     A blob and a synthetic click: the bytes go straight from the response into
+     the file the browser saves, and nothing replayable lands in the download
+     list. The object URL is revoked on a timer rather than immediately -
+     released in the same tick as the click, Firefox cancels the save. */
+  function download(path, filename, cb){
+    var x = new XMLHttpRequest();
+    x.open('GET', path, true);
+    x.setRequestHeader('X-Tracker-Token', TOKEN);
+    x.responseType = 'blob';
+    x.onreadystatechange = function(){
+      if (x.readyState !== 4) { return; }
+      if (x.status < 200 || x.status >= 300) {
+        // The body is a blob here, so the server's own message cannot be read
+        // back out without more machinery than one status line is worth.
+        if (cb) { cb('The download failed: the local server returned ' + (x.status || 'no response')); }
+        return;
+      }
+      var url = window.URL.createObjectURL(x.response);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(function(){ window.URL.revokeObjectURL(url); }, 60000);
+      if (cb) { cb(null); }
+    };
+    x.send(null);
+  }
+  CertCamel.download = download;
 
   // --- Shared state ----------------------------------------------------------- //
   // One /api/state fetch, shared by every view, so navigating between views does

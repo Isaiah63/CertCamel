@@ -152,7 +152,7 @@ footer{margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border)
   </div>
   <div class="side actions">
     <a class="back" href="readme.html">Read me</a>
-    <a class="back" href="ssl-tracker.html">&larr; Tracker</a>
+    <a class="back" href="security.html">Security</a>
   </div>
 </header>
 
@@ -520,14 +520,58 @@ $ch.ChainPolicy.ExtraStore.Add($c); $ch.Build($leaf); $ch.ChainStatus</code></pr
   <code>--ssl-no-revoke</code> there to skip only the revocation check while still verifying the
   chain. A curl failure that Cert Camel does not share is usually this and nothing more.</p>
 </div>
-<h3>Firewall it</h3>
-<pre><code>sudo ufw allow from 10.0.0.50 to any port 5555 proto tcp   <span class="c"># the management host only</span>
-sudo ufw deny 5555</code></pre>
-<p><code>10.0.0.50</code> is <strong>the machine running Cert Camel</strong>, not the load balancer
-and not your workstation. Cert Camel is the only thing that needs to reach this port, so it is the
-only address that should be allowed through. If you run Cert Camel in more than one place &mdash; a
-server and a laptop you test from &mdash; each needs its own <code>allow</code> line, and a rule
-that works from your desk but not from the scheduled task is almost always this.</p>
+<h3>Restrict who can reach it</h3>
+<p>Start from what is actually standing there. The API password is a <strong>single factor</strong>,
+and it is the whole of the authentication: anyone who can reach port 5555 and knows it can rewrite
+your configuration. TLS does not change that arithmetic. A server certificate protects the
+<em>client</em> from connecting to an impostor; it does nothing to restrict who may connect to the
+real one, because an attacker simply does not verify it &mdash; the same thing Cert Camel's own
+<strong>allow self-signed</strong> tick does. The CA certificate is handed out to clients rather than
+kept from them. It is not a second credential.</p>
+<p>So the question worth answering is who can reach the port at all, and the answer should be
+<strong>the machine running Cert Camel, and nothing else</strong> &mdash; not your workstation, not
+the rest of the office, not whatever else shares that subnet. Nothing else has any business here.</p>
+<p>Restricting it leaves your sites alone: 5555 is the management API, and whatever HAProxy is
+proxying on 80 and 443 keeps answering everyone exactly as it did before.</p>
+<div class="callout note">
+  <div class="h">How you enforce that is your system&rsquo;s business, not this guide&rsquo;s</div>
+  <p>A host firewall limiting 5555 to that one address, and something like <strong>fail2ban</strong>
+  watching for repeated authentication failures, both fit here well and are worth having. Neither is
+  configured by Cert Camel, both differ between distributions and versions, and a wrong rule locks
+  you out of a load balancer &mdash; so the commands belong in your own operating system&rsquo;s
+  documentation rather than in this one. Go and use it; the two notes below are the parts that
+  documentation will not cover.</p>
+</div>
+<div class="callout warn">
+  <div class="h">If you restrict by source address, that address must not move</div>
+  <p>Give the Cert Camel machine a <strong>static address or a DHCP reservation</strong> first. On an
+  ordinary lease it will eventually be handed a different one, and from that moment every deployment
+  fails with a <em>timeout</em> &mdash; which this guide tells you to read as something in the way,
+  on a machine where nobody changed anything. That is a genuinely slow thing to work out months
+  later.</p>
+  <p>If that machine has more than one interface, or reaches the load balancer over a VPN, use the
+  address the load balancer actually sees rather than the one the machine calls itself.</p>
+</div>
+<div class="callout warn">
+  <div class="h">Failed logins are logged &mdash; but not at the default log level</div>
+  <p>The Data Plane API records a failed authentication with the source address and a
+  <code>401</code>, which is exactly what anything watching for repeated failures needs:</p>
+  <pre><code>level=info msg="10.0.0.50 - - [16/Aug/2026:19:56:38 +0000] \"GET /v3/services/haproxy/configuration/version HTTP/1.1\" 401 37 \"-\" \"curl/8.13.0\""</code></pre>
+  <p>Note <code>level=info</code>. The API&rsquo;s own default is <code>warning</code>, at which
+  those lines are never written at all &mdash; so anything built on them matches nothing, forever,
+  while looking perfectly healthy. Set <code>log_level: info</code> and keep <code>access</code> in
+  <code>log_types</code>. The line also arrives wrapped in the API&rsquo;s log format rather than as a
+  plain access log, so a stock filter will need adjusting to match it.</p>
+</div>
+<p>One more, about Cert Camel rather than about the API: it <strong>retries on a schedule with a
+stored password</strong>. Rotate the credential on the load balancer without updating it here, and
+the 03:20 renewal produces failed logins against every node until somebody notices. Anything that
+bans on repeated failures will duly ban Cert Camel, and keep it banned after you have fixed the
+password &mdash; so exempt its address from the ban rather than discovering this at four in the
+morning.</p>
+<p>And if these are a keepalived pair, whatever you put in front of them must not drop
+<strong>protocol 112</strong>: the nodes stop hearing each other and both become master. That
+failure and how to recognise it are in <a href="#pairs">section 12</a>.</p>
 <h3>The rest</h3>
 <ul>
   <li><strong>A dedicated user</strong> for the API, not the stats login.</li>

@@ -157,7 +157,7 @@ footer{margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border)
 
   <div class="side actions">
     <a class="back" href="haproxy-setup.html">HAProxy setup</a>
-    <a class="back" href="ssl-tracker.html">&larr; Back to the tracker</a>
+    <a class="back" href="security.html">Security</a>
   </div>
 </header>
 
@@ -243,12 +243,18 @@ fail in four different places:</p>
   of every certificate from every authority &mdash; skipping the DNS record buys resolution
   reliability, not privacy.</p>
 </div>
-<p><strong>Turning it on takes effect at the next start</strong> &mdash; the certificate is loaded
-once when the server starts, so saving cannot change a server already running. Restart it, then
-the URL becomes <code>https://&lt;name&gt;:&lt;port&gt;</code>. Plain HTTP on that port gets a
+<p><strong>Turning it on takes effect at the next start</strong> &mdash; whether to speak TLS at all
+is settled once, as the listener comes up, so saving cannot move a server that is already running.
+Restart it, then the URL becomes <code>https://&lt;name&gt;:&lt;port&gt;</code>. Plain HTTP on that port gets a
 <em>temporary</em> redirect to it, so an old bookmark still lands somewhere; temporary rather than
 permanent because a browser caches a permanent one, and turning HTTPS back off later would leave
 it redirecting to a scheme the server no longer speaks.</p>
+<p>Which <em>certificate</em> it serves is not pinned the same way. A running server re-asks which
+one covers its own name &mdash; at once when the file it is serving changes, and otherwise every
+couple of minutes &mdash; so a renewal is picked up without a restart, and so is a certificate that
+appears somewhere it was not already watching. That second case is the one that used to need a
+restart: giving the console its own certificate puts the right file in a folder nothing was looking
+at.</p>
 <p>If the certificate cannot be <em>loaded</em> at all the server says so and falls back to plain
 HTTP rather than refusing to start. An <em>expired</em> one is less serious: the browser still
 offers Advanced &rarr; Proceed, and renewal runs from the scheduled task rather than from this
@@ -776,16 +782,24 @@ but the 1st &mdash; the ScheduledTasks module has no clean monthly trigger to re
 <code>First Time Setup.bat</code> can register it.</p>
 
 <h2 id="security">14. Security</h2>
+<p>The short version. <a href="security.html"><strong>Security</strong></a> is the long one &mdash;
+what the loopback binding and the token actually protect against, how credentials are stored and
+what breaks when the account running this changes, what reaches the logs, and what needs
+administrator. It lives beside this page rather than in it because it is the part people need to
+read before deciding, not while looking something up.</p>
 <ul>
   <li>The server listens on <code>127.0.0.1</code> only and requires a per-launch random token.
   That is still true with HTTPS turned on &mdash; the hostname resolves to loopback through the
   hosts file and nothing binds to a network address.</li>
+  <li>The token is handed to the page on the address line and taken straight back out, so no live
+  credential sits in history or in a screenshot. Requests also have to carry a <code>Host</code>
+  header this server recognises, which is what a page rebinding its own name to loopback cannot
+  forge.</li>
   <li>DNS credentials are encrypted with <strong>Windows DPAPI</strong> in <code>secrets.xml</code>,
   scoped to your Windows account on this machine. They are never written to
   <code>settings.json</code> and never sent back to the browser &mdash; the page is told only
-  whether a secret exists.</li>
-  <li>A blank credential field means &ldquo;keep what is stored&rdquo;, so an unchanged form cannot
-  wipe a credential nobody retyped.</li>
+  whether a secret exists. A blank credential field means &ldquo;keep what is stored&rdquo;, so an
+  unchanged form cannot wipe a credential nobody retyped.</li>
   <li>Nothing here &mdash; domains, credentials, certificates &mdash; is committed to git, so the
   folder can be handed to someone else clean.</li>
 </ul>
@@ -794,13 +808,13 @@ but the 1st &mdash; the ScheduledTasks module has no clean monthly trigger to re
   <p><code>certs\</code> and <code>acme-state\</code> hold <strong>unencrypted</strong> private keys
   &mdash; that is how PEM works, and every ACME client is the same. They are gitignored, but
   gitignore does not stop file sync. <strong>If this folder is inside OneDrive, Dropbox or similar,
-  exclude those two folders from syncing.</strong> Clicking <strong>.pem</strong> also puts a private
-  key in your Downloads folder in the clear; delete it once deployed.</p>
+  exclude those two folders from syncing.</strong> <strong>Download</strong> also puts a private key
+  in your Downloads folder in the clear; delete it once deployed.</p>
+  <p>That download is the only thing the API hands <em>back</em> that is secret &mdash; every stored
+  credential returns as a yes/no that one exists, never as itself. So it is fetched by the page,
+  with the token in a header, rather than by following a link: there is no address anywhere that
+  produces a private key.</p>
 </div>
-<p>DPAPI protects the file, not the session: copy <code>secrets.xml</code> elsewhere and it is
-useless, but anything already running as you can decrypt it. That is the normal bar for a local
-tool &mdash; it is not a vault. It also means credentials do not travel when you copy the folder,
-which is the right behaviour for something meant to be shared.</p>
 
 <h2 id="logs">15. Logs and the audit trail</h2>
 <p>The <strong>Logs</strong> page is read-only, and deliberately so &mdash; a page that could edit the
@@ -915,6 +929,7 @@ assets\app.js         router, API client, shared state, the job runner
 assets\views\         one file per sidebar page (home, certificates, settings, docs)
 readme.html           this page
 haproxy-setup.html    step-by-step HAProxy Data Plane API guide
+security.html         what is protected, what is not, and what is on your disk
 domains.txt           the list you edit                   (yours, gitignored)
 domains.example.txt   the shipped sample
 Check Now.bat         refresh the data
