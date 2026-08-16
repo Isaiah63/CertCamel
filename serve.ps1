@@ -430,14 +430,26 @@ function Add-TokenToDocLinks {
       Rewritten on the way out rather than in the file, because the token is
       different every launch and the file has to keep working from disk.
 
-      The token is already in the address bar of the page doing the linking, so
-      this puts it nowhere it was not. Only href= is touched: readme.html also
-      MENTIONS ssl-tracker.html in prose and in its file list, and those must
-      survive untouched.
+      Only href= is touched: readme.html also MENTIONS ssl-tracker.html in prose
+      and in its file list, and those must survive untouched.
+
+      ONLY for a caller that already proved it holds the token. The original
+      reasoning - "the token is already in the address bar of the page doing the
+      linking, so this puts it nowhere it was not" - is true of a person reading
+      the docs and false of everything else: these two routes sit ABOVE the API
+      token gate, so they answer anyone. Without $Authorized, any process on the
+      machine could GET /readme.html with no credential and read this launch's
+      token straight out of the body, then spend it on /api/download/<certId>
+      and walk off with every private key.
+
+      That is precisely the threat the token was minted to stop (see the note
+      where it is generated). The docs stay readable without one, because they
+      are shipped files that give nothing away; only the injection is gated.
     #>
-    param([string]$Html)
+    param([string]$Html, [bool]$Authorized)
 
     if (-not $Html) { return $Html }
+    if (-not $Authorized) { return $Html }
     return [regex]::Replace($Html, 'href="(?:\./)?ssl-tracker\.html"', "href=`"/?t=$script:Token`"")
 }
 
@@ -1151,6 +1163,15 @@ function Invoke-Route {
 
     $path = $Request.Path
 
+    # Read up here, not at the API gate below, because the doc routes have to
+    # know whether the caller ALREADY holds the token before deciding whether to
+    # write it into the page they are about to hand back. They sit above the
+    # gate, so they answer anyone.
+    $supplied = $null
+    if ($Request.Headers.ContainsKey('x-tracker-token')) { $supplied = $Request.Headers['x-tracker-token'] }
+    if (-not $supplied) { $supplied = Get-QueryValue -Query $Request.Query -Name 't' }
+    $hasToken = Test-Token $supplied
+
     # --- static ------------------------------------------------------------ #
 
     if ($path -eq '/' -or $path -eq '/index.html' -or $path -eq '/ssl-tracker.html') {
@@ -1166,7 +1187,7 @@ function Invoke-Route {
         if (-not (Test-Path $file)) { Send-Error $Stream 404 'haproxy-setup.html is missing.'; return }
         $html = Get-Content $file -Raw -Encoding UTF8
         Send-Response -Stream $Stream -ContentType $script:Mime['.html'] `
-            -Body ([Text.Encoding]::UTF8.GetBytes((Add-TokenToDocLinks $html)))
+            -Body ([Text.Encoding]::UTF8.GetBytes((Add-TokenToDocLinks -Html $html -Authorized $hasToken)))
         return
     }
 
@@ -1175,7 +1196,7 @@ function Invoke-Route {
         if (-not (Test-Path $file)) { Send-Error $Stream 404 'readme.html is missing.'; return }
         $html = Get-Content $file -Raw -Encoding UTF8
         Send-Response -Stream $Stream -ContentType $script:Mime['.html'] `
-            -Body ([Text.Encoding]::UTF8.GetBytes((Add-TokenToDocLinks $html)))
+            -Body ([Text.Encoding]::UTF8.GetBytes((Add-TokenToDocLinks -Html $html -Authorized $hasToken)))
         return
     }
 
@@ -1225,11 +1246,7 @@ function Invoke-Route {
 
     # --- everything below is API and needs the token ----------------------- #
 
-    $supplied = $null
-    if ($Request.Headers.ContainsKey('x-tracker-token')) { $supplied = $Request.Headers['x-tracker-token'] }
-    if (-not $supplied) { $supplied = Get-QueryValue -Query $Request.Query -Name 't' }
-
-    if (-not (Test-Token $supplied)) {
+    if (-not $hasToken) {
         Send-Error $Stream 403 'Missing or invalid session token. Reopen the tracker from "Open Tracker.bat".'
         return
     }
