@@ -248,6 +248,12 @@
     }
 
     certs = certs.slice().sort(function(a, b){
+      /* The console's own certificate sorts to the bottom regardless of expiry.
+         It is infrastructure for this tool rather than one of the certificates
+         somebody opened this page to manage, and it renews and applies itself
+         with nothing to decide — so it should never be the first thing the eye
+         lands on, even when it happens to be the next to expire. */
+      if (!!a.tracker !== !!b.tracker) { return a.tracker ? 1 : -1; }
       var da = certDays(a), db = certDays(b);
       if (da === null && db === null) { return String(a.displayName || a.zone).localeCompare(String(b.displayName || b.zone)); }
       if (da === null) { return 1; }
@@ -282,12 +288,18 @@
 
     certs.forEach(function(c){
       var days = certDays(c);
-      var tr = el('tr');
+      var tr = el('tr', c.tracker ? 'trackerrow' : null);
 
       var name = el('td', 'host');
       name.appendChild(document.createTextNode(c.displayName || c.zone));
       if (c.wildcard)   { name.appendChild(el('span', 'badge cool', 'wildcard')); }
       if (c.overridden) { name.appendChild(el('span', 'badge', 'custom')); }
+      if (c.tracker) {
+        var tb = el('span', 'badge cool', 'this console');
+        tb.title = 'The address this page is served on. Renewed and applied automatically, ' +
+                   'and deployed nowhere — it belongs to the tool, not to your load balancers.';
+        name.appendChild(tb);
+      }
       if (c.external) {
         var eb = el('span', 'badge cool', 'managed elsewhere');
         eb.title = 'Renewed by another system. Watched here, never issued from here.';
@@ -364,14 +376,20 @@
           href: '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(CC.TOKEN)
         });
       }
-      if (!c.external && c.hasLocalCert && (c.targets || []).length) {
+      if (!c.tracker && !c.external && c.hasLocalCert && (c.targets || []).length) {
         items.push({
           label: 'Deploy to load balancers',
           title: 'Push this certificate to its load balancers and verify each one is serving it',
           run: function(){ openPicker('deploy', [c.certId]); }
         });
       }
-      items.push({
+      /* "Managed elsewhere" is deliberately unreachable for the console's own
+         certificate. Setting it would take this certificate out of the renewal
+         set - renew-due.ps1 skips anything marked external - and the first sign
+         would be the console refusing to serve HTTPS on the day it expired,
+         with the tool that would have warned you being the one that went down.
+         Renew and Download are left: those are the two worth having at 2am. */
+      if (!c.tracker) { items.push({
         label: c.external ? 'Renew here' : 'Managed elsewhere',
         title: c.external
           ? 'Bring this certificate back under this tool'
@@ -382,7 +400,7 @@
             CC.loadState();
           });
         }
-      });
+      }); }
 
       if (!c.external) {
         var rb = el('button', 'btn sm primary', 'Renew');

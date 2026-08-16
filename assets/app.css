@@ -380,6 +380,15 @@ td.deploy{padding-top:.55rem; padding-bottom:.55rem;}
   border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
 #jobpanel{margin-bottom:1.9rem;}
 
+/* The console's own certificate. Set back rather than hidden: it should be
+   findable when somebody wonders what serves this page, and quiet the rest of
+   the time. Opacity only on the cells, never the row, so the badge and the
+   expiry pill keep their own colours and a real problem with it still reads as
+   a problem. */
+.trackerrow > td{opacity:.72;}
+.trackerrow:hover > td{opacity:1;}
+.trackerrow .badge{opacity:1;}
+
 /* Log levels. The line already says which it is - this only makes it findable
    without reading every line. Colour is the ONLY thing added: the level stays
    spelled out in the text, so a log copied out of the page, or read by someone
