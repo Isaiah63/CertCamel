@@ -591,12 +591,45 @@ try {
         # known deployment state for each row without re-probing every node on
         # page load. Written whether the deployment succeeded or not - a failed
         # deployment is exactly the state worth remembering.
+        # MERGED PER TARGET, not replaced. A deployment to one group must not
+        # erase what is known about the others: this file used to hold only the
+        # last run, so pushing to test an hour after prod made the page look as
+        # though prod had never been deployed to at all - which reads as work
+        # still to do, and is the opposite of the truth.
+        $prevFile = Join-Path $script:JobsDir "deploy-$certId.json"
+        $byTarget = @{}
+        if (Test-Path $prevFile) {
+            try {
+                $prev = (Get-Content $prevFile -Raw -Encoding UTF8) | ConvertFrom-Json
+                if ($prev -and $prev.PSObject.Properties['byTarget'] -and $prev.byTarget) {
+                    foreach ($p in $prev.byTarget.PSObject.Properties) { $byTarget[$p.Name] = $p.Value }
+                }
+            } catch { }
+        }
+        $stamp = (Get-Date).ToString('o')
+        foreach ($t in @($entry.targets)) {
+            $nodeStates = @()
+            foreach ($n in @($t.nodes)) {
+                $checks = @($n.verify)
+                $hf = @($checks | Where-Object { -not $_.ok -and -not ($_.contested -and $_.role -eq 'coverage') }).Count
+                $pv = @($checks | Where-Object { $_.ok -and $_.role -eq 'identity' }).Count
+                $nodeStates += @{
+                    name = [string]$n.name
+                    ok   = [bool](($n.push -and $n.push.ok) -and $checks.Count -and $hf -eq 0 -and $pv)
+                }
+            }
+            $byTarget[[string]$t.targetId] = @{
+                targetId = [string]$t.targetId; label = [string]$t.label
+                ok = [bool]$t.ok; at = $stamp; nodes = $nodeStates
+            }
+        }
+
         try {
-            Write-TextFileAtomic -Path (Join-Path $script:JobsDir "deploy-$certId.json") `
+            Write-TextFileAtomic -Path $prevFile `
                 -Content (@{
                     certId = $certId; name = $cert.displayName; ok = $entry.ok
-                    at = (Get-Date).ToString('o'); serial = $(if ($entry.preflight) { $entry.preflight.serial } else { $null })
-                    error = $entry.error; targets = $entry.targets
+                    at = $stamp; serial = $(if ($entry.preflight) { $entry.preflight.serial } else { $null })
+                    error = $entry.error; targets = $entry.targets; byTarget = $byTarget
                 } | ConvertTo-Json -Depth 10)
         }
         catch { Write-Log "Could not record the deployment state: $($_.Exception.Message)" 'warn' }
