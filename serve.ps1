@@ -2120,6 +2120,15 @@ $script:WebHost = $script:Web.hostname
 $script:TlsCert = $null
 $tlsNote = $null
 
+# How often the running server re-asks which certificate covers its own name,
+# when the file it pinned has not itself changed. Two minutes: the case it
+# exists for - a certificate issued into a folder we were not watching - follows
+# an ACME round trip somebody is already waiting on, so it does not need to be
+# instant, and a scan of certs\ is cheap but not free.
+$script:TlsResolveEvery = 120
+$script:TlsResolvedAt   = $null
+$script:TlsReloadFailed = $null
+
 # Read once at startup rather than per response. -NoTls implicitly disables it
 # too: that switch exists to get the console back when TLS is the problem, and a
 # recovery mode that still sent HSTS would be no recovery at all.
@@ -2169,6 +2178,9 @@ if ($script:Web.https -and -not $NoTls) {
                 # certificate until something restarts it, which looks exactly
                 # like a renewal that did not happen.
                 $script:TlsCertStamp = (Get-Item -LiteralPath $match.pfx).LastWriteTimeUtc
+                # Startup IS a resolve, so the interval runs from here rather
+                # than firing a redundant scan on the first connection.
+                $script:TlsResolvedAt = Get-Date
             }
         }
         catch {
@@ -2182,43 +2194,98 @@ elseif ($script:Web.https -and $NoTls) {
 
 function Update-TlsCertificate {
     <#
-      Pick up a renewal that replaced the certificate under us.
+      Pick up a renewal that replaced the certificate under us - and, just as
+      importantly, one that landed somewhere else entirely.
+
+      Startup asks Find-CertificateForHost which certificate a client would
+      accept for this name. That answer is not permanent: split the console's
+      name out of a SAN certificate and the file we pinned stops covering it,
+      and issuing the console its own certificate puts the right one in a folder
+      we were never watching. Pinning one certId at startup and refreshing only
+      that file forever is what made a restart the only way to pick either up.
+
+      So re-ASK rather than re-read, on two triggers:
+
+        - the pinned file changed, which is a renewal landing on it. Immediate,
+          because if that renewal dropped our name we are already serving a
+          certificate the browser will warn about.
+        - otherwise every $script:TlsResolveEvery seconds, which is what catches
+          a certificate appearing in a folder we are not watching. Nothing
+          cheaper can see that: a new folder is not a change to any file we
+          know about yet.
 
       Called per connection, which sounds extravagant and is one stat call on a
-      local file. The alternatives are worse: a timer means a second thread in a
-      deliberately single-threaded server, and "restart to pick it up" means the
-      page presents an expired certificate until somebody notices.
+      local file. Re-resolving is dearer - it reads and parses every cert.cer
+      under certs\ - so it is what the two triggers gate, not the stat. The
+      alternatives are worse: a timer means a second thread in a deliberately
+      single-threaded server, and "restart to pick it up" is the bug.
 
       A renewal writing the .pfx is not atomic, so a load attempted mid-write
       fails. Keep serving the certificate we already have - it is still valid -
-      and try again on the next connection, but only once per distinct
-      timestamp, so a genuinely corrupt file cannot turn into a load attempt on
-      every request forever.
+      and try again later, but only once per distinct file and timestamp, so a
+      genuinely corrupt file cannot turn into a load attempt on every request
+      forever.
     #>
     if (-not $script:TlsCert -or -not $script:TlsCertPath) { return }
 
     $stamp = $null
-    try { $stamp = (Get-Item -LiteralPath $script:TlsCertPath).LastWriteTimeUtc } catch { return }
+    try { $stamp = (Get-Item -LiteralPath $script:TlsCertPath).LastWriteTimeUtc } catch { }
 
-    if ($stamp -le $script:TlsCertStamp) { return }
-    if ($script:TlsReloadFailed -and $stamp -eq $script:TlsReloadFailed) { return }
+    # A missing file deliberately does NOT count as changed. Mid-renewal the pfx
+    # can briefly not exist, and treating that as a trigger would re-resolve on
+    # every connection until it came back. The interval below catches it anyway.
+    $changed = $stamp -and ($stamp -gt $script:TlsCertStamp)
+    $due     = (-not $script:TlsResolvedAt) -or
+               (((Get-Date) - $script:TlsResolvedAt).TotalSeconds -ge $script:TlsResolveEvery)
+
+    if (-not $changed -and -not $due) { return }
+    $script:TlsResolvedAt = Get-Date
+
+    $match = $null
+    try { $match = Find-CertificateForHost -HostName $script:Web.hostname } catch { }
+
+    # Nothing on disk covers the name any more. Keep what we have: it is still a
+    # working handshake, and there is no dropping back to plain HTTP once the
+    # listener is up.
+    if (-not $match) { return }
+
+    $switching = ($match.certId -ne $script:TlsCertId)
+
+    $target  = $match.pfx
+    $tstamp  = $null
+    try { $tstamp = (Get-Item -LiteralPath $target).LastWriteTimeUtc } catch { return }
+
+    # Same certificate, same file, nothing new to load.
+    if (-not $switching -and $tstamp -le $script:TlsCertStamp) { return }
+
+    # Keyed on file AND timestamp, because the thing that failed may not be the
+    # file we were watching last time round.
+    $key = "$target|$($tstamp.Ticks)"
+    if ($script:TlsReloadFailed -eq $key) { return }
 
     try {
         $fresh = New-Object Security.Cryptography.X509Certificates.X509Certificate2(
-            $script:TlsCertPath, $script:PfxPassword, $script:TlsKeyFlags)
+            $target, $script:PfxPassword, $script:TlsKeyFlags)
         if (-not $fresh.HasPrivateKey) { $fresh.Dispose(); throw "no private key" }
 
         $old = $script:TlsCert
         $script:TlsCert      = $fresh
-        $script:TlsCertStamp = $stamp
+        $script:TlsCertPath  = $target
+        $script:TlsCertId    = $match.certId
+        $script:TlsCertStamp = $tstamp
         $script:TlsReloadFailed = $null
         if ($old) { try { $old.Dispose() } catch { } }
 
-        Write-Diag "  Reloaded $script:TlsCertId - now expires $($fresh.NotAfter.ToString('d MMM yyyy'))" 'Green'
+        if ($switching) {
+            Write-Diag "  Now serving $($match.certId) for $($script:Web.hostname) - expires $($fresh.NotAfter.ToString('d MMM yyyy'))" 'Green'
+        }
+        else {
+            Write-Diag "  Reloaded $script:TlsCertId - now expires $($fresh.NotAfter.ToString('d MMM yyyy'))" 'Green'
+        }
     }
     catch {
-        $script:TlsReloadFailed = $stamp
-        Write-Diag "  ! Could not reload $script:TlsCertId : $(($_.Exception.Message -split "`n")[0].Trim())" 'Yellow'
+        $script:TlsReloadFailed = $key
+        Write-Diag "  ! Could not load $($match.certId) : $(($_.Exception.Message -split "`n")[0].Trim())" 'Yellow'
     }
 }
 
