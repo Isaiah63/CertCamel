@@ -453,6 +453,42 @@ at all.</p>
 <h3>If the API uses a private or self-signed certificate</h3>
 <p>Almost nobody puts a publicly trusted certificate on a management API, so this is the normal
 case rather than the exception. There are two ways to handle it, and the first is better:</p>
+<div class="callout note">
+  <div class="h">Where does "the API's CA" come from?</div>
+  <p>It is whatever issued the certificate in <code>tls_certificate</code> in
+  <code>dataplaneapi.yml</code> &mdash; there is no separate thing to go and find. Three cases cover
+  almost everyone:</p>
+  <ul>
+    <li><strong>Self-signed on the load balancer.</strong> Then the certificate <em>is</em> its own
+    issuer: copy that same file to the Cert Camel machine and import it.</li>
+    <li><strong>An internal CA you already run.</strong> Issue the API certificate from it and
+    import <em>that CA's root</em>, not the API certificate.</li>
+    <li><strong>Nothing yet.</strong> Make a small CA for the purpose, below.</li>
+  </ul>
+  <p>Trust follows the <strong>issuer</strong>, not the machine. Generating a certificate on the
+  Cert Camel box and copying it to HAProxy only works if that box also holds the CA that signed it
+  &mdash; otherwise you have moved the certificate without moving the trust, and nothing changes.</p>
+  <p>Note that Cert Camel cannot issue this one for you over ACME. It deploys <em>through</em> the
+  API, so the API has to be reachable, and trusted, before Cert Camel can do anything at all.</p>
+  <p>Making a CA and an API certificate from scratch, on the load balancer:</p>
+  <pre><code><span class="c"># 1. a CA, once - keep ca.key somewhere safe, it signs everything below</span>
+openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
+  -keyout ca.key -out ca.crt -subj "/CN=Internal LB CA"
+
+<span class="c"># 2. a key and request for THIS node</span>
+openssl req -newkey rsa:2048 -nodes \
+  -keyout dpa.key -out dpa.csr -subj "/CN=lb1.internal"
+
+<span class="c"># 3. sign it, with the SANs you will actually connect to - see below</span>
+openssl x509 -req -in dpa.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -days 825 -out dpa.crt \
+  -extfile &lt;(printf "subjectAltName=DNS:lb1.internal,IP:10.0.0.11")
+
+<span class="c"># 4. point dataplaneapi.yml at dpa.crt / dpa.key, then restart the API</span></code></pre>
+  <p>Repeat steps 2&ndash;3 per node with that node's own name and address, signed by the same
+  <code>ca.crt</code>. Then import <code>ca.crt</code> once on the Cert Camel machine and every node
+  is trusted.</p>
+</div>
 <ol>
   <li><strong>Install the API's CA on the machine running Cert Camel.</strong> Copy the CA
   certificate across and import it into the Windows <em>Trusted Root Certification Authorities</em>
@@ -487,6 +523,11 @@ $ch.ChainPolicy.ExtraStore.Add($c); $ch.Build($leaf); $ch.ChainStatus</code></pr
 <h3>Firewall it</h3>
 <pre><code>sudo ufw allow from 10.0.0.50 to any port 5555 proto tcp   <span class="c"># the management host only</span>
 sudo ufw deny 5555</code></pre>
+<p><code>10.0.0.50</code> is <strong>the machine running Cert Camel</strong>, not the load balancer
+and not your workstation. Cert Camel is the only thing that needs to reach this port, so it is the
+only address that should be allowed through. If you run Cert Camel in more than one place &mdash; a
+server and a laptop you test from &mdash; each needs its own <code>allow</code> line, and a rule
+that works from your desk but not from the scheduled task is almost always this.</p>
 <h3>The rest</h3>
 <ul>
   <li><strong>A dedicated user</strong> for the API, not the stats login.</li>
@@ -727,9 +768,10 @@ both marked.</p>
     stats socket /run/haproxy/admin.sock mode 660 level admin expose-fd listeners
     stats timeout 30s
 
-    # Name this node. Both machines otherwise report the same hostname, and this
-    # is what tells them apart - in the stats page, in the logs, and on Cert
-    # Camel's Home page, which shows it per node.
+    # OPTIONAL, and think before you set it - see the note under this config.
+    # It names the node in the stats page and the logs. Cert Camel does NOT
+    # need it: it labels each node from its own settings and tells them apart
+    # by URL.
     node lb1
     description edge load balancer, site A
 
@@ -779,6 +821,22 @@ userlist dataplaneapi
     user certcamel insecure-password CHANGE-THIS
     # Better - a hashed password, see section 5:
     # user certcamel password $5$rounds=...</code></pre>
+
+<div class="callout note">
+  <div class="h">A word about <code>node</code> if you replicate this file</div>
+  <p>Plenty of pairs keep the two configs in step by copying one to the other &mdash; rsync on a
+  cron, Ansible, a git hook. A per-node <code>node</code> line fights that directly: it is the one
+  line that must differ, so either the files never match and every diff is noisy, or the copy wins
+  and <strong>lb2 starts calling itself lb1</strong>. The second is worse, because everything keeps
+  working and only the labels lie.</p>
+  <p>Cert Camel does not need it. Each node is labelled from the name you gave it in
+  <em>Settings &rarr; Certificate Deployments</em>, and nodes are told apart by their API URL, which
+  is per node by construction. HAProxy's own <code>node</code> value is shown next to that as a
+  secondary id when it is set, and simply omitted when it is not.</p>
+  <p>So: if you replicate configs, leave <code>node</code> out, or template it rather than copying
+  it. If you maintain each node's config by hand, set it &mdash; it is genuinely useful in the stats
+  page and the logs.</p>
+</div>
 
 <p>And the crt-list it points at. <strong>Create the file even if it is empty</strong>
 &mdash; HAProxy will not start with a <code>crt-list</code> that does not exist, and
