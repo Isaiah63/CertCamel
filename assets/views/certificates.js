@@ -528,10 +528,37 @@
       labels[t.id] = t.label || t.id;
     });
 
+    /* Assigned groups, PLUS any group this certificate has actually been
+       deployed to. Looping the assignment alone hid a real deployment: pushing
+       from the deploy dialog can target a group the certificate is not assigned
+       to, and that push is exactly the one worth showing - it happened, and
+       nothing will repeat it. */
+    var shown = assigned.slice();
+    Object.keys(byTarget).forEach(function(tid){
+      if (shown.indexOf(tid) === -1) { shown.push(tid); }
+    });
+
     var newest = null;
-    assigned.forEach(function(tid){
+    shown.forEach(function(tid){
       var rec = byTarget[tid];
       var label = (rec && rec.label) || labels[tid] || tid;
+      var isAssigned = assigned.indexOf(tid) !== -1;
+
+      /* Deployed to, but not assigned. Renewal only pushes to assigned groups,
+         so this certificate is live there now and will silently stop being
+         updated - the group keeps serving whatever was last pushed by hand
+         until it expires. Amber rather than red: nothing is broken yet, and
+         that is precisely why it is easy to miss. */
+      if (rec && !isAssigned) {
+        var pw = el('span', 'pip warn', label);
+        pw.title = label + ': deployed here ' + new Date(rec.at).toLocaleString() +
+                   ', but NOT assigned to this certificate.\n' +
+                   'Renewal pushes only to assigned groups, so this one will not be ' +
+                   'updated automatically. Click the time to assign it.';
+        wrap.appendChild(pw);
+        if (!newest || new Date(rec.at) > new Date(newest)) { newest = rec.at; }
+        return;
+      }
 
       if (!rec) {
         var p0 = el('span', 'pip', label);
