@@ -47,14 +47,20 @@ lib/
 # about the repository rather than any part of the tool.
 fable-prompt-*.md
 
-# Headless DOM tests and their jsdom install (~21 MB). Development-time only:
-# the app is PowerShell plus static files with no build step, and nothing it
-# ships references Node or npm. Kept out so what people download stays a folder
-# they can run, not a project they have to install.
+# The jsdom install (~25 MB), and only that. The test SOURCES beside it ARE
+# tracked - they are 121 KB, and they record why each fix is correct, which is
+# the part that cannot be reconstructed from the code.
 #
-# Being ignored means it is NOT backed up by git and `git clean -fdx` would
-# delete it. See tests\README.md to rebuild - it is only `npm install jsdom`.
-tests/
+# This used to be a blanket `tests/`, which achieved the same download but also
+# meant a `git clean -fdx` would silently delete every suite - they existed on
+# exactly one machine, with no backup. Keeping the download clean and keeping
+# the tests in version control turned out to be separable, and they are.
+#
+# Still development-time only: the app is PowerShell plus static files with no
+# build step, and nothing it ships references Node or npm, so a downloaded copy
+# runs without installing anything. tests\README.md says how to set them up for
+# anyone who wants to run them - it is only `npm install jsdom`.
+tests/node_modules/
 
 # The shortcut setup.ps1 creates so the launcher has the camel on it rather than
 # the generic batch-file icon. NOT committed: a .lnk bakes in an ABSOLUTE path,
