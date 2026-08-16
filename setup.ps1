@@ -181,17 +181,17 @@ if (-not (Test-Path $checker)) {
 # --------------------------------------------------------------------------- #
 
 if (Test-Path $domainList) {
-    Write-Host "  [1/4] domains.txt already exists - leaving it alone." -ForegroundColor Green
+    Write-Host "  [1/5] domains.txt already exists - leaving it alone." -ForegroundColor Green
 } elseif (Test-Path $domainSeed) {
     # Copied rather than generated so the example list lives in one place, and
     # so your domains.txt is yours - it is gitignored and never overwritten.
     Copy-Item -Path $domainSeed -Destination $domainList
-    Write-Host "  [1/4] Created domains.txt from the example list." -ForegroundColor Green
+    Write-Host "  [1/5] Created domains.txt from the example list." -ForegroundColor Green
     Write-Host "        Edit it to add your own domains." -ForegroundColor DarkGray
 } else {
     $utf8 = New-Object Text.UTF8Encoding $false
     [IO.File]::WriteAllText($domainList, "# One domain per line.`r`nexample.com`r`n", $utf8)
-    Write-Host "  [1/4] Created an empty domains.txt." -ForegroundColor Yellow
+    Write-Host "  [1/5] Created an empty domains.txt." -ForegroundColor Yellow
 }
 
 # --------------------------------------------------------------------------- #
@@ -201,7 +201,7 @@ if (Test-Path $domainList) {
 # Posh-ACME is fetched into lib\ inside this folder rather than installed
 # system-wide, so the bundle stays self-contained.
 
-Write-Host "  [2/4] Renewal support" -ForegroundColor Cyan
+Write-Host "  [2/5] Renewal support" -ForegroundColor Cyan
 
 if (Get-VendoredPoshAcme) {
     Write-Host "        Posh-ACME is already in this folder." -ForegroundColor Green
@@ -237,14 +237,14 @@ if (Get-VendoredPoshAcme) {
 # --------------------------------------------------------------------------- #
 
 Write-Host ""
-Write-Host "  [3/4] Running the first check..." -ForegroundColor Cyan
+Write-Host "  [3/5] Running the first check..." -ForegroundColor Cyan
 & $checker
 
 # --------------------------------------------------------------------------- #
 # 5. Daily scheduled task (optional)
 # --------------------------------------------------------------------------- #
 
-Write-Host "  [4/4] Daily automatic check" -ForegroundColor Cyan
+Write-Host "  [4/5] Daily automatic check" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "        This registers a Windows scheduled task named '$taskName' that"
 Write-Host "        re-checks your domains every morning at 9:00 AM, so the page is"
@@ -281,6 +281,142 @@ if ($answer -match '^[Yy]') {
 } else {
     Write-Host ""
     Write-Host "        Skipped. Run 'Check Now.bat' whenever you want to refresh." -ForegroundColor Yellow
+}
+
+# --------------------------------------------------------------------------- #
+# 5b. Serve this page over HTTPS (optional)
+# --------------------------------------------------------------------------- #
+# Walked through here rather than left to Settings because the four
+# preconditions fail in four different places, and someone meeting the tool for
+# the first time has no way to know which one bit them. Every check reuses
+# Get-TrackerAddressStatus, so this says exactly what the Settings page says.
+#
+# A DNS provider is required here, and the reason is NOT that a hand-issued
+# certificate could never be renewed - it could. renew-due.ps1 has an explicit
+# "never issued here" branch that picks up any watched certificate once the live
+# one is close enough to expiry, whoever issued it.
+#
+# The reason is narrower: renewal itself validates through the DNS API, so a
+# provider has to cover the zone by the time renewal comes due. Without one the
+# name never even reaches the renewable set - Get-CertificateGroups files it
+# under `unmapped` and skips it - and renew.ps1 throws "The DNS profile for this
+# zone is no longer configured".
+#
+# So issuing by hand first and adding the provider afterwards is a legitimate
+# bootstrap, and Cert Camel takes over at renewal. It is just not something this
+# step can drive, because everything below depends on the provider existing.
+
+Write-Host ""
+Write-Host "  [5/5] Serve this page over HTTPS" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "        Optional. By default the page is served over plain HTTP at"
+Write-Host "        127.0.0.1 on a free port - nothing to set up, and it never leaves"
+Write-Host "        this PC. Giving it a name means a real certificate, issued and"
+Write-Host "        renewed by this tool like any other."
+Write-Host ""
+Write-Host "        You can do this later under Settings > General instead." -ForegroundColor DarkGray
+Write-Host ""
+
+$wantHttps = Read-Host "        Set up HTTPS for this page now? (Y/N)"
+
+if ($wantHttps -match '^[Yy]') {
+    . (Join-Path $root 'acme-lib.ps1')
+
+    $webName = (Read-Host "        Hostname for this page (e.g. tracker.example.com)").Trim()
+    $webPort = 0
+    $portIn  = (Read-Host "        Fixed port [8787]").Trim()
+    if (-not $portIn) { $webPort = 8787 } else { [void][int]::TryParse($portIn, [ref]$webPort) }
+
+    if (-not $webName -or $webPort -lt 1 -or $webPort -gt 65535) {
+        Write-Host "        Need a hostname and a fixed port. Skipping - do it in Settings." -ForegroundColor Yellow
+    }
+    else {
+        $st = Get-TrackerAddressStatus -HostName $webName -Port $webPort `
+                -Settings (Get-TrackerSettings) -ZoneCache (Get-ZoneCache)
+
+        function Show-Check { param($Ok, $Label, $Detail)
+            $mark = $(if ($Ok) { 'ok  ' } else { 'FAIL' })
+            Write-Host ("        [{0}] {1,-12} {2}" -f $mark, $Label, $Detail) `
+                -ForegroundColor $(if ($Ok) { 'Green' } else { 'Yellow' })
+        }
+        Write-Host ""
+        Show-Check $st.zone.ok        'DNS zone'    $st.zone.detail
+        Show-Check $st.certificate.ok 'Certificate' $st.certificate.detail
+        Show-Check $st.portCheck.ok   'Port'        $st.portCheck.detail
+        Show-Check $st.hosts.ok       'Hosts file'  $st.hosts.detail
+        Write-Host ""
+
+        if (-not $st.zone.ok) {
+            # Stopped here on purpose. Without a DNS credential that covers the
+            # zone, nothing below can succeed, and adding the name to
+            # domains.txt would leave an entry that can never renew.
+            Write-Host "        No configured DNS credential covers that name, so a certificate" -ForegroundColor Yellow
+            Write-Host "        cannot be issued for it yet. Add a DNS provider under" -ForegroundColor Yellow
+            Write-Host "        Settings > DNS Automation, then come back to Settings > General." -ForegroundColor Yellow
+        }
+        else {
+            if (-not $st.certificate.covered -and -not $st.certificate.watched) {
+                $addIt = Read-Host "        Add $webName to domains.txt so it gets a certificate? (Y/N)"
+                if ($addIt -match '^[Yy]') {
+                    try {
+                        $r = Add-TrackerDomainEntry -HostName $webName -Port $webPort
+                        Write-Host ("        {0}" -f $(if ($r.changed) { "Added $($r.entry)." } else { $r.note })) -ForegroundColor Green
+                    } catch { Write-Host "        Could not update domains.txt: $($_.Exception.Message)" -ForegroundColor Yellow }
+                }
+            }
+
+            if (-not $st.certificate.covered) {
+                Write-Host ""
+                Write-Host "        The certificate has to be issued before HTTPS can be turned on." -ForegroundColor DarkGray
+                Write-Host "        This takes a few minutes while the DNS record propagates." -ForegroundColor DarkGray
+                $issue = Read-Host "        Issue it now? (Y/N)"
+                if ($issue -match '^[Yy]') {
+                    $zoneForCert = $(if ($st.zone.zone) { $st.zone.zone } else { $webName })
+                    Write-Host ""
+                    & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+                        -File (Join-Path $root 'renew.ps1') -Zone $zoneForCert -Source 'cli'
+                    Write-Host ""
+                    $st = Get-TrackerAddressStatus -HostName $webName -Port $webPort `
+                            -Settings (Get-TrackerSettings) -ZoneCache (Get-ZoneCache)
+                }
+            }
+
+            if (-not $st.hosts.ok) {
+                if (Test-Elevated) {
+                    $addHost = Read-Host "        Add $webName to the hosts file? (Y/N)"
+                    if ($addHost -match '^[Yy]') {
+                        try { [void](Add-HostsEntry -HostName $webName); Write-Host "        Added." -ForegroundColor Green }
+                        catch { Write-Host "        Could not: $($_.Exception.Message)" -ForegroundColor Yellow }
+                    }
+                } else {
+                    Write-Host "        The hosts file needs administrator. Add this line yourself:" -ForegroundColor Yellow
+                    Write-Host ("            127.0.0.1  {0}" -f $webName) -ForegroundColor White
+                }
+            }
+
+            if ($st.certificate.ok) {
+                $settingsNow = Get-TrackerSettings
+                if (-not $settingsNow.ContainsKey('web') -or -not $settingsNow.web) { $settingsNow.web = @{} }
+                $settingsNow.web.https    = $true
+                $settingsNow.web.hostname = $webName
+                $settingsNow.web.port     = $webPort
+                # HSTS stays off. It is the one setting here that can lock
+                # somebody out of their own console, and a first run is the worst
+                # possible moment to turn it on - see Settings > General, and
+                # sos-plain-http.ps1 for the way back.
+                $settingsNow.web.hsts     = $false
+                Save-TrackerSettings -Settings $settingsNow
+                Write-Host ""
+                Write-Host ("        HTTPS is on. Next start: https://{0}:{1}" -f $webName, $webPort) -ForegroundColor Green
+                Write-Host "        127.0.0.1 keeps working too, which is the way back in if the" -ForegroundColor DarkGray
+                Write-Host "        name ever stops resolving or the certificate lapses." -ForegroundColor DarkGray
+            }
+            else {
+                Write-Host "        Not turning HTTPS on yet - there is no usable certificate for" -ForegroundColor Yellow
+                Write-Host "        that name. Settings > General will show what is still missing." -ForegroundColor Yellow
+            }
+        }
+    }
 }
 
 # --------------------------------------------------------------------------- #

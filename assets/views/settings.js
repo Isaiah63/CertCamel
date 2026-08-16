@@ -289,6 +289,28 @@
     rows.id = 'set-web-check';
     fields.appendChild(rows);
 
+    /* Its own tick-box, never folded into the HTTPS one. This is the single
+       setting on this page that can lock somebody out of their own console, so
+       it should never arrive as a side effect of enabling something else. */
+    var hstsOn = el('label', 'check');
+    var hstsBox = document.createElement('input');
+    hstsBox.type = 'checkbox'; hstsBox.id = 'set-web-hsts';
+    hstsOn.appendChild(hstsBox);
+    hstsOn.appendChild(el('span', null, 'Send Strict-Transport-Security (HSTS)'));
+    fields.appendChild(hstsOn);
+    fields.appendChild(el('p', 'hint',
+      'Security scans look for this. It tells browsers to reach this name over HTTPS only. Sent ' +
+      'with a one-year max-age, and deliberately without includeSubDomains or preload — either ' +
+      'would push the policy onto names that have nothing to do with this console.'));
+    fields.appendChild(el('p', 'hint bad',
+      'Worth reading before ticking. Once a browser holds the policy, a certificate problem on ' +
+      'this name becomes a hard error with no “continue anyway” — that is exactly what HSTS is ' +
+      'for, and it is also how you lock yourself out. Turning it back off does NOT clear it: the ' +
+      'policy lives in the browser until it expires. The way back in is http://127.0.0.1 on the ' +
+      'same port, which never carries the policy, or sos-plain-http.ps1, which puts the console ' +
+      'back on plain HTTP and prints how to clear the name in each browser. Check the Renewal row ' +
+      'above is green first.'));
+
     fields.appendChild(el('p', 'hint',
       'The hostname is published to public Certificate Transparency logs the moment a certificate ' +
       'covers it, whether or not it has a DNS record. That is how CT works for every certificate ' +
@@ -1171,7 +1193,8 @@
         targets:     targets,
         alerts:      alertsResult ? alertsResult.value : null,
         logs:        {retentionDays: logDays, maxSizeMb: logMb},
-        web:         {https: webOn, hostname: webHost, port: webPort}
+        web:         {https: webOn, hostname: webHost, port: webPort,
+                      hsts: document.getElementById('set-web-hsts').checked}
       }
     };
   }
@@ -1225,6 +1248,7 @@
     webBox.checked = !!w.https;
     document.getElementById('set-web-host').value = w.hostname || '';
     document.getElementById('set-web-port').value = w.port || '';
+    document.getElementById('set-web-hsts').checked = !!w.hsts;
     document.getElementById('set-web-fields').classList.toggle('hidden', !webBox.checked);
     document.getElementById('set-web-check').textContent = '';
     if (webBox.checked) { runPreflight(false); }

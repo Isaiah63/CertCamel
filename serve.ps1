@@ -390,7 +390,10 @@ function Send-Response {
     # Cert Camel renews the certificate it serves, and the Renewal row under
     # Settings > Tracker address says whether it really is doing so - check that
     # is green before leaving this on.
-    if ($script:TlsCert) {
+    # Opt-in, because of that last paragraph: a policy nobody asked for that can
+    # lock them out of their own console is not a safe default. Settings >
+    # Tracker address turns it on, and sos-plain-http.ps1 is the way back.
+    if ($script:TlsCert -and $script:HstsEnabled) {
         [void]$sb.AppendLine("Strict-Transport-Security: max-age=31536000")
     }
     [void]$sb.AppendLine("Connection: close")
@@ -963,7 +966,12 @@ function Invoke-SaveSettings {
             }
         }
 
-        $settings.web = @{ https = $https; hostname = $name; port = $port }
+        # HSTS is opt-in and separate from https, because it is the one setting
+        # here that can lock somebody out of their own console - see the note in
+        # Send-Response. Turning HTTPS off does NOT clear it from a browser that
+        # already holds the policy, so it is stored, and cleared, on its own.
+        $hsts = [bool]($w.PSObject.Properties['hsts'] -and $w.hsts)
+        $settings.web = @{ https = $https; hostname = $name; port = $port; hsts = $hsts }
     }
 
     Save-TrackerSettings -Settings $settings
@@ -2093,6 +2101,11 @@ $script:WebHost = $script:Web.hostname
 
 $script:TlsCert = $null
 $tlsNote = $null
+
+# Read once at startup rather than per response. -NoTls implicitly disables it
+# too: that switch exists to get the console back when TLS is the problem, and a
+# recovery mode that still sent HSTS would be no recovery at all.
+$script:HstsEnabled = [bool]($script:Web.hsts) -and -not $NoTls
 
 if ($script:Web.https -and -not $NoTls) {
     $match = Find-CertificateForHost -HostName $script:Web.hostname
