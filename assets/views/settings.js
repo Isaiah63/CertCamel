@@ -1056,7 +1056,8 @@
     var pw = root.querySelector('.al-smtp-pass').value;
     if (pw) { alerts.smtp.password = pw; }
 
-    var anyEnabled = alerts.expiry.enabled || alerts.renewalSuccess.enabled ||
+    var anyEnabled = alerts.expiry.enabled || alerts.scheduledRenewal.enabled ||
+      alerts.renewalSuccess.enabled ||
       alerts.deploymentFailure.enabled || alerts.monthlySummary.enabled;
     if (anyEnabled && !alerts.smtp.host) {
       return {error: 'An SMTP host is required to send any alert.'};

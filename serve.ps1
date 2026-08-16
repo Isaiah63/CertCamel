@@ -635,6 +635,11 @@ function Get-StateResponse {
                     passwordSet = [bool](Test-TrackerSecret -Key 'alerts:smtpPassword')
                 }
                 expiry             = @{ enabled = [bool]$settings.alerts.expiry.enabled; thresholds = @($settings.alerts.expiry.thresholds) }
+                # Missing from a settings.json written before this alert existed,
+                # and Get-TrackerSettings only backfills defaults at the TOP level -
+                # so an absent sub-key stays absent. [bool] on $null is $false,
+                # which is the right answer for "never turned on".
+                scheduledRenewal   = @{ enabled = [bool]$settings.alerts.scheduledRenewal.enabled }
                 renewalSuccess     = @{ enabled = [bool]$settings.alerts.renewalSuccess.enabled }
                 deploymentFailure  = @{ enabled = [bool]$settings.alerts.deploymentFailure.enabled }
                 monthlySummary     = @{ enabled = [bool]$settings.alerts.monthlySummary.enabled }
@@ -893,10 +898,11 @@ function Invoke-SaveSettings {
         }
 
         $expiryOn  = [bool]($al.PSObject.Properties['expiry']            -and $al.expiry.enabled)
+        $schedOn   = [bool]($al.PSObject.Properties['scheduledRenewal']  -and $al.scheduledRenewal.enabled)
         $renewOn   = [bool]($al.PSObject.Properties['renewalSuccess']    -and $al.renewalSuccess.enabled)
         $failOn    = [bool]($al.PSObject.Properties['deploymentFailure'] -and $al.deploymentFailure.enabled)
         $monthlyOn = [bool]($al.PSObject.Properties['monthlySummary']    -and $al.monthlySummary.enabled)
-        $anyOn     = $expiryOn -or $renewOn -or $failOn -or $monthlyOn
+        $anyOn     = $expiryOn -or $schedOn -or $renewOn -or $failOn -or $monthlyOn
 
         if ($anyOn -and (-not $smtp -or -not $smtp.host)) { throw "An SMTP host is required to send any alert." }
         if ($anyOn -and -not $toList.Count)                { throw "At least one alert recipient is required to send any alert." }
@@ -935,6 +941,7 @@ function Invoke-SaveSettings {
                 username     = $(if ($smtp) { [string]$smtp.username } else { '' })
             }
             expiry             = @{ enabled = $expiryOn;  thresholds = $thresholds }
+            scheduledRenewal   = @{ enabled = $schedOn }
             renewalSuccess     = @{ enabled = $renewOn }
             deploymentFailure  = @{ enabled = $failOn }
             monthlySummary     = @{ enabled = $monthlyOn }
