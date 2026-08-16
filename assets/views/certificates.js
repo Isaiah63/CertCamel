@@ -247,13 +247,14 @@
       return;
     }
 
+    /* The console's own certificate comes out of the table entirely and gets
+       its own card below it. In a row it had to answer columns that make no
+       sense for it — "Deployed" said "not deployed", which reads as a fault when
+       it is the design: it belongs to this tool, not to any load balancer. */
+    var trackerCerts = certs.filter(function(c){ return c.tracker; });
+    certs = certs.filter(function(c){ return !c.tracker; });
+
     certs = certs.slice().sort(function(a, b){
-      /* The console's own certificate sorts to the bottom regardless of expiry.
-         It is infrastructure for this tool rather than one of the certificates
-         somebody opened this page to manage, and it renews and applies itself
-         with nothing to decide — so it should never be the first thing the eye
-         lands on, even when it happens to be the next to expire. */
-      if (!!a.tracker !== !!b.tracker) { return a.tracker ? 1 : -1; }
       var da = certDays(a), db = certDays(b);
       if (da === null && db === null) { return String(a.displayName || a.zone).localeCompare(String(b.displayName || b.zone)); }
       if (da === null) { return 1; }
@@ -261,9 +262,13 @@
       return da - db;
     });
 
+    /* Not "one per DNS zone" any more — a zone can produce three: the SAN
+       certificate, a wildcard, and this console's own. Says what is actually
+       true instead, which is the part that matters when deciding what a Renew
+       will take with it. */
     var intro = el('p', 'mini',
       certs.length + (certs.length === 1 ? ' certificate' : ' certificates') +
-      ', one per DNS zone. Renewing one renews every name on it.');
+      '. Renewing one renews every name on it.');
     host.appendChild(intro);
 
     var actionsRow = el('div', 'toolbar');
@@ -288,18 +293,12 @@
 
     certs.forEach(function(c){
       var days = certDays(c);
-      var tr = el('tr', c.tracker ? 'trackerrow' : null);
+      var tr = el('tr');
 
       var name = el('td', 'host');
       name.appendChild(document.createTextNode(c.displayName || c.zone));
       if (c.wildcard)   { name.appendChild(el('span', 'badge cool', 'wildcard')); }
       if (c.overridden) { name.appendChild(el('span', 'badge', 'custom')); }
-      if (c.tracker) {
-        var tb = el('span', 'badge cool', 'this console');
-        tb.title = 'The address this page is served on. Renewed and applied automatically, ' +
-                   'and deployed nowhere — it belongs to the tool, not to your load balancers.';
-        name.appendChild(tb);
-      }
       if (c.external) {
         var eb = el('span', 'badge cool', 'managed elsewhere');
         eb.title = 'Renewed by another system. Watched here, never issued from here.';
@@ -376,20 +375,14 @@
           href: '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(CC.TOKEN)
         });
       }
-      if (!c.tracker && !c.external && c.hasLocalCert && (c.targets || []).length) {
+      if (!c.external && c.hasLocalCert && (c.targets || []).length) {
         items.push({
           label: 'Deploy to load balancers',
           title: 'Push this certificate to its load balancers and verify each one is serving it',
           run: function(){ openPicker('deploy', [c.certId]); }
         });
       }
-      /* "Managed elsewhere" is deliberately unreachable for the console's own
-         certificate. Setting it would take this certificate out of the renewal
-         set - renew-due.ps1 skips anything marked external - and the first sign
-         would be the console refusing to serve HTTPS on the day it expired,
-         with the tool that would have warned you being the one that went down.
-         Renew and Download are left: those are the two worth having at 2am. */
-      if (!c.tracker) { items.push({
+      items.push({
         label: c.external ? 'Renew here' : 'Managed elsewhere',
         title: c.external
           ? 'Bring this certificate back under this tool'
@@ -400,7 +393,7 @@
             CC.loadState();
           });
         }
-      }); }
+      });
 
       if (!c.external) {
         var rb = el('button', 'btn sm primary', 'Renew');
@@ -418,6 +411,60 @@
     renewAll.disabled = !expiring.length;
     renewAll.textContent = expiring.length ? 'Renew ' + expiring.length + ' expiring' : 'Nothing expiring';
     renewAll.title = skipped ? skipped + ' certificate(s) marked "managed elsewhere" are never included' : '';
+
+    trackerCerts.forEach(function(c){ host.appendChild(trackerCard(c)); });
+  }
+
+  /* The console's own certificate, on its own. Separate from the table because
+     it answers different questions: not "where is this deployed and when do I
+     renew it", but "what is serving this page, is it still being looked after,
+     and where is the file". Nothing here needs deciding, which is the point. */
+  function trackerCard(c){
+    var card = el('div', 'card wide trackercard');
+
+    var h = el('h3', null, 'This console');
+    h.appendChild(el('span', 'badge cool', c.displayName || c.certId));
+    card.appendChild(h);
+
+    card.appendChild(el('p', 'mini',
+      'The address this page is served on. It has its own certificate so that editing your ' +
+      'production list can never affect it, and it is deployed nowhere — it belongs to this tool, ' +
+      'not to a load balancer.'));
+
+    var days = certDays(c);
+    var grid = el('div', 'trackerfacts');
+
+    function fact(k, v, cls){
+      var d = el('div', 'fact');
+      d.appendChild(el('div', 'k', k));
+      d.appendChild(el('div', 'v' + (cls ? ' ' + cls : ''), v));
+      return d;
+    }
+    grid.appendChild(fact('Covers', (c.names || []).join(', ')));
+    grid.appendChild(fact('Issuer', c.caLabel || '—'));
+    grid.appendChild(fact('Expires', c.notAfter ? new Date(c.notAfter).toLocaleDateString() : '—'));
+    grid.appendChild(fact('Days left', days === null ? '—' : String(days),
+                          (days !== null && days <= 14) ? 'bad' : ''));
+    grid.appendChild(fact('Renewal',
+      c.external ? 'NOT renewed here — this certificate is marked managed elsewhere'
+                 : 'Automatic. Renewed and applied without anything to press.',
+      c.external ? 'bad' : 'good'));
+    card.appendChild(grid);
+
+    var acts = el('div', 'page-actions');
+    if (!c.external) {
+      var rb = el('button', 'btn sm primary', 'Renew now');
+      rb.type = 'button';
+      rb.addEventListener('click', function(){ openPicker('renew', [c.certId]); });
+      acts.appendChild(rb);
+    }
+    if (c.hasLocalCert) {
+      var dl = el('a', 'btn sm', 'Download');
+      dl.href = '/api/download/' + encodeURIComponent(c.certId) + '?t=' + encodeURIComponent(CC.TOKEN);
+      acts.appendChild(dl);
+    }
+    card.appendChild(acts);
+    return card;
   }
 
   function deploymentCell(c){
