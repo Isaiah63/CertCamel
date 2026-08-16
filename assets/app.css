@@ -528,7 +528,13 @@ tr.open > td{border-bottom:none;}
    card stopped and the next began. --group-name rather than --accent: the note
    at the top of this file records --accent landing near 4.1:1 as small bold
    text, and these are exactly that. */
-.card > h4{margin:0 0 .9rem; font-size:.72rem; letter-spacing:.1em; font-weight:800;
+/* .tabpanel h4 as well as .card > h4, and NOT nested deeper by accident: the
+   settings panels are cards, so a heading appended straight to one picked this
+   up while an identical heading one <div> further in did not - which is why
+   General showed LOG RETENTION styled and "Update" and "Tracker address" plain,
+   on the same page. Scoped to .tabpanel, which only settings uses, so widening
+   it cannot reach the load balancer or modal headings. */
+.card > h4, .tabpanel h4{margin:0 0 .9rem; font-size:.72rem; letter-spacing:.1em; font-weight:800;
   text-transform:uppercase; color:var(--group-name);}
 
 /* Two cards abreast on a wide screen, stacking on a narrow one. Same auto-fit
