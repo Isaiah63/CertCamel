@@ -603,6 +603,12 @@ function Get-StateResponse {
         }
         settings   = @{
             contact     = $settings.contact
+            # Both the setting and the machine's own zone: the page warns when
+            # they differ, because the schedule fires in machine time regardless
+            # and that mismatch is exactly what makes a time in an email wrong.
+            timeZone     = $(if ($settings.ContainsKey('timeZone')) { [string]$settings.timeZone } else { '' })
+            machineZone  = [TimeZoneInfo]::Local.Id
+            timeZones    = @(@([TimeZoneInfo]::GetSystemTimeZones()) | ForEach-Object { @{ id = $_.Id; label = $_.DisplayName } })
             defaultCaId = $settings.defaultCaId
             cas         = @(@($settings.cas) | ForEach-Object {
                 @{
@@ -667,6 +673,18 @@ function Invoke-SaveSettings {
     $settings = Get-TrackerSettings
 
     if ($null -ne $Payload.contact) { $settings.contact = [string]$Payload.contact }
+
+    # Display only - see Get-DisplayTimeZone. Validated against the machine's own
+    # zone list, because a typo here would otherwise surface much later as every
+    # email silently falling back to local time with nothing saying why.
+    if ($Payload.PSObject.Properties['timeZone']) {
+        $tz = [string]$Payload.timeZone
+        if ($tz) {
+            try { [void][TimeZoneInfo]::FindSystemTimeZoneById($tz) }
+            catch { throw "'$tz' is not a timezone this machine knows about." }
+        }
+        $settings.timeZone = $tz
+    }
 
     if ($Payload.PSObject.Properties['cas'] -and $null -ne $Payload.cas) {
         $keptCas = @()

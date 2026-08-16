@@ -80,18 +80,20 @@ try {
         throw "There is no certificate data yet. Run check-ssl.ps1 first."
     }
 
-    # Every watched host, not just the ones this run might renew - an
-    # externally-managed certificate still deserves a warning if whatever
-    # renews it elsewhere is running late. Never fatal: a bad SMTP setting
-    # here must not stop the actual renewal work below. Skipped under
-    # -WhatIfOnly, which promises a side-effect-free dry run.
-    if (-not $WhatIfOnly) {
-        try { Send-ExpiryAlerts -Settings $settings -Results @($checker.results) }
-        catch { Write-Log "Expiry alerts could not be evaluated: $(($_.Exception.Message -split "`n")[0].Trim())" 'warn' }
-    }
-
     $grouping = Get-CertificateGroups -Results @($checker.results) -Settings $settings -ZoneCache (Get-ZoneCache)
     $renewable = @($grouping.certs | Where-Object { -not $_.external })
+
+    # AFTER the grouping, which it now needs: the countdown only goes to hosts
+    # nothing here will renew, and $grouping is what says which those are.
+    # Ordered the other way round it silently passed $null and warned about
+    # every host, including the ones already handled.
+    #
+    # Never fatal - a bad SMTP setting must not stop the actual renewal work
+    # below. Skipped under -WhatIfOnly, which promises a side-effect-free run.
+    if (-not $WhatIfOnly) {
+        try { Send-ExpiryAlerts -Settings $settings -Results @($checker.results) -Groups $grouping }
+        catch { Write-Log "Expiry alerts could not be evaluated: $(($_.Exception.Message -split "`n")[0].Trim())" 'warn' }
+    }
 
     if (-not $renewable.Count) {
         Write-Log "Nothing renewable is configured." 'warn'
@@ -164,6 +166,21 @@ try {
         } else {
             Write-Log "ok   $($cert.displayName) - not due yet"
         }
+    }
+
+    # "Renewing tomorrow" - sent after the verdicts are known and before any
+    # renewal runs, so it goes out the run BEFORE the one that acts. Needs the
+    # next scheduled run to say when; with nothing scheduled there is no "about
+    # to" and it is skipped rather than promising a run that will not come.
+    if (-not $WhatIfOnly) {
+        try {
+            $nextRun = $null
+            $rt = @((Get-AutomationStatus).tasks | Where-Object { $_.key -eq 'renew' })[0]
+            if ($rt -and $rt.nextRun) { $nextRun = [datetime]$rt.nextRun }
+            Send-ScheduledRenewalAlerts -Settings $settings -Considered @($outcome.considered) `
+                -NextRun $nextRun -Groups $grouping
+        }
+        catch { Write-Log "Scheduled-renewal alerts could not be evaluated: $(($_.Exception.Message -split "`n")[0].Trim())" 'warn' }
     }
 
     if (-not $due.Count) {

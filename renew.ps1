@@ -426,8 +426,13 @@ try {
             Write-Log "$display FAILED: $($entry.error)$where" 'error'
         }
 
+        # Per-node detail from the deploy step's own result file, so the email
+        # says which node did what rather than only that something failed.
+        $deployDetail = @()
+        try { $deployDetail = @(Format-DeploymentSummary -ResultPath (Join-Path $script:JobsDir "renew-deploy-$certId.json")) } catch { }
+
         Send-RenewalOutcomeAlert -Settings $settings -DisplayName $display -Ok $entry.ok `
-            -Deployed $entry.deployed -ErrorMessage $entry.error
+            -Deployed $entry.deployed -ErrorMessage $entry.error -Detail $deployDetail
 
         # One audit line per certificate, not one per run: the question later is
         # always "what happened to this certificate", never "what did run 7 do".
