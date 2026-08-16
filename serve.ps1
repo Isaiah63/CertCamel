@@ -1579,6 +1579,25 @@ function Invoke-Route {
             return
         }
 
+        '^/api/update$' {
+            # GET reports, POST applies. Split so that looking is always safe -
+            # the page checks on render, and nothing should change because
+            # somebody opened Settings.
+            if ($Request.Method -eq 'GET') {
+                Send-Json $Stream (Get-UpdateStatus -Fetch)
+                return
+            }
+            if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use GET or POST.'; return }
+
+            $r = Invoke-TrackerUpdate
+            Write-AuditEvent -Event 'settings' -Object 'update' `
+                -Outcome $(if ($r.ok) { 'ok' } else { 'fail' }) `
+                -Detail $(if ($r.ok) { "$($r.applied) commit(s): $($r.from) -> $($r.to)" } else { $r.error })
+            if (-not $r.ok) { Send-Error $Stream 400 $r.error; return }
+            Send-Json $Stream $r
+            return
+        }
+
         '^/api/web/preflight$' {
             if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
 

@@ -4037,6 +4037,118 @@ function Test-Elevated {
         [Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-UpdateStatus {
+    <#
+      Whether this copy can be updated from git, and what is waiting.
+
+      Read-only and network-free: `git fetch` is a network call and this runs on
+      the request thread, so the answer is "what did the last fetch see". The
+      caller does the fetch explicitly.
+
+      Everything operator-specific is already in .gitignore - settings.json,
+      secrets.xml, domains.txt, ssl-data.js, zones.json, alert-state.json - so a
+      pull replaces code and leaves data alone. That is what makes this safe
+      enough to offer at all, and why a DIRTY tree is refused rather than
+      merged: an edited file is either a local fix somebody wants to keep or a
+      mistake somebody wants to see, and silently overwriting it serves neither.
+    #>
+    param([switch]$Fetch)
+
+    $out = @{
+        isRepo = $false; branch = ''; remote = ''; clean = $true; dirty = @()
+        behind = 0; ahead = 0; current = ''; latest = ''; incoming = @()
+        canUpdate = $false; reason = ''
+    }
+
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $git) { $out.reason = 'git is not installed, so this copy cannot update itself. Download the new version instead.'; return $out }
+
+    Push-Location $script:Root
+    try {
+        $null = & git rev-parse --is-inside-work-tree 2>&1
+        if ($LASTEXITCODE -ne 0) { $out.reason = 'This folder is not a git clone, so there is nothing to pull from. Download the new version instead.'; return $out }
+        $out.isRepo = $true
+
+        $out.branch = (& git rev-parse --abbrev-ref HEAD 2>$null | Select-Object -First 1)
+        $out.remote = (& git config --get "branch.$($out.branch).remote" 2>$null | Select-Object -First 1)
+        if (-not $out.remote) { $out.remote = 'origin' }
+
+        $url = (& git remote get-url $out.remote 2>$null | Select-Object -First 1)
+        if (-not $url) { $out.reason = "No '$($out.remote)' remote is configured, so there is nowhere to pull from."; return $out }
+
+        if ($Fetch) { $null = & git fetch $out.remote --quiet 2>&1 }
+
+        # Does the remote actually have this branch? A local branch that was
+        # never pushed has no remote-tracking ref, and every comparison below
+        # then fails with git exit 128 - which read as "0 behind, already up to
+        # date" and would have told somebody on an unpushed branch that there
+        # was nothing to update, which is not the same statement at all.
+        $null = & git rev-parse --verify --quiet "refs/remotes/$($out.remote)/$($out.branch)" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $global:LASTEXITCODE = 0
+            $out.current = (& git log -1 --format='%h %s' 2>$null | Select-Object -First 1)
+            $out.reason  = "The branch '$($out.branch)' does not exist on '$($out.remote)', so there is nothing to compare against. Switch to a branch that tracks the remote - usually main."
+            return $out
+        }
+
+        # Tracked files only. Untracked ones are the operator's own - jobs\,
+        # certs\, a scratch file - and none of them block a pull.
+        $status = @(& git status --porcelain --untracked-files=no 2>$null | Where-Object { $_ })
+        $out.clean = ($status.Count -eq 0)
+        $out.dirty = @($status | ForEach-Object { ($_ -replace '^\s*\S+\s+', '') } | Select-Object -First 20)
+
+        $counts = (& git rev-list --left-right --count "HEAD...$($out.remote)/$($out.branch)" 2>$null | Select-Object -First 1)
+        if ($counts -match '^\s*(\d+)\s+(\d+)') { $out.ahead = [int]$Matches[1]; $out.behind = [int]$Matches[2] }
+
+        $out.current = (& git log -1 --format='%h %s' 2>$null | Select-Object -First 1)
+        $out.latest  = (& git log -1 --format='%h %s' "$($out.remote)/$($out.branch)" 2>$null | Select-Object -First 1)
+        $out.incoming = @(& git log --format='%h  %s' "HEAD..$($out.remote)/$($out.branch)" 2>$null |
+                          Where-Object { $_ } | Select-Object -First 25)
+
+        if ($out.behind -eq 0)      { $out.reason = 'Already up to date.' }
+        elseif (-not $out.clean)    { $out.reason = 'Some tracked files have local edits. Commit, stash or revert them first - an update will not overwrite them.' }
+        elseif ($out.ahead -gt 0)   { $out.reason = "This copy has $($out.ahead) commit(s) of its own that the remote does not. Push or revert them first." }
+        else                        { $out.canUpdate = $true; $out.reason = "$($out.behind) update(s) available." }
+    }
+    catch { $out.reason = ($_.Exception.Message -split "`n")[0].Trim() }
+    finally { Pop-Location }
+
+    return $out
+}
+
+function Invoke-TrackerUpdate {
+    <#
+      Fast-forward this clone to the remote, having re-checked every condition.
+
+      Re-checked rather than trusted from the page: the status the operator
+      looked at may be minutes old, and "clean when you pressed it" is not the
+      same as "clean now". A merge is never attempted - only a fast-forward, so
+      the worst case is a refusal rather than a conflicted working tree on a
+      machine whose whole job is running unattended.
+    #>
+    $pre = Get-UpdateStatus -Fetch
+    if (-not $pre.canUpdate) { return @{ ok = $false; error = $pre.reason; status = $pre } }
+
+    Push-Location $script:Root
+    try {
+        $output = @(& git merge --ff-only "$($pre.remote)/$($pre.branch)" 2>&1)
+        $ok = ($LASTEXITCODE -eq 0)
+    }
+    catch { $ok = $false; $output = @($_.Exception.Message) }
+    finally { Pop-Location }
+
+    $post = Get-UpdateStatus
+    return @{
+        ok = $ok
+        error   = $(if ($ok) { $null } else { (@($output) -join ' ').Trim() })
+        output  = @($output)
+        from    = $pre.current
+        to      = $post.current
+        applied = $pre.behind
+        status  = $post
+    }
+}
+
 function Get-TrackerAddressStatus {
     <#
       The four preconditions for serving this page under a name, each answered
