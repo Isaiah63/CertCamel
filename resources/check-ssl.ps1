@@ -39,7 +39,14 @@ $tmpFile    = "$outFile.tmp"
 # installed, which is a property worth keeping. acme-lib is only dot-sourced for
 # the run log and audit trail: it defines functions and a few paths, costs about
 # 100ms, and pulls in nothing external (Posh-ACME is loaded on demand elsewhere).
-. (Join-Path $root 'acme-lib.ps1')
+#
+# $PSScriptRoot, NOT $root. They stopped being the same thing when the program
+# moved into resources\: $root above is the folder one level up, which is right
+# for domains.txt and ssl-data.js and wrong for a sibling script. Getting this
+# backwards left "Check now" failing with a file-not-found from the OLD path,
+# and it failed in a detached child, so the page just showed a job that did
+# nothing rather than an error anyone would notice.
+. (Join-Path $PSScriptRoot 'acme-lib.ps1')
 [void](Start-RunLog -Kind 'check' -Path $RunLogPath -Source $Source)
 
 # --------------------------------------------------------------------------- #
