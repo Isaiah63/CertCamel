@@ -114,17 +114,12 @@ try {
             $ca = Get-CaProfile -Settings $settings -CaId $cert.caId
             Set-PAServer -DirectoryUrl (Get-ActiveDirectoryUrl -Ca $ca) -ErrorAction Stop
 
-            # '*' is not a legal character in a Posh-ACME order name, and
-            # Get-PAOrder throws on it rather than returning nothing. New-PAOrder
-            # stores wildcards as '!' (New-PAOrder.ps1:120), so ask for the name
-            # it was actually filed under.
-            #
-            # Without this the throw was swallowed by the catch below, $order
-            # stayed null, and every wildcard silently fell through to the plain
-            # 30-day fallback - never using the CA's ARI window, and never
-            # reporting a renewal date at all.
-            $orderName = ([string]$cert.names[0]).Replace('*', '!')
-            $order = Get-PAOrder -Name $orderName -ErrorAction SilentlyContinue
+            # Matched on the domain SET, not on the first name - see
+            # Resolve-PAOrderForCert. Looking it up by names[0] broke the moment
+            # the name order changed, and broke silently: the order was not
+            # found, this fell through to the plain day threshold, and the CA's
+            # renewal window was ignored with nothing to show for it.
+            $order = Resolve-PAOrderForCert -CertId $cert.certId -Names @($cert.names)
         } catch { }
 
         if (-not $order) {
