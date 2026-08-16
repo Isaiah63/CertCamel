@@ -384,7 +384,7 @@ td.deploy{padding-top:.55rem; padding-bottom:.55rem;}
    rather than dimmed: it answers different questions from the rows above it,
    and a fault with it still has to read as a fault - hence the semantic colours
    on the Renewal fact rather than a blanket opacity. */
-.trackercard{margin-top:1.6rem; border-style:dashed;}
+.trackercard{margin-top:2.9rem; border-style:dashed;}
 .trackercard h3{display:flex; align-items:center; gap:.6rem; margin:0 0 .3rem;}
 .trackerfacts{display:grid; grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));
   gap:.9rem 1.4rem; margin:1rem 0 .2rem;}

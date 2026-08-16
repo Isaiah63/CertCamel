@@ -492,52 +492,75 @@
       return td;
     }
 
+    /* ONE PIP PER ASSIGNED GROUP, not per node of the last run.
+       Rendering the last run's nodes meant a certificate deployed to prod and
+       then to test showed only test - which reads as "prod still needs doing"
+       when prod was done first. Now every group this certificate is assigned to
+       appears, coloured by what is known about THAT group, with its own last
+       deployed time on hover. A group never pushed to says so outright. */
     var stack = el('div', 'deploy-stack');
     var wrap = el('div', 'pips');
-    (dep.last.targets || []).forEach(function(t){
-      (t.nodes || []).forEach(function(n){
-        var pushed = n.push && n.push.ok;
-        var checks = n.verify || [];
-        // Mirrors deploy.ps1's pass rule exactly. A node is green on evidence -
-        // an identity probe that matched the serial - not on the absence of
-        // complaints. A contested COVERAGE probe (another certificate that also
-        // covers a shared name is winning it) is a fact about the config, not a
-        // failure, so it must not paint the node red; anything else unmatched
-        // still does.
-        var hardFailed = checks.filter(function(v){
-          return !v.ok && !(v.contested && v.role === 'coverage');
-        }).length;
-        var proved = checks.filter(function(v){ return v.ok && v.role === 'identity'; }).length;
+    var byTarget = (dep.last && dep.last.byTarget) || {};
 
-        var served;
-        if (!checks.length)                    { served = null; }        // not verified
-        else if (hardFailed === 0 && proved)   { served = true; }
-        else                                   { served = false; }
-
-        var cls = (pushed && served === true) ? 'good' : (pushed && served === null) ? 'warn' : 'bad';
-        var pip = el('span', 'pip ' + cls, n.name);
-        var why = [];
-        why.push(pushed ? 'push ok' : 'push failed' + (n.push && n.push.error ? ': ' + n.push.error : ''));
-        if (n.crtList) {
-          why.push(n.crtList.ok
-            ? 'crt-list: ' + (n.crtList.action === 'added' ? 'appended and loaded' : 'already referenced')
-            : 'crt-list failed: ' + (n.crtList.error || 'not referenced'));
-        }
-        checks.forEach(function(v){
-          if (v.ok)             { why.push(v.sni + ': serving it, ' + v.daysRemaining + ' days left'); }
-          else if (v.contested) { why.push(v.sni + ': contested - ' + (v.error || 'another certificate covers this name')); }
-          else                  { why.push(v.sni + ': ' + (v.error || 'not serving it')); }
-        });
-        pip.title = why.join('\n');
-        wrap.appendChild(pip);
+    /* Records written before per-group history existed have no byTarget, so
+       rebuild what can be known from the last run rather than reporting every
+       group as "never pushed" — which would be a fresh lie told to every
+       existing install on upgrade. Groups outside that run stay unknown, which
+       is honest: nothing on disk says when they were last deployed to. */
+    if (!Object.keys(byTarget).length && dep.last && dep.last.targets) {
+      dep.last.targets.forEach(function(t){
+        byTarget[t.targetId] = {
+          targetId: t.targetId, label: t.label, ok: t.ok, at: dep.last.at,
+          nodes: (t.nodes || []).map(function(n){
+            var checks = n.verify || [];
+            var hardFailed = checks.filter(function(v){
+              return !v.ok && !(v.contested && v.role === 'coverage');
+            }).length;
+            var proved = checks.filter(function(v){ return v.ok && v.role === 'identity'; }).length;
+            return { name: n.name,
+                     ok: !!(n.push && n.push.ok) && !!checks.length && hardFailed === 0 && !!proved };
+          })
+        };
       });
+    }
+    var labels = {};
+    ((CC.state && CC.state.settings && CC.state.settings.targets) || []).forEach(function(t){
+      labels[t.id] = t.label || t.id;
+    });
+
+    var newest = null;
+    assigned.forEach(function(tid){
+      var rec = byTarget[tid];
+      var label = (rec && rec.label) || labels[tid] || tid;
+
+      if (!rec) {
+        var p0 = el('span', 'pip', label);
+        p0.title = label + ': never pushed. This certificate is assigned here but has not been ' +
+                   'deployed to it yet.';
+        wrap.appendChild(p0);
+        return;
+      }
+
+      var bad = (rec.nodes || []).filter(function(n){ return !n.ok; });
+      var cls = rec.ok && !bad.length ? 'good' : 'bad';
+      var pip = el('span', 'pip ' + cls, label);
+
+      var why = [label + ': last deployed ' + new Date(rec.at).toLocaleString()];
+      (rec.nodes || []).forEach(function(n){
+        why.push('  ' + n.name + ': ' + (n.ok ? 'serving it' : 'NOT serving it'));
+      });
+      if (!rec.nodes || !rec.nodes.length) { why.push('  no node detail recorded'); }
+      pip.title = why.join('\n');
+      wrap.appendChild(pip);
+
+      if (!newest || new Date(rec.at) > new Date(newest)) { newest = rec.at; }
     });
     stack.appendChild(wrap);
 
-    var when = el('button', 'btn sm', ago(dep.last.at));
+    var when = el('button', 'btn sm', ago(newest || dep.last.at));
     when.type = 'button';
-    when.title = 'Last deployed ' + new Date(dep.last.at).toLocaleString() +
-                 '. Assigned to ' + assigned.join(', ') + '. Click to change.';
+    when.title = 'Most recent deployment ' + new Date(newest || dep.last.at).toLocaleString() +
+                 '. Hover a group for its own time. Click to change where this goes.';
     when.addEventListener('click', function(){ openPicker('assign', [c.certId]); });
     stack.appendChild(when);
     td.appendChild(stack);
