@@ -1068,6 +1068,72 @@ function Uninstall-CamelServerTask {
     return @{ removed = $removed; stoppedRunning = $stopped }
 }
 
+function Resolve-PAOrderForCert {
+    <#
+      Find the Posh-ACME order that belongs to a certificate.
+
+      This used to be `Get-PAOrder -Name $cert.names[0]`, and that is a bug with
+      a nasty shape. Posh-ACME names an order after whichever domain was FIRST
+      when it was created; Cert Camel looked it up by whichever domain is first
+      NOW. Those drift apart whenever the name list changes - reordering
+      domains.txt does it, and so did splitting the console's name onto its own
+      certificate.
+
+      When they drift, Get-PAOrder returns nothing, renew-due.ps1 concludes the
+      certificate was "never issued here", and silently falls back to a plain day
+      threshold - so the CA's renewal window is ignored entirely. Nothing looks
+      wrong. It surfaces only as a renewal that did not happen, months later,
+      which is the most expensive time to find out.
+
+      Matched on the DOMAIN SET instead, which is what actually identifies an
+      order and is immune to ordering. Name lookups are kept as fallbacks so an
+      order whose set has legitimately changed - a name added to a certificate -
+      is still found rather than orphaned.
+
+      Never throws: '*' is not legal in a Posh-ACME order name and Get-PAOrder
+      raises on it rather than returning nothing.
+    #>
+    param([string]$CertId, [string[]]$Names)
+
+    function ConvertTo-DomainKey {
+        param([string[]]$List)
+        return ((@($List) | Where-Object { $_ } |
+                 ForEach-Object { ([string]$_).Trim().TrimEnd('.').ToLowerInvariant() } |
+                 Sort-Object -Unique) -join '|')
+    }
+
+    $want = ConvertTo-DomainKey $Names
+    if (-not $want) { return $null }
+
+    $all = @()
+    try { $all = @(Get-PAOrder -List) } catch { $all = @() }
+
+    # EXACT set match only, and no name-based fallback. That was tried and is
+    # unsafe: order names and certificate ids share a namespace, so a fallback
+    # on the name matches things that are not this certificate. The console's
+    # certificate proves it - splitting it out produced a certId of
+    # "tracker.camelnuggets.com", and an order of that name already existed for
+    # the OLD combined certificate covering seven names. Matching it would have
+    # read a renewal window belonging to a different certificate, which is worse
+    # than finding nothing.
+    #
+    # Finding nothing is safe: the caller treats it as "never issued here" and
+    # falls back to the live certificate's own expiry, which is conservative and
+    # correct. It also self-heals - the next issuance creates an order whose set
+    # matches, and ARI resumes on its own.
+    #
+    # More than one can match after a duplicate order, so take the newest
+    # certificate: that is the one actually in service.
+    $hits = @($all | Where-Object {
+        (ConvertTo-DomainKey (@($_.MainDomain) + @($_.SANs))) -eq $want
+    })
+    if ($hits.Count) {
+        return (@($hits | Sort-Object { [datetime]$_.CertExpires } -Descending)[0])
+    }
+
+    return $null
+}
+
 function Get-RenewalForecast {
     <#
       The last sweep's per-certificate verdict, as recorded by renew-due.ps1.

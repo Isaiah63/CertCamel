@@ -533,6 +533,15 @@
       var d = deployment[certId];
       return (d && d.targets) ? d.targets : [];
     }
+    // Read off the certificate itself rather than compared against the
+    // configured hostname: the split that produced this certificate already
+    // decided it, and re-deriving the answer here is one more place for the two
+    // to disagree.
+    function isTracker(certId){
+      return ((state && state.certs) || []).some(function(c){
+        return c.certId === certId && c.tracker;
+      });
+    }
     function targetLabel(id){
       var found = id;
       ((state.settings && state.settings.targets) || []).some(function(t){
@@ -575,6 +584,12 @@
       var tg = targetsFor(c.certId);
       if (tg.length) {
         b.appendChild(el('div', 'g', 'deploys to ' + tg.map(targetLabel).join(', ')));
+      } else if (isTracker(c.certId)) {
+        // Deployed nowhere BY DESIGN - this is the certificate serving this
+        // page, and it belongs to the tool rather than to a load balancer.
+        // Warning about it would train people to ignore a warning that is real
+        // on every other row.
+        b.appendChild(el('div', 'g', 'serves this console — nothing to deploy'));
       } else {
         b.appendChild(el('div', 'w', 'no load balancer assigned, so it will not deploy'));
       }
