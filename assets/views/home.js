@@ -275,7 +275,17 @@
         tr.appendChild(hcell);
 
         var status = el('td');
-        status.appendChild(el('span', 'st ' + r.state, LABEL[r.state]));
+        // Expired and unreachable are left alone whatever is scheduled: something
+        // has already gone wrong, and that has to keep reading as wrong.
+        var due = (r.state === 'soon' || r.state === 'ok') ? scheduledRenewalFor(r.raw.host) : null;
+        if (due) {
+          var auto = el('span', 'st auto', 'Renews ' + fmtDate(due));
+          auto.title = 'Renewed automatically by Cert Camel, from ' + new Date(due).toLocaleString() +
+                       '. The certificate authority sets this window and it can move.';
+          status.appendChild(auto);
+        } else {
+          status.appendChild(el('span', 'st ' + r.state, LABEL[r.state]));
+        }
         tr.appendChild(status);
 
         if (r.raw.ok) {
@@ -364,6 +374,38 @@
     stamp.title = new Date(data.generated).toLocaleString();
 
     markUnmapped(rowsByHost, alertsBox);
+  }
+
+  /* "Renew soon" is an expiry countdown, and for anything this tool renews
+     itself it says the wrong thing: it reads as work to do when the work is
+     already scheduled, in amber, next to rows where amber means somebody has to
+     act. That is how a real warning stops being read.
+
+     So a host whose certificate has a renewal date shows "Renews <date>"
+     instead. Hosts with nothing scheduled keep the countdown, because there it
+     is the only thing that will ever tell you - the same rule the expiry emails
+     now follow.
+
+     The forecast arrives from /api/automation AFTER the first paint, so it is
+     cached here and consulted by every render. The first attempt patched the
+     rendered rows instead and looked right in isolation, but the table is
+     rebuilt on every state refresh - so the badges reverted moments later. */
+  var lastForecast = null;
+
+  function scheduledRenewalFor(host){
+    if (!lastForecast || !lastForecast.considered) { return null; }
+    var h = String(host).toLowerCase();
+
+    var when = null;
+    ((CC.state && CC.state.certs) || []).forEach(function(c){
+      if (when || c.external) { return; }     // renewed elsewhere: countdown still earns its place
+      var covers = (c.hosts || []).some(function(x){ return String(x).toLowerCase() === h; });
+      if (!covers) { return; }
+      lastForecast.considered.forEach(function(e){
+        if (e && e.certId === c.certId && e.renewAfter) { when = e.renewAfter; }
+      });
+    });
+    return when;
   }
 
   // Domains no configured DNS provider can renew - the same badge and callout
@@ -657,6 +699,11 @@
 
       // Prepended so the schedule reads before the history beside it.
       cardRow.insertBefore(renewalsCard(res), cardRow.firstChild);
+
+      // Cached for the domain table, which renders before this returns. The
+      // re-render is what makes the badges pick it up on the first paint too.
+      if (res.forecast && !lastForecast) { lastForecast = res.forecast; render(); }
+      else { lastForecast = res.forecast; }
     });
   }
 
