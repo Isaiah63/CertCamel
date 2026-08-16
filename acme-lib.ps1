@@ -661,7 +661,7 @@ function Get-WebSettings {
     #>
     param([hashtable]$Settings)
 
-    $out = @{ https = $false; hostname = ''; port = 0 }
+    $out = @{ https = $false; hostname = ''; port = 0; hsts = $false }
 
     if ($Settings -and $Settings.ContainsKey('web') -and $Settings.web) {
         $w = $Settings.web
@@ -670,6 +670,7 @@ function Get-WebSettings {
         }
         if ($w.ContainsKey('port') -and $w.port) { $out.port = [int]$w.port }
         if ($w.ContainsKey('https'))             { $out.https = [bool]$w.https }
+        if ($w.ContainsKey('hsts'))              { $out.hsts  = [bool]$w.hsts }
     }
 
     if ($out.port -lt 0 -or $out.port -gt 65535) { $out.port = 0 }
@@ -678,6 +679,12 @@ function Get-WebSettings {
     # would pin nothing and then fail the handshake on every request. Fall back
     # to plain HTTP rather than serving something broken.
     if ($out.https -and (-not $out.hostname -or -not $out.port)) { $out.https = $false }
+
+    # HSTS without HTTPS is not a half-state either - the header is ignored on a
+    # plain response, so honouring it would only mean it silently re-arms the
+    # moment HTTPS comes back, which is the opposite of what somebody turning
+    # HTTPS off is asking for.
+    if (-not $out.https) { $out.hsts = $false }
 
     return $out
 }
