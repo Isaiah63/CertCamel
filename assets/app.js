@@ -44,6 +44,29 @@
   }
   CertCamel.el = el;
 
+  /* A one-line summary plus a link into the guide, for panes that had grown
+     into documentation - paragraphs of explanation standing where a field
+     should be. The guide carries all of it already and carries it better.
+
+     Deliberately NOT for every long blurb. Where the text warns about a
+     consequence of the control beside it, or states a rule that is not
+     self-evident from the thing being edited, it belongs on the page in full:
+     moving that behind a click is not tidying, it is hiding. Nor is it for
+     anything the guide has no section on - a link that lands at the top of the
+     page answers nothing.
+
+     target=_blank so a half-filled form is never navigated away from, and
+     rel=noopener because the new tab has no business reaching back. */
+  CertCamel.guideHint = function(text, anchor, linkText){
+    var p = el('p', 'hint', text + ' ');
+    var a = el('a', null, linkText || 'Read more');
+    a.href = anchor.indexOf('.html') === -1 ? 'readme.html#' + anchor : anchor;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    p.appendChild(a);
+    return p;
+  };
+
   CertCamel.daysUntil = function(iso){
     return Math.floor((new Date(iso) - new Date()) / 86400000);
   };

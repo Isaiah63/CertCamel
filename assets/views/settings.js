@@ -84,28 +84,12 @@
     return p;
   }
 
-  /* These panes had grown into documentation - paragraphs of explanation
-     standing where a field should be. The guide carries all of it already, and
-     carries it better, so the pane keeps the one line needed to make the choice
-     and points at the section that explains the rest.
-
-     Deliberately NOT applied to every long blurb. Where the text warns about a
-     consequence of the control beside it - HSTS being hard to take back, a
-     hostname becoming public the moment a certificate is issued - it stays on
-     the page in full. Moving that behind a click is not tidying, it is hiding.
-
-     Nor is it applied where the guide has nothing to link to: the timezone
-     field is the case in point, and its explanation stays because it is the
-     only place the distinction is written down at all. */
-  function guideHint(text, anchor, linkText){
-    var p = el('p', 'hint', text + ' ');
-    var a = el('a', null, linkText || 'Read more');
-    a.href = anchor.indexOf('.html') === -1 ? 'readme.html#' + anchor : anchor;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    p.appendChild(a);
-    return p;
-  }
+  /* Kept in full rather than condensed, and worth naming so the next sweep does
+     not "finish the job": the HSTS note and the Certificate Transparency note
+     both warn about a consequence at the point of an awkward-to-reverse
+     decision, and the timezone explanation is the only place that distinction
+     is written down anywhere - the guide has no section on it to link to. */
+  var guideHint = CC.guideHint;
 
   function setStatus(text, cls){
     var s = document.getElementById('set-status');
