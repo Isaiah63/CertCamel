@@ -13,7 +13,7 @@
     // which side a theme sits on, so opening a guide from Matrix does not
     // flash a white page. A new app theme wants a line here too; leaving it
     // out is not broken, it just falls back to the operating system.
-    var SIDE = {light:'light', usa:'light', dawn:'light', dark:'dark', thunderstorm:'dark', matrix:'dark', synthwave:'dark'};
+    var SIDE = {light:'light', usa:'light', dawn:'light', spring:'light', summer:'light', winter:'light', dark:'dark', thunderstorm:'dark', autumn:'dark', matrix:'dark', synthwave:'dark'};
     var t = SIDE[localStorage.getItem('certcamel-theme')];
     if (t) { document.documentElement.setAttribute('data-theme', t); }
   } catch (e) { }

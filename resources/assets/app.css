@@ -213,6 +213,95 @@
   --shadow:0 1px 2px rgba(0,0,0,.45), 0 16px 38px -18px rgba(40,70,120,.65);
 }
 
+/* --------------------------------------------------------------------------- *
+   The four seasons, and the problem they all share: every one of them wants an
+   accent that already means something. Spring is green ("ok"), summer is gold
+   ("renew soon"), autumn is orange-red ("expired"), winter is ice blue ("renews
+   itself"). Taken literally, all four would repeat the mistake the rose trial
+   proved on Dawn.
+
+   So the season lives in the GROUND and the GLOWS, where nothing carries a
+   meaning, and the accent deliberately goes somewhere else - each one picking
+   the part of its season that is not the obvious colour. That is the whole
+   trick, and it is why these read as seasons without ever lying about a
+   certificate.
+ * --------------------------------------------------------------------------- */
+
+/* Blossom, not leaves. The green belongs to the ground and the second glow;
+   the accent is cherry blossom, which is every bit as spring and sits 200-odd
+   degrees away from "ok". */
+:root[data-theme="spring"]{
+  color-scheme:light;
+  --bg:#f0f5ec; --glow-1:rgba(194,100,154,.14); --glow-2:rgba(140,200,120,.15);
+  --surface:rgba(255,255,255,.70); --surface-solid:#fafcf8;
+  --border:rgba(40,60,40,.11); --border-strong:rgba(40,60,40,.20);
+  --text:#21301f; --muted:#4b5a49; --faint:#64735f;
+  --accent:#c2649a; --accent-2:#7fb069;
+  --amber:#8a5510; --amber-bg:rgba(230,170,90,.15);
+  --green:#2f6b3c; --green-bg:rgba(120,190,130,.16);
+  --blue:#2f5aa8;  --blue-bg:rgba(120,150,220,.14);
+  --red:#a83244;   --red-bg:rgba(210,110,130,.13);
+  --group-bg:rgba(194,100,154,.08); --group-name:#9c4a7a;
+  --shadow:0 1px 2px rgba(40,60,40,.05), 0 10px 28px -14px rgba(40,60,40,.20);
+}
+
+/* Sea, not sun. Warm sand underfoot and a gold glow in the corner, but the
+   accent is deep water - dark enough and far enough round the wheel that it
+   never reads as the blue meaning "renews itself". */
+:root[data-theme="summer"]{
+  color-scheme:light;
+  --bg:#f6f2e4; --glow-1:rgba(15,109,114,.13); --glow-2:rgba(240,180,80,.17);
+  --surface:rgba(255,255,255,.68); --surface-solid:#fdfbf3;
+  --border:rgba(60,55,35,.12); --border-strong:rgba(60,55,35,.21);
+  --text:#2a2a22; --muted:#575443; --faint:#6d6a56;
+  --accent:#0f6d72; --accent-2:#e0a34a;
+  --amber:#8a5510; --amber-bg:rgba(240,180,80,.16);
+  --green:#2f6b3c; --green-bg:rgba(120,190,130,.16);
+  --blue:#2f5aa8;  --blue-bg:rgba(120,150,220,.14);
+  --red:#a83244;   --red-bg:rgba(210,110,130,.13);
+  --group-bg:rgba(15,109,114,.09); --group-name:#0d5c60;
+  --shadow:0 1px 2px rgba(90,75,40,.05), 0 10px 28px -14px rgba(90,75,40,.20);
+}
+
+/* Embers after dusk, and the only dark season. Autumn is the hardest of the
+   four, because the colours it is actually made of - orange and rust - are the
+   two that already mean "renew soon" and "expired". The ember stays in the
+   ground and the first glow; the accent is the other half of autumn, the plums
+   and blackberries, which nothing else here is using. */
+:root[data-theme="autumn"]{
+  color-scheme:dark;
+  --bg:#1a1310; --glow-1:rgba(214,120,50,.15); --glow-2:rgba(160,107,189,.12);
+  --surface:rgba(255,200,150,.05); --surface-solid:#241a15;
+  --border:rgba(255,200,150,.12); --border-strong:rgba(255,200,150,.26);
+  --text:#f5e6d8; --muted:#cbb09a; --faint:#a89078;
+  --accent:#a06bbd; --accent-2:#d98b45;
+  --amber:#f0b45e; --amber-bg:rgba(240,180,94,.12);
+  --green:#6fd08a; --green-bg:rgba(111,208,138,.12);
+  --blue:#74b6ee;  --blue-bg:rgba(116,182,238,.12);
+  --red:#ff8a7a;   --red-bg:rgba(255,138,122,.13);
+  --group-bg:rgba(160,107,189,.11); --group-name:#c79ae0;
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 16px 38px -18px rgba(120,60,20,.55);
+}
+
+/* Snow light, which is bluer than people remember and very bright. The ice
+   goes in the second glow where it is decoration; the accent is the deep violet
+   of a long shadow across snow, well clear of the blue that means a certificate
+   renews itself. */
+:root[data-theme="winter"]{
+  color-scheme:light;
+  --bg:#eef2f6; --glow-1:rgba(95,74,156,.10); --glow-2:rgba(150,190,220,.18);
+  --surface:rgba(255,255,255,.72); --surface-solid:#fafcfe;
+  --border:rgba(20,35,50,.11); --border-strong:rgba(20,35,50,.20);
+  --text:#17232e; --muted:#47576a; --faint:#5e6e80;
+  --accent:#5f4a9c; --accent-2:#7fa8c9;
+  --amber:#8a5510; --amber-bg:rgba(230,170,90,.15);
+  --green:#2f6b3c; --green-bg:rgba(120,190,130,.16);
+  --blue:#2f5aa8;  --blue-bg:rgba(120,150,220,.14);
+  --red:#a83244;   --red-bg:rgba(210,110,130,.13);
+  --group-bg:rgba(95,74,156,.08); --group-name:#4e3f85;
+  --shadow:0 1px 2px rgba(20,35,50,.05), 0 10px 28px -14px rgba(20,35,50,.20);
+}
+
 *{box-sizing:border-box;}
 html,body{height:100%;}
 
@@ -499,7 +588,11 @@ td.acts .btn{margin-left:.35rem;}
    escapes the clip; app.js positions it from the trigger's bounding rect and
    closes it on scroll and resize, since fixed elements do not follow the page. */
 .menu-trigger{font:inherit; line-height:1; letter-spacing:.1em;}
+/* Capped and scrollable, because the theme list is now long enough to overrun a
+   short window - a row menu of four never was. Both use this element, so the
+   cap costs the short ones nothing and stops the long one being unreachable. */
 .rowmenu{position:fixed; z-index:60; min-width:14rem; padding:.35rem;
+  max-height:min(70vh,32rem); overflow-y:auto;
   border:1px solid var(--border-strong); border-radius:var(--radius-sm);
   background:var(--surface-solid); box-shadow:var(--shadow);}
 .rowmenu button{display:block; width:100%; text-align:left; font:inherit; font-size:.84rem;

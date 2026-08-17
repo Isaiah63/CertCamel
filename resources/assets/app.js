@@ -408,6 +408,10 @@
     {value: 'dark',         label: 'Dark'},
     {value: 'dawn',         label: 'Dawn'},
     {value: 'thunderstorm', label: 'Thunderstorm'},
+    {value: 'spring',       label: 'Spring'},
+    {value: 'summer',       label: 'Summer'},
+    {value: 'autumn',       label: 'Autumn'},
+    {value: 'winter',       label: 'Winter'},
     {value: 'matrix',       label: 'Matrix'},
     {value: 'usa',          label: 'USA'},
     {value: 'synthwave',    label: 'Synthwave'}
