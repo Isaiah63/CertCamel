@@ -392,23 +392,23 @@
   }
 
   // --- Theme ---------------------------------------------------------------- //
-  // The whole row is the button and clicking it advances to the next theme,
-  // matching Collapse directly below it. It was a label with a <select> beside
-  // it, which was the only control in the sidebar shaped that way.
+  // ADDING A THEME IS ONE CSS BLOCK (:root[data-theme="name"]{...} in app.css)
+  // plus one entry here. Nothing else in the app knows a theme exists.
   //
-  // Still driven by a registry, so ADDING A THEME IS STILL ONE CSS BLOCK
-  // (:root[data-theme="name"]{...} in app.css) plus one entry here. The control
-  // does not have to change: cycling walks whatever this array contains, and
-  // the current name is shown on the right so a longer list stays navigable.
-  // Past four or five entries a menu would beat cycling - that is the point to
-  // revisit it, not before.
+  // The row used to cycle on click, with a note saying a menu would beat
+  // cycling past four or five entries. Three themes arrived at once and made it
+  // six, so the menu is here: cycling to reach the last item meant five clicks,
+  // and offered no way to see what you were choosing between.
   //
   // The pre-paint choice is applied by an inline script in <head> so a saved
   // theme never flashes the default on the way in; this wires the button.
   var THEMES = [
-    {value: 'auto',  label: 'Auto'},
-    {value: 'light', label: 'Light'},
-    {value: 'dark',  label: 'Dark'}
+    {value: 'auto',      label: 'Auto'},
+    {value: 'light',     label: 'Light'},
+    {value: 'dark',      label: 'Dark'},
+    {value: 'matrix',    label: 'Matrix'},
+    {value: 'usa',       label: 'USA'},
+    {value: 'synthwave', label: 'Synthwave'}
   ];
   CertCamel.THEMES = THEMES;   // extend from here if a view ever wants to offer it too
 
@@ -438,20 +438,74 @@
         localStorage.setItem(KEY, mode);
       }
       if (now) { now.textContent = labelOf(mode); }
-      // Says what pressing it will DO, not what it currently is - the visible
-      // label already says that, and a tooltip repeating it earns nothing.
-      var next = THEMES[(indexOf(mode) + 1) % THEMES.length];
-      btn.title = 'Theme: ' + labelOf(mode) + '. Click for ' + next.label + '.';
+      btn.title = 'Theme: ' + labelOf(mode) + '. Click to change.';
     }
-    function indexOf(mode){
-      var i = 0, found = 0;
-      THEMES.forEach(function(t){ if (t.value === mode) { found = i; } i++; });
-      return found;
+
+    /* The menu is a .rowmenu, the same element the certificate rows use, so it
+       inherits that styling rather than inventing a second popup with its own
+       look. It renders on document.body and is positioned from the button:
+       the sidebar foot is the bottom-left corner of the screen, so it opens
+       UPWARD, and falls back to downward only if it somehow would not fit. */
+    var menu = null;
+
+    function closeMenu(){
+      if (!menu) { return; }
+      if (menu.parentNode) { menu.parentNode.removeChild(menu); }
+      menu = null;
+      btn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('mousedown', onOutside, true);
+      window.removeEventListener('resize', closeMenu);
     }
+    function onKey(e){
+      if (e.key === 'Escape') { e.stopPropagation(); closeMenu(); btn.focus(); }
+    }
+    function onOutside(e){
+      if (!menu) { return; }
+      if (menu.contains(e.target) || btn.contains(e.target)) { return; }
+      closeMenu();
+    }
+
+    function openMenu(){
+      closeMenu();
+      var current = read();
+      menu = el('div', 'rowmenu');
+      menu.setAttribute('role', 'menu');
+
+      THEMES.forEach(function(t){
+        var item = el('button', null, t.label);
+        item.type = 'button';
+        item.setAttribute('role', 'menuitem');
+        // The current one is marked rather than hidden or disabled: knowing
+        // which you are on is most of why the menu exists.
+        if (t.value === current) { item.setAttribute('aria-current', 'true'); }
+        item.addEventListener('click', function(){ apply(t.value); closeMenu(); btn.focus(); });
+        menu.appendChild(item);
+      });
+
+      document.body.appendChild(menu);
+
+      var r  = btn.getBoundingClientRect();
+      var mh = menu.offsetHeight;
+      var top = (r.top - mh - 6 >= 8) ? (r.top - mh - 6) : (r.bottom + 6);
+      menu.style.left = Math.max(8, r.left) + 'px';
+      menu.style.top  = Math.max(8, top) + 'px';
+
+      btn.setAttribute('aria-expanded', 'true');
+      document.addEventListener('keydown', onKey, true);
+      document.addEventListener('mousedown', onOutside, true);
+      window.addEventListener('resize', closeMenu);
+
+      var first = menu.querySelector('button[aria-current]') || menu.querySelector('button');
+      if (first) { first.focus(); }
+    }
+
+    btn.setAttribute('aria-haspopup', 'true');
+    btn.setAttribute('aria-expanded', 'false');
 
     apply(read());
     btn.addEventListener('click', function(){
-      apply(THEMES[(indexOf(read()) + 1) % THEMES.length].value);
+      if (menu) { closeMenu(); } else { openMenu(); }
     });
   })();
 

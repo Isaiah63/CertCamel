@@ -61,6 +61,91 @@
   --group-bg:rgba(99,102,241,.10); --group-name:#a5b4fc;
   --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
 }
+/* --------------------------------------------------------------------------- *
+   Extra themes. Each is nothing but a block of token values - no rule below
+   this point knows a theme exists, which is what keeps adding one cheap.
+
+   Two rules were followed writing these, and should be followed by any more:
+
+   1. --amber, --green, --blue and --red are STATUS, not decoration. Amber is
+      "renew soon", green "ok", blue "renews itself", red "expired or gone". A
+      theme may re-tone them for its own ground; it may not paint them into each
+      other or into the accent, or the certificate table stops meaning anything
+      at a glance. They are held at least 25 degrees of hue apart here, which is
+      what the eye separates them by - contrast ratio compares luminance and
+      cheerfully reports two obviously different colours as identical.
+   2. Every one of these was measured, not eyeballed. --text, --muted and
+      --faint clear 4.5:1 on the page, on the glass surface AND on the solid
+      one; the four status colours clear it on the page and on their own badge
+      tint; --group-name clears it on the group band. --faint and --group-name
+      are the two that fail first - see the note at the top of this file for the
+      time that cost.
+ * --------------------------------------------------------------------------- */
+
+/* Green phosphor on a dead CRT. The accent IS the status green here, which
+   sounds like rule 1 being broken and is not: "ok" reading as the house colour
+   is exactly right for this one, and the other three are pulled well clear -
+   the blue is deliberately cyan-leaning so it can never be mistaken for the
+   green it sits beside in the table. */
+:root[data-theme="matrix"]{
+  color-scheme:dark;
+  --bg:#050a06; --glow-1:rgba(0,255,65,.10); --glow-2:rgba(0,180,90,.07);
+  --surface:rgba(0,255,65,.045); --surface-solid:#0b120c;
+  --border:rgba(0,255,65,.16); --border-strong:rgba(0,255,65,.30);
+  --text:#d6ffe1; --muted:#8fdca6; --faint:#6fb886;
+  --accent:#00ff41; --accent-2:#39ff14;
+  --amber:#ffc247; --amber-bg:rgba(255,194,71,.12);
+  --green:#3ef07a; --green-bg:rgba(62,240,122,.12);
+  --blue:#5ad2ff;  --blue-bg:rgba(90,210,255,.12);
+  --red:#ff6b60;   --red-bg:rgba(255,107,96,.13);
+  --group-bg:rgba(0,255,65,.07); --group-name:#6ef7a0;
+  /* The lift is green rather than black: on a ground this dark a neutral
+     shadow is invisible, so the card edge glows instead of dropping. */
+  --shadow:0 1px 2px rgba(0,0,0,.55), 0 14px 34px -16px rgba(0,255,65,.20);
+}
+
+/* Navy, cream and Old Glory red. The accent is the NAVY, not the red, and that
+   is the whole trick: red is already spoken for as "expired", so handing it the
+   accent as well would put the loudest colour on the page in two jobs at once.
+   Red appears as --accent-2 and in the corner glow, where it is decoration and
+   nothing depends on reading it. Amber and green are darker than the stock
+   light theme because this ground is lighter - they missed 4.5:1 at the usual
+   values, by 0.06 and 0.07 respectively. */
+:root[data-theme="usa"]{
+  color-scheme:light;
+  --bg:#eef1f7; --glow-1:rgba(30,58,138,.13); --glow-2:rgba(178,34,52,.10);
+  --surface:rgba(255,255,255,.66); --surface-solid:#f8f9fc;
+  --border:rgba(10,26,53,.12); --border-strong:rgba(10,26,53,.22);
+  --text:#0a1a35; --muted:#44526b; --faint:#5a6880;
+  --accent:#1e3a8a; --accent-2:#b22234;
+  --amber:#8f4208; --amber-bg:rgba(245,158,11,.12);
+  --green:#0f6330; --green-bg:rgba(34,197,94,.12);
+  --blue:#1d4ed8;  --blue-bg:rgba(59,130,246,.12);
+  --red:#b22234;   --red-bg:rgba(178,34,52,.10);
+  --group-bg:rgba(30,58,138,.07); --group-name:#1e3a8a;
+  --shadow:0 1px 2px rgba(10,26,53,.05), 0 10px 30px -14px rgba(10,26,53,.22);
+}
+
+/* Sunset over a chrome grid, which is the one everybody's WinAmp looked like.
+   Magenta and violet are load-bearing here for a reason beyond taste: they are
+   the only hues NOT already carrying a status meaning, so the chrome can be as
+   loud as it likes without ever being confused for a certificate telling you
+   something. The cyan glow is the horizon. */
+:root[data-theme="synthwave"]{
+  color-scheme:dark;
+  --bg:#12071f; --glow-1:rgba(255,95,210,.16); --glow-2:rgba(86,204,242,.12);
+  --surface:rgba(255,110,220,.055); --surface-solid:#1c0d2e;
+  --border:rgba(255,120,220,.15); --border-strong:rgba(255,120,220,.30);
+  --text:#f5e9ff; --muted:#c8aede; --faint:#a98cc4;
+  --accent:#ff5fd2; --accent-2:#7b5cff;
+  --amber:#ffb347; --amber-bg:rgba(255,179,71,.12);
+  --green:#4ade80; --green-bg:rgba(74,222,128,.12);
+  --blue:#56ccf2;  --blue-bg:rgba(86,204,242,.12);
+  --red:#ff6b81;   --red-bg:rgba(255,107,129,.13);
+  --group-bg:rgba(255,95,210,.09); --group-name:#ff9ae0;
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 14px 34px -16px rgba(255,95,210,.22);
+}
+
 *{box-sizing:border-box;}
 html,body{height:100%;}
 
@@ -354,6 +439,9 @@ td.acts .btn{margin-left:.35rem;}
   color:var(--text); cursor:pointer; padding:.45rem .7rem; border:none; border-radius:8px;
   background:none; white-space:nowrap;}
 .rowmenu button:hover{background:var(--group-bg);}
+/* The theme menu marks where you already are. Colour AND weight, not colour
+   alone - which one is current should survive a monochrome screenshot. */
+.rowmenu button[aria-current]{color:var(--accent); font-weight:700;}
 
 /* Visible keyboard focus. There was none anywhere in the app before this - an
    oversight from the redesign, and one that matters more now there is a menu

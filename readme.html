@@ -8,8 +8,14 @@
 <script>
 (function(){
   try {
-    var t = localStorage.getItem('certcamel-theme');
-    if (t === 'dark' || t === 'light') { document.documentElement.setAttribute('data-theme', t); }
+    // The guides carry light and dark only - they are documents, not the
+    // console, so they do not ship every app theme. What they DO honour is
+    // which side a theme sits on, so opening a guide from Matrix does not
+    // flash a white page. A new app theme wants a line here too; leaving it
+    // out is not broken, it just falls back to the operating system.
+    var SIDE = {light:'light', usa:'light', dark:'dark', matrix:'dark', synthwave:'dark'};
+    var t = SIDE[localStorage.getItem('certcamel-theme')];
+    if (t) { document.documentElement.setAttribute('data-theme', t); }
   } catch (e) { }
 })();
 </script>
