@@ -12,8 +12,14 @@
 // white on the way in. Kept deliberately tiny and dependency-free.
 (function(){
   try {
+    // Any theme name, not a hardcoded pair: this used to list 'dark' and
+    // 'light', which meant every theme added after them flashed the default
+    // before app.js caught up - the exact thing this script exists to stop.
+    // The pattern is only here so a corrupted value cannot put junk in an
+    // attribute; an unknown-but-tidy name simply matches no CSS block, and
+    // app.js validates it against the real registry a moment later anyway.
     var t = localStorage.getItem('certcamel-theme');
-    if (t === 'dark' || t === 'light') { document.documentElement.setAttribute('data-theme', t); }
+    if (t && /^[a-z][a-z0-9-]{0,23}$/.test(t)) { document.documentElement.setAttribute('data-theme', t); }
     if (localStorage.getItem('certcamel-sidebar-collapsed') === '1') {
       document.documentElement.setAttribute('data-sidebar-precollapse', '1');
     }

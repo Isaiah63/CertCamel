@@ -215,23 +215,49 @@ w.CertCamel.loadState(function(){
   console.log('  collapsed after click: ' + d.body.classList.contains('sidebar-collapsed'));
   console.log('  persisted to localStorage: ' + store['certcamel-sidebar-collapsed']);
 
-  console.log('\n=== theme button cycles ===');
-  // The control is the whole row now, matching Collapse beneath it - it was a
-  // label with a <select> beside it, the only sidebar control shaped that way.
+  console.log('\n=== theme menu ===');
+  // The row opened a cycle until there were six themes to walk; it opens a
+  // menu now. The menu renders on document.body, like the row menus on the
+  // certificates table, so it is queried from there rather than the sidebar.
   const themeBtn = d.getElementById('btn-theme');
   const themeNow = d.getElementById('theme-now');
   console.log('  starts at: ' + themeNow.textContent + '  (data-theme=' +
               d.documentElement.getAttribute('data-theme') + ')');
 
-  // Auto -> Light -> Dark -> Auto. Walking the full cycle proves it wraps, and
-  // that "auto" clears the attribute rather than setting data-theme="auto".
-  const seen = [];
-  for (let i = 0; i < 3; i++) {
-    themeBtn.click();
-    seen.push(themeNow.textContent + '/' + (d.documentElement.getAttribute('data-theme') || 'none'));
-  }
-  console.log('  cycle: ' + seen.join(' -> '));
-  console.log('  back to start: ' + (themeNow.textContent === 'Auto'));
+  themeBtn.click();
+  const themeItems = Array.from(d.querySelectorAll('.rowmenu button'));
+  console.log('  menu lists: ' + themeItems.map(b => b.textContent).join(', '));
+  console.log('  current one is marked: ' +
+              (themeItems.find(b => b.hasAttribute('aria-current')) || {}).textContent);
+
+  // Every theme in the registry must have a CSS block, or picking it silently
+  // does nothing at all. Checked against app.css rather than trusted.
+  //
+  // 'auto' and 'light' are exempt, and for different reasons: auto REMOVES the
+  // attribute, and light is what plain :root already is - its data-theme value
+  // exists only so the :not([data-theme="light"]) on the dark media query can
+  // exclude it, letting an explicit Light beat a dark OS setting.
+  const css = fs.readFileSync(ROOT + 'assets\\app.css', 'utf8');
+  const missing = w.CertCamel.THEMES
+    .filter(t => t.value !== 'auto' && t.value !== 'light')
+    .filter(t => css.indexOf(':root[data-theme="' + t.value + '"]') === -1)
+    .map(t => t.value);
+  console.log('  every theme has a CSS block: ' + (missing.length === 0) +
+              (missing.length ? '  MISSING: ' + missing.join(', ') : ''));
+
+  // Pick the last one, which is the case cycling made tedious.
+  themeItems[themeItems.length - 1].click();
+  console.log('  picked ' + themeNow.textContent + ' -> data-theme=' +
+              d.documentElement.getAttribute('data-theme'));
+  console.log('  stored: ' + store['certcamel-theme']);
+  console.log('  menu closed after choosing: ' + (d.querySelectorAll('.rowmenu').length === 0));
+
+  // Auto is the one that must CLEAR the attribute rather than set
+  // data-theme="auto", so the OS preference takes over again.
+  themeBtn.click();
+  Array.from(d.querySelectorAll('.rowmenu button')).find(b => b.textContent === 'Auto').click();
+  console.log('  back to Auto clears the attribute: ' +
+              (d.documentElement.getAttribute('data-theme') === null));
   console.log('  auto stores nothing: ' + (store['certcamel-theme'] === undefined));
 
   console.log('\nall errors so far: ' + (errors.length ? errors.join('\n') : 'none'));
