@@ -146,6 +146,40 @@
   --shadow:0 1px 2px rgba(0,0,0,.5), 0 14px 34px -16px rgba(255,95,210,.22);
 }
 
+/* First light. Warm ivory ground, a peach glow in one corner and a periwinkle
+   one in the other - the two colours the sky actually is just before sunrise.
+
+   The brief was "soft, nothing too bright", which fights AA head on, and the
+   way out is that PASTEL IS A PROPERTY OF THE GROUNDS, NOT THE TEXT. The page,
+   the cards, the borders and the glows carry the softness; the words still have
+   to earn 4.5:1, so they are deeper than they look like they should be. Making
+   the text pastel too would be the obvious reading of the brief and would leave
+   an unreadable console.
+
+   Its margins are the narrowest of any theme here - --faint at 4.88, amber on
+   its own badge tint at 4.63 - and that is not sloppiness, it is what "gentle"
+   means once it is measured. There is no room to soften these further without
+   failing; anything that wants to be lighter has to move the ground, not the
+   ink. The accent is periwinkle rather than the obvious dusty rose because rose
+   lands about seven degrees from --red, and the accent must never be mistaken
+   for the colour that means a certificate has expired. */
+:root[data-theme="dawn"]{
+  color-scheme:light;
+  --bg:#f7f1ea; --glow-1:rgba(244,164,140,.18); --glow-2:rgba(160,150,210,.14);
+  --surface:rgba(255,255,255,.70); --surface-solid:#fdfaf7;
+  --border:rgba(90,64,54,.11); --border-strong:rgba(90,64,54,.20);
+  --text:#33272a; --muted:#5f5054; --faint:#766569;
+  --accent:#8878b8; --accent-2:#e0a17c;
+  --amber:#91591a; --amber-bg:rgba(224,161,124,.16);
+  --green:#33694a; --green-bg:rgba(120,180,140,.16);
+  --blue:#3f5fa8;  --blue-bg:rgba(136,150,210,.15);
+  --red:#9d3d52;   --red-bg:rgba(200,120,140,.12);
+  --group-bg:rgba(136,120,184,.08); --group-name:#655392;
+  /* Warm and shallow. A neutral grey drop shadow on an ivory ground reads as
+     dirt rather than depth. */
+  --shadow:0 1px 2px rgba(120,90,70,.05), 0 10px 28px -14px rgba(120,90,70,.20);
+}
+
 *{box-sizing:border-box;}
 html,body{height:100%;}
 

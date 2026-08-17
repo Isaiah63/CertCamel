@@ -406,6 +406,7 @@
     {value: 'auto',      label: 'Auto'},
     {value: 'light',     label: 'Light'},
     {value: 'dark',      label: 'Dark'},
+    {value: 'dawn',      label: 'Dawn'},
     {value: 'matrix',    label: 'Matrix'},
     {value: 'usa',       label: 'USA'},
     {value: 'synthwave', label: 'Synthwave'}
