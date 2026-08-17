@@ -10,7 +10,7 @@
   try {
     // See readme.html: the guides honour which SIDE a theme sits on, not the
     // theme itself, so opening one from Matrix does not flash a white page.
-    var SIDE = {light:'light', usa:'light', dawn:'light', dark:'dark', matrix:'dark', synthwave:'dark'};
+    var SIDE = {light:'light', usa:'light', dawn:'light', dark:'dark', thunderstorm:'dark', matrix:'dark', synthwave:'dark'};
     var t = SIDE[localStorage.getItem('certcamel-theme')];
     if (t) { document.documentElement.setAttribute('data-theme', t); }
   } catch (e) { }

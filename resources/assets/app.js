@@ -403,13 +403,14 @@
   // The pre-paint choice is applied by an inline script in <head> so a saved
   // theme never flashes the default on the way in; this wires the button.
   var THEMES = [
-    {value: 'auto',      label: 'Auto'},
-    {value: 'light',     label: 'Light'},
-    {value: 'dark',      label: 'Dark'},
-    {value: 'dawn',      label: 'Dawn'},
-    {value: 'matrix',    label: 'Matrix'},
-    {value: 'usa',       label: 'USA'},
-    {value: 'synthwave', label: 'Synthwave'}
+    {value: 'auto',         label: 'Auto'},
+    {value: 'light',        label: 'Light'},
+    {value: 'dark',         label: 'Dark'},
+    {value: 'dawn',         label: 'Dawn'},
+    {value: 'thunderstorm', label: 'Thunderstorm'},
+    {value: 'matrix',       label: 'Matrix'},
+    {value: 'usa',          label: 'USA'},
+    {value: 'synthwave',    label: 'Synthwave'}
   ];
   CertCamel.THEMES = THEMES;   // extend from here if a view ever wants to offer it too
 
