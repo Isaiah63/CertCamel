@@ -180,6 +180,39 @@
   --shadow:0 1px 2px rgba(120,90,70,.05), 0 10px 28px -14px rgba(120,90,70,.20);
 }
 
+/* Weather, not night. The other dark themes are a colour on black - this one is
+   a colour on WEATHER: a blue-grey cloud mass rather than a void, which is why
+   the ground is lifted well off zero and carries a blue cast the greys never
+   quite escape.
+
+   The accent is a lightning flash, and it is nearly white on purpose. The
+   obvious choice was electric blue, and electric blue is exactly what --blue
+   already means ("renews itself") - the same trap the rose accent fell into on
+   Dawn, where a seven-degree gap turned out to read as the same colour to a
+   person glancing at a table. Draining the accent's saturation instead of
+   moving its hue sidesteps the question: nothing else on the page is a pale
+   near-white, so the flash is unmistakable without competing for a meaning.
+
+   Amber stays warm and slightly sodium, which is what a streetlight looks like
+   through rain, and it is the one warm thing here - so "renew soon" is the
+   first thing the eye finds on a cold page. */
+:root[data-theme="thunderstorm"]{
+  color-scheme:dark;
+  --bg:#111821; --glow-1:rgba(150,180,255,.14); --glow-2:rgba(90,120,160,.12);
+  --surface:rgba(175,205,240,.05); --surface-solid:#1a222d;
+  --border:rgba(175,205,240,.11); --border-strong:rgba(175,205,240,.24);
+  --text:#e6edf5; --muted:#a8b8cc; --faint:#8797ab;
+  --accent:#cdd9ff; --accent-2:#8b7fd4;
+  --amber:#f5c26b; --amber-bg:rgba(245,194,107,.12);
+  --green:#5fdc9a; --green-bg:rgba(95,220,154,.12);
+  --blue:#63b3f5;  --blue-bg:rgba(99,179,245,.12);
+  --red:#ff7d85;   --red-bg:rgba(255,125,133,.13);
+  --group-bg:rgba(150,180,255,.09); --group-name:#b9cdf0;
+  /* Cold and deep. The lift is blue rather than black so cards sit in the cloud
+     rather than on top of it. */
+  --shadow:0 1px 2px rgba(0,0,0,.45), 0 16px 38px -18px rgba(40,70,120,.65);
+}
+
 *{box-sizing:border-box;}
 html,body{height:100%;}
 
