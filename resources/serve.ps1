@@ -1715,7 +1715,18 @@ function Invoke-Route {
             # the page checks on render, and nothing should change because
             # somebody opened Settings.
             if ($Request.Method -eq 'GET') {
-                Send-Json $Stream (Get-UpdateStatus -Fetch)
+                $status = Get-UpdateStatus -Fetch
+                # A copy with no .git - a ZIP download, or a machine without git
+                # at all - cannot answer the question by fetching, so ask GitHub
+                # for the newest published release instead. Only on this path: a
+                # clone already has a better answer and should not be waiting on
+                # a second network call to get it.
+                if (-not $status.isRepo) { $status.release = (Get-LatestRelease) }
+                # A check that could not complete left no trace anywhere before -
+                # only the POST that applies an update was written down. On an
+                # unattended box the log is the only witness there was.
+                if (-not $status.ok) { Write-Diag "  Update check could not complete: $($status.reason)" 'Yellow' }
+                Send-Json $Stream $status
                 return
             }
             if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use GET or POST.'; return }

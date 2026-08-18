@@ -39,6 +39,10 @@ $script:SecretsFile  = Join-Path $script:Root 'secrets.xml'
 $script:ZonesFile    = Join-Path $script:Root 'zones.json'
 $script:AlertStateFile = Join-Path $script:Root 'alert-state.json'
 $script:DomainsFile  = Join-Path $script:Root 'domains.txt'
+# Root, not resources\, so it survives a "Download ZIP" the same way the launchers
+# do - it is the only thing an install without a .git folder knows about itself.
+$script:VersionFile  = Join-Path $script:Root 'VERSION'
+$script:UpdateRepo   = 'Isaiah63/CertCamel'
 $script:SecretAuditFile = Join-Path $script:Root 'secrets-audit.log'
 $script:AuditFile    = Join-Path $script:Root 'audit.log'
 # Rotation, not deletion: see Invoke-LogRetention for why the audit trail is
@@ -4458,13 +4462,36 @@ function Test-Elevated {
         [Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-CamelVersion {
+    <#
+      What this copy calls itself. The one thing an install with no .git folder
+      knows about its own age, so the release check has something to compare.
+    #>
+    if (-not (Test-Path -LiteralPath $script:VersionFile)) { return '' }
+    try {
+        # -Encoding UTF8 explicitly: the default is the ANSI codepage, which has
+        # already turned punctuation into mojibake elsewhere in this codebase.
+        return ((Get-Content -LiteralPath $script:VersionFile -Raw -Encoding UTF8) -split "`n")[0].Trim()
+    }
+    catch { return '' }
+}
+
 function Get-UpdateStatus {
     <#
       Whether this copy can be updated from git, and what is waiting.
 
-      Read-only and network-free: `git fetch` is a network call and this runs on
-      the request thread, so the answer is "what did the last fetch see". The
-      caller does the fetch explicitly.
+      Hits the network when -Fetch is passed, on the request thread, which is why
+      the fetch below is pinned non-interactive and given a stall timeout: this
+      server is a single-threaded accept loop, so a credential prompt waiting for
+      a human nobody is sitting in front of would hang the whole console, not
+      just this request.
+
+      `ok` is the field that matters. It means "the numbers in here are
+      trustworthy", and it is set at the very end - so every early return, and
+      anything that throws, reports a failed check rather than a clean one. It
+      exists because `behind = 0` is indistinguishable from `never got far enough
+      to count`, and the panel used to read the second as "already up to date"
+      and draw a green tick over a fatal error.
 
       Everything operator-specific is already in .gitignore - settings.json,
       secrets.xml, domains.txt, ssl-data.js, zones.json, alert-state.json - so a
@@ -4476,17 +4503,33 @@ function Get-UpdateStatus {
     param([switch]$Fetch)
 
     $out = @{
+        ok = $false
         isRepo = $false; branch = ''; remote = ''; clean = $true; dirty = @()
         behind = 0; ahead = 0; current = ''; latest = ''; incoming = @()
-        canUpdate = $false; reason = ''
+        canUpdate = $false; reason = ''; version = (Get-CamelVersion)
     }
 
     $git = Get-Command git -ErrorAction SilentlyContinue
     if (-not $git) { $out.reason = 'git is not installed, so this copy cannot update itself. Download the new version instead.'; return $out }
 
     Push-Location $script:Root
+
+    # Windows PowerShell 5.1 raises a terminating NativeCommandError when a native
+    # command writes to stderr and $ErrorActionPreference is 'Stop' - which serve.ps1
+    # sets for the whole runspace. `2>$null` does NOT prevent it. That made every
+    # $LASTEXITCODE check below unreachable and sent the first `fatal:` straight to
+    # the catch, so a ZIP install got a raw "not a git repository" instead of the
+    # message written for it. git reports failure by exit code; let it.
+    $savedEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+
+    $savedEnv = @{}
+    foreach ($n in 'GIT_TERMINAL_PROMPT','GCM_INTERACTIVE','GIT_HTTP_LOW_SPEED_LIMIT','GIT_HTTP_LOW_SPEED_TIME') {
+        $savedEnv[$n] = [Environment]::GetEnvironmentVariable($n)
+    }
+
     try {
-        $null = & git rev-parse --is-inside-work-tree 2>&1
+        $null = & git rev-parse --is-inside-work-tree 2>$null
         if ($LASTEXITCODE -ne 0) { $out.reason = 'This folder is not a git clone, so there is nothing to pull from. Download the new version instead.'; return $out }
         $out.isRepo = $true
 
@@ -4497,14 +4540,41 @@ function Get-UpdateStatus {
         $url = (& git remote get-url $out.remote 2>$null | Select-Object -First 1)
         if (-not $url) { $out.reason = "No '$($out.remote)' remote is configured, so there is nowhere to pull from."; return $out }
 
-        if ($Fetch) { $null = & git fetch $out.remote --quiet 2>&1 }
+        if ($Fetch) {
+            # No prompt, ever. Not on the console (GIT_TERMINAL_PROMPT), not as a
+            # dialog from Git Credential Manager (credential.interactive, and
+            # GCM_INTERACTIVE for versions that predate it). The helper itself is
+            # deliberately left enabled: disabling it would break a private fork
+            # cloned over HTTPS with a stored credential, and only the waiting is
+            # the problem. The low-speed pair aborts a transfer that stalls rather
+            # than parking the one request thread on it indefinitely.
+            $env:GIT_TERMINAL_PROMPT      = '0'
+            $env:GCM_INTERACTIVE          = 'never'
+            $env:GIT_HTTP_LOW_SPEED_LIMIT = '1000'
+            $env:GIT_HTTP_LOW_SPEED_TIME  = '20'
+
+            $fetchOut = & git -c credential.interactive=false fetch $out.remote --quiet 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                # Under 'Continue' the stderr lines arrive as ErrorRecords, whose
+                # .Exception.Message is the bare `fatal: ...`. Reading them as
+                # strings instead would paste PowerShell's own "git.exe :" and
+                # "At line:N char:M" decoration into the page.
+                $detail = @($fetchOut) | ForEach-Object {
+                    if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
+                } | Where-Object { $_ -and $_.Trim() } | Select-Object -First 1
+                $out.current = (& git log -1 --format='%h %s' 2>$null | Select-Object -First 1)
+                $out.reason  = "Could not reach '$($out.remote)', so there is no way to tell whether an update is waiting. Check the network and try again."
+                if ($detail) { $out.reason += " (git: $($detail.Trim()))" }
+                return $out
+            }
+        }
 
         # Does the remote actually have this branch? A local branch that was
         # never pushed has no remote-tracking ref, and every comparison below
         # then fails with git exit 128 - which read as "0 behind, already up to
         # date" and would have told somebody on an unpushed branch that there
         # was nothing to update, which is not the same statement at all.
-        $null = & git rev-parse --verify --quiet "refs/remotes/$($out.remote)/$($out.branch)" 2>&1
+        $null = & git rev-parse --verify --quiet "refs/remotes/$($out.remote)/$($out.branch)" 2>$null
         if ($LASTEXITCODE -ne 0) {
             $global:LASTEXITCODE = 0
             $out.current = (& git log -1 --format='%h %s' 2>$null | Select-Object -First 1)
@@ -4530,10 +4600,64 @@ function Get-UpdateStatus {
         elseif (-not $out.clean)    { $out.reason = 'Some tracked files have local edits. Commit, stash or revert them first - an update will not overwrite them.' }
         elseif ($out.ahead -gt 0)   { $out.reason = "This copy has $($out.ahead) commit(s) of its own that the remote does not. Push or revert them first." }
         else                        { $out.canUpdate = $true; $out.reason = "$($out.behind) update(s) available." }
+
+        # Last line of the happy path, deliberately. Anything that returned or threw
+        # above leaves this $false, which is what stops a failure rendering as a tick.
+        $out.ok = $true
     }
     catch { $out.reason = ($_.Exception.Message -split "`n")[0].Trim() }
-    finally { Pop-Location }
+    finally {
+        foreach ($n in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($n, $savedEnv[$n]) }
+        $ErrorActionPreference = $savedEap
+        Pop-Location
+    }
 
+    return $out
+}
+
+function Get-LatestRelease {
+    <#
+      The newest published release on GitHub, for copies that are not git clones
+      and so cannot answer the question with a fetch.
+
+      Compared by exact match rather than by ordering. The version scheme here is
+      not semver - `1.001b` does not parse as one - and a guessed ordering would
+      eventually announce that this copy is newer than the release when it is
+      simply different. Different is all this claims to detect; the human reads
+      the two strings and decides.
+
+      Contacted only when somebody presses the button. Nothing here runs on a
+      schedule, and no part of this call carries anything about the install.
+    #>
+    $out = @{ ok = $false; tag = ''; url = ''; error = '' }
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+        # A User-Agent is not optional - the GitHub API answers 403 without one.
+        # TimeoutSec is short because this runs on the single request thread.
+        $r = Invoke-RestMethod -Uri "https://api.github.com/repos/$($script:UpdateRepo)/releases/latest" `
+                -Headers @{ 'User-Agent' = 'CertCamel'; 'Accept' = 'application/vnd.github+json' } `
+                -Method Get -TimeoutSec 10 -ErrorAction Stop
+
+        $out.tag = ([string]$r.tag_name).Trim() -replace '^v', ''
+        $out.url = [string]$r.html_url
+        if (-not $out.tag) { $out.error = 'GitHub answered, but the release has no version tag.'; return $out }
+        $out.ok = $true
+    }
+    catch {
+        # 404 is its own answer, and an ambiguous one: unauthenticated, GitHub
+        # returns it both for "no release yet" and for "this repository is not
+        # public", and says which nowhere. Both are named rather than guessed
+        # between - and neither is "up to date", which is what the old panel
+        # would have shown.
+        if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) {
+            $out.error = 'No published release was found to compare against - either none has been published yet, or this copy came from a repository that is not public.'
+        }
+        else {
+            $out.error = "Could not reach GitHub to check for a newer release. ($(($_.Exception.Message -split "`n")[0].Trim()))"
+        }
+    }
     return $out
 }
 
@@ -4551,12 +4675,21 @@ function Invoke-TrackerUpdate {
     if (-not $pre.canUpdate) { return @{ ok = $false; error = $pre.reason; status = $pre } }
 
     Push-Location $script:Root
+    # Same 5.1 trap as Get-UpdateStatus: with $ErrorActionPreference at 'Stop', a
+    # native command writing to stderr throws before $LASTEXITCODE is ever read.
+    # Here that meant a fast-forward that succeeded but printed anything at all to
+    # stderr would be reported to the operator as a failed update - having already
+    # moved their files. The exit code is the authority on whether git merged.
+    $savedEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
-        $output = @(& git merge --ff-only "$($pre.remote)/$($pre.branch)" 2>&1)
+        $output = @(& git merge --ff-only "$($pre.remote)/$($pre.branch)" 2>&1) | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
+        }
         $ok = ($LASTEXITCODE -eq 0)
     }
     catch { $ok = $false; $output = @($_.Exception.Message) }
-    finally { Pop-Location }
+    finally { $ErrorActionPreference = $savedEap; Pop-Location }
 
     $post = Get-UpdateStatus
     return @{

@@ -203,6 +203,35 @@
     return wrap;
   }
 
+  /* What a copy with no .git can still be told: whether the newest published
+     release is a different version from this one.
+
+     Different, not newer. The version scheme is not semver — 1.001b does not
+     parse as one — so ordering it would be guesswork, and guessing wrong here
+     means telling somebody they are current when they are a release behind.
+     Both strings go on the page and the reader decides. */
+  function renderRelease(out, r){
+    var rel = r.release;
+    if (!rel) { return; }
+    if (!rel.ok) { out.appendChild(addrRow('Latest release', false, rel.error)); return; }
+
+    var same = rel.tag && r.version && (rel.tag === r.version);
+    out.appendChild(addrRow('Latest release', same,
+      same ? ('v' + rel.tag + ' — this copy is that version.')
+           : ('v' + rel.tag + ' is published; this copy says v' + (r.version || '?') +
+              '. If that is newer than yours, download it.')));
+    if (same || !rel.url) { return; }
+
+    var row = el('div', 'addrrow');
+    var a = el('a', null, 'Open the release page');
+    a.href = rel.url; a.target = '_blank'; a.rel = 'noopener';
+    row.appendChild(el('span', 'addrmark', ''));
+    row.appendChild(el('span', 'addrlabel', ''));
+    var cell = el('span', 'addrdetail'); cell.appendChild(a);
+    row.appendChild(cell);
+    out.appendChild(row);
+  }
+
   function runUpdateCheck(loud){
     var out = document.getElementById('set-update-rows');
     if (!out) { return; }
@@ -213,10 +242,16 @@
       out.textContent = '';
       if (err) { out.appendChild(el('p', 'hint bad', err)); return; }
 
-      out.appendChild(addrRow('This copy', true, r.current || '—'));
+      // Version first, commit second: the version is the only thing a copy
+      // installed from a ZIP knows about itself, and the only half of this that
+      // means anything to somebody reporting a problem.
+      var who = r.version ? ('v' + r.version) : '';
+      if (r.current) { who = who ? (who + ' — ' + r.current) : r.current; }
+      out.appendChild(addrRow('This copy', true, who || '—'));
 
       if (!r.isRepo) {
         out.appendChild(addrRow('Updates', false, r.reason));
+        renderRelease(out, r);
         return;
       }
       out.appendChild(addrRow('Branch', true, r.branch + ' → ' + r.remote));
@@ -229,8 +264,11 @@
         out.appendChild(d);
       }
 
-      var upToDate = (r.behind === 0);
-      var statusRow = addrRow('Updates', upToDate || r.canUpdate, r.reason);
+      // r.ok, not r.behind. A check that failed before it could count anything
+      // comes back with behind still at 0, which read as "already up to date"
+      // and drew a green tick over a fatal git error. The server now says
+      // outright whether the numbers mean anything, and nothing below infers it.
+      var statusRow = addrRow('Updates', r.ok && (r.behind === 0 || r.canUpdate), r.reason);
       out.appendChild(statusRow);
 
       if (r.incoming && r.incoming.length) {
