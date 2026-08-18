@@ -1,0 +1,49 @@
+# Dependabot version updates.
+#
+# Worth knowing what this does and does not cover here, because the gap is the
+# interesting part.
+#
+# COVERED
+#   github-actions  The reason this file exists. Both actions run inside this
+#                   repository with security-events: write, so a compromised one
+#                   is a genuine supply-chain path. Pinned to major tags, which
+#                   already float within a major, so these updates are mostly
+#                   the major bumps worth reading before taking.
+#
+#   npm             jsdom, used by the test harness in resources\tests\. It is a
+#                   development dependency and ships to nobody: a finding there
+#                   affects whoever runs the tests, not anyone running Cert
+#                   Camel. Included because it costs nothing, at a cadence that
+#                   will not nag.
+#
+# NOT COVERED, and it is the one that matters
+#   Posh-ACME       It speaks ACME and handles the DNS credential, and it is
+#                   fetched at runtime into resources\lib\, which is gitignored.
+#                   No manifest exists for Dependabot to read, so nothing here
+#                   watches it. That is a human job - see "Posh-ACME, and keeping
+#                   it current" in the README, which explains how to check the
+#                   installed version and move it.
+#
+# Monthly, not weekly. Two dependencies do not justify a pull request every week,
+# and a bot that opens noise is a bot whose pull requests stop being read - the
+# same reason the PSScriptAnalyzer rules are filtered rather than left at 499.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+
+  - package-ecosystem: npm
+    directory: "/resources/tests"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "test"
+    labels:
+      - dependencies
