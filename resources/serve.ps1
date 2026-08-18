@@ -76,7 +76,7 @@ function Initialize-DiagLog {
             Move-Item -LiteralPath $script:DiagFile -Destination $old -Force -ErrorAction SilentlyContinue
         }
     }
-    catch { }
+    catch { $null = $_ }   # rotation failing must not stop the line being written
 }
 
 function Write-Diag {
@@ -110,7 +110,7 @@ function Write-Diag {
         $line = '[{0}] {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $safe.Trim()
         [IO.File]::AppendAllText($script:DiagFile, $line + "`r`n", [Text.Encoding]::UTF8)
     }
-    catch { }
+    catch { $null = $_ }   # redaction is best effort; a locked file is retried on the next write
 }
 
 Initialize-DiagLog
@@ -118,7 +118,7 @@ Initialize-DiagLog
 # Trim run logs once at startup. Doing it here rather than on a timer keeps the
 # single-threaded listener free, and a server that has just been started is
 # exactly when nobody is waiting on it.
-try { [void](Invoke-LogRetention -Settings (Get-TrackerSettings)) } catch { }
+try { [void](Invoke-LogRetention -Settings (Get-TrackerSettings)) } catch { $null = $_ }   # housekeeping must never stop the server starting
 
 # --------------------------------------------------------------------------- #
 # Access control
@@ -183,11 +183,11 @@ function Set-SessionFileAcl {
                 $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
                     $who, 'FullControl', 'Allow')))
             }
-            catch { }   # a name that will not resolve must not stop the others
+            catch { $null = $_ }   # a name that will not resolve must not stop the others
         }
         Set-Acl -Path $Path -AclObject $acl
     }
-    catch { }
+    catch { $null = $_ }   # Get-Acl/Set-Acl unavailable or refused; the file keeps inherited permissions
 }
 
 function Write-SessionFile {
@@ -556,7 +556,7 @@ function Get-StateResponse {
         $last = $null
         $lastFile = Join-Path $script:JobsDir "deploy-$($c.certId).json"
         if (Test-Path $lastFile) {
-            try { $last = (Get-Content $lastFile -Raw -Encoding UTF8) | ConvertFrom-Json } catch { }
+            try { $last = (Get-Content $lastFile -Raw -Encoding UTF8) | ConvertFrom-Json } catch { $null = $_ }   # unreadable: treated as no previous run
         }
         # "targets" stays a flat id list so nothing that already reads it has to
         # change; "bindings" carries the overrides alongside it.
@@ -1128,7 +1128,7 @@ function Clear-JobLogSecrets {
                 [IO.File]::WriteAllText($f, $clean, [Text.Encoding]::UTF8)
             }
         }
-        catch { }   # a locked or vanished log is not worth failing a poll over
+        catch { $null = $_ }   # a locked or vanished log is not worth failing a poll over
     }
 
     $Job.swept = $true
@@ -1161,7 +1161,7 @@ function Get-JobState {
                     $log += $sr.ReadToEnd()
                     $sr.Dispose()
                 } finally { $fs.Dispose() }
-            } catch { }
+            } catch { $null = $_ }
         }
     }
 
@@ -1172,7 +1172,7 @@ function Get-JobState {
 
     $result = $null
     if (-not $running -and (Test-Path $j.result)) {
-        try { $result = (Get-Content $j.result -Raw -Encoding UTF8) | ConvertFrom-Json } catch { }
+        try { $result = (Get-Content $j.result -Raw -Encoding UTF8) | ConvertFrom-Json } catch { $null = $_ }   # half-written or corrupt: the job simply reports no result
     }
 
     return @{
@@ -1294,7 +1294,9 @@ function Invoke-Route {
         $requested  = Join-Path $assetsRoot $relative
 
         $full = $null
-        try { $full = [IO.Path]::GetFullPath($requested) } catch { }
+        # A path this malformed cannot be inside the web root, which is the only
+        # question being asked. Leaving $full empty makes the check below refuse it.
+        try { $full = [IO.Path]::GetFullPath($requested) } catch { $null = $_ }
         # A trailing separator on the root, not a bare prefix check: without it
         # "...\assets-evil\file" passes a StartsWith("...\assets") test, because
         # the string "assets-evil" itself starts with "assets". Appending the
@@ -1904,7 +1906,7 @@ function Invoke-Route {
                     }
                     finally { $fs.Dispose() }
                 }
-                catch { }
+                catch { $null = $_ }   # an unreadable audit file must not take the page down
             }
             $archives = @(Get-ChildItem $script:Root -File -Filter 'audit-*.log' -ErrorAction SilentlyContinue |
                           Sort-Object Name -Descending | ForEach-Object { @{ name = $_.Name; bytes = $_.Length } })
@@ -1944,7 +1946,7 @@ function Invoke-Route {
             }
 
             $full = $null
-            try { $full = [IO.Path]::GetFullPath((Join-Path $script:JobsDir $name)) } catch { }
+            try { $full = [IO.Path]::GetFullPath((Join-Path $script:JobsDir $name)) } catch { $null = $_ }   # unparseable name: $full stays empty and the request is refused
             $rootFull = [IO.Path]::GetFullPath($script:JobsDir).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
             if (-not $full -or -not $full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase) -or
                 -not (Test-Path -LiteralPath $full -PathType Leaf)) {
@@ -2207,12 +2209,12 @@ $existing = Get-RunningInstance
 # the exception. Clear it here so the folder does not accumulate stale tokens
 # for servers that stopped weeks ago.
 if (-not $existing -and (Test-Path $script:SessionFile)) {
-    try { Remove-Item -LiteralPath $script:SessionFile -Force -ErrorAction SilentlyContinue } catch { }
+    try { Remove-Item -LiteralPath $script:SessionFile -Force -ErrorAction SilentlyContinue } catch { $null = $_ }
 }
 if ($existing) {
     $opened = $false
     if (-not $NoBrowser -and -not $ServiceMode) {
-        try { Start-Process $existing.url; $opened = $true } catch { }
+        try { Start-Process $existing.url; $opened = $true } catch { $null = $_ }   # $opened stays false and the URL is printed instead
     }
 
     # Exit 10 means "there was already a server, the browser is open, this window
@@ -2371,7 +2373,7 @@ function Update-TlsCertificate {
     if (-not $script:TlsCert -or -not $script:TlsCertPath) { return }
 
     $stamp = $null
-    try { $stamp = (Get-Item -LiteralPath $script:TlsCertPath).LastWriteTimeUtc } catch { }
+    try { $stamp = (Get-Item -LiteralPath $script:TlsCertPath).LastWriteTimeUtc } catch { $null = $_ }   # unreadable: treated as 'changed', so the next pass reloads
 
     # A missing file deliberately does NOT count as changed. Mid-renewal the pfx
     # can briefly not exist, and treating that as a trigger would re-resolve on
@@ -2384,7 +2386,7 @@ function Update-TlsCertificate {
     $script:TlsResolvedAt = Get-Date
 
     $match = $null
-    try { $match = Find-CertificateForHost -HostName $script:Web.hostname } catch { }
+    try { $match = Find-CertificateForHost -HostName $script:Web.hostname } catch { $null = $_ }   # no match: falls through to plain HTTP
 
     # Nothing on disk covers the name any more. Keep what we have: it is still a
     # working handshake, and there is no dropping back to plain HTTP once the
@@ -2416,7 +2418,9 @@ function Update-TlsCertificate {
         $script:TlsCertId    = $match.certId
         $script:TlsCertStamp = $tstamp
         $script:TlsReloadFailed = $null
-        if ($old) { try { $old.Dispose() } catch { } }
+        # The superseded certificate is being dropped either way, and a failure
+        # disposing it would mask the reload that just succeeded.
+        if ($old) { try { $old.Dispose() } catch { $null = $_ } }
 
         if ($switching) {
             Write-Diag "  Now serving $($match.certId) for $($script:Web.hostname) - expires $($fresh.NotAfter.ToString('d MMM yyyy'))" 'Green'
@@ -2452,7 +2456,7 @@ catch {
     try {
         $conn = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)[0]
         if ($conn) { $owner = (Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue) }
-    } catch { }
+    } catch { $null = $_ }   # cannot name the process holding the port; the port check still reports it is taken
     if ($owner) { Write-Diag "  Port $Port is held by $($owner.ProcessName) (pid $($owner.Id))." 'Yellow' }
     Write-Diag "  Change the port under Settings > Tracker address, or stop whatever is using it." 'DarkGray'
     Write-Diag ""
@@ -2547,7 +2551,9 @@ try {
                 # handshake. SocketFlags.Peek leaves it on the socket.
                 $first  = New-Object byte[] 1
                 $peeked = 0
-                try { $peeked = $client.Client.Receive($first, 0, 1, [Net.Sockets.SocketFlags]::Peek) } catch { }
+                # Peek fails when the client has already gone. Treated as 'no bytes
+                # to look at', which is what the caller does with it anyway.
+                try { $peeked = $client.Client.Receive($first, 0, 1, [Net.Sockets.SocketFlags]::Peek) } catch { $null = $_ }
 
                 # Nothing arrived before the receive timeout, or the client hung
                 # up. Drop it here rather than handing it to the handshake, which
@@ -2573,7 +2579,7 @@ try {
                         # handshake. Drop that one connection and carry on - an
                         # unhandled throw here would end the accept loop and take
                         # the server down with it.
-                        try { $ssl.Dispose() } catch { }
+                        try { $ssl.Dispose() } catch { $null = $_ }   # already failing; the throw below carries the real error
                         throw
                     }
                     $stream = $ssl
@@ -2594,14 +2600,24 @@ try {
                     # is the only evidence anything went wrong.
                     $msg = ($_.Exception.Message -split "`n")[0].Trim()
                     Write-Diag "  ! $($request.Method) $($request.Path) -> $msg" 'Red'
-                    try { Send-Error $stream 500 $msg } catch { }
+                    # Best effort: the connection that caused the fault is often gone
+                    # already, and failing to deliver a 500 is not worth a second
+                    # error stacked on the one just reported.
+                    try { Send-Error $stream 500 $msg } catch { $null = $_ }
                 }
             }
         }
-        catch { }
+        catch {
+            # Connection-level faults, not handler faults: a client that vanished
+            # mid-request, an aborted TLS handshake, a socket reset. Browsers open
+            # speculative connections and drop them constantly, so reporting these
+            # would bury the lines that matter. Anything a route throws is already
+            # caught and written to the diagnostic log above.
+            $null = $_
+        }
         finally {
-            if ($stream) { try { $stream.Dispose() } catch { } }
-            try { $client.Close() } catch { }
+            if ($stream) { try { $stream.Dispose() } catch { $null = $_ } }
+            try { $client.Close() } catch { $null = $_ }
         }
     }
 }
@@ -2612,13 +2628,15 @@ finally {
     # the PFX was opened - it was loaded without PersistKeySet precisely so this
     # would clean up after itself. A server restarted daily would otherwise
     # leave one key file behind per start, forever.
-    if ($script:TlsCert) { try { $script:TlsCert.Dispose() } catch { } }
+    if ($script:TlsCert) { try { $script:TlsCert.Dispose() } catch { $null = $_ } }
 
     # Clear the session file on the way out so the next start is not told a
     # server is already running by a file describing a process that has gone.
     # Get-RunningInstance also checks the pid is alive, so this is belt and
     # braces - but a stale file naming a live-but-unrelated pid is exactly the
     # confusion worth avoiding.
-    try { if (Test-Path $script:SessionFile) { Remove-Item -LiteralPath $script:SessionFile -Force } } catch { }
+    # Shutdown housekeeping. A file left behind is untidy rather than harmful, and
+    # the next start clears it anyway.
+    try { if (Test-Path $script:SessionFile) { Remove-Item -LiteralPath $script:SessionFile -Force } } catch { $null = $_ }
     Write-Diag "  Server stopped." 'DarkGray'
 }
