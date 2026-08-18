@@ -625,7 +625,7 @@ function Write-AuditEvent {
       One line per state change. Fixed columns so it stays greppable by eye and
       parseable by anything else:
 
-        when · who · source · event · object · outcome · detail
+        when | who | source | event | object | outcome | detail
 
       "who" is the Windows user, because in an assessment that is the answer to
       the question. "source" separates ui from task - whether a person or the
@@ -3491,7 +3491,7 @@ function Get-RenewalTally {
             try {
                 $sr = New-Object IO.StreamReader($fs)
                 while ($null -ne ($line = $sr.ReadLine())) {
-                    # when · who · source · event · object · outcome · detail,
+                    # when | who | source | event | object | outcome | detail,
                     # separated by runs of two or more spaces.
                     $c = $line -split '\s{2,}'
                     if ($c.Count -lt 6) { continue }
