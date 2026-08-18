@@ -35,7 +35,7 @@ if ($RunLogPath) { $script:RunLogPath = $RunLogPath }
 
 function Write-Line { param([string]$Text, [string]$Level = 'info')
     Write-Host $Text
-    try { Write-RunLog $Text } catch { }
+    try { Write-RunLog $Text } catch { $null = $_ }   # console output still happened; a log failure is not worth stopping for
 }
 
 $settings = Get-TrackerSettings

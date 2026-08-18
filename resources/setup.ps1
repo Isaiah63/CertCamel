@@ -165,7 +165,7 @@ if ($RepairTasks) {
             if (-not $m.Success) { continue }
             $current = $m.Groups[1].Value.Trim()
             $same = $false
-            try { $same = ([IO.Path]::GetFullPath($current) -eq [IO.Path]::GetFullPath($expected)) } catch { }
+        try { $same = ([IO.Path]::GetFullPath($current) -eq [IO.Path]::GetFullPath($expected)) } catch { $null = $_ }   # unparseable: treated as different, so the task is re-pointed
             if ($same) { continue }
             $pathOk = $false
             $a.Arguments = [string]$a.Arguments -replace [regex]::Escape($current), $expected.Replace('$', '$$')
@@ -611,7 +611,7 @@ if ($wantReport -match '^[Yy]') {
 # nobody is signed in to open anything.
 
 $isServer = $false
-try { $isServer = ([int](Get-CimInstance Win32_OperatingSystem).ProductType -ne 1) } catch { }
+        try { $isServer = ([int](Get-CimInstance Win32_OperatingSystem).ProductType -ne 1) } catch { $null = $_ }   # cannot tell: treated as a workstation
 
 $serverTask = Get-SetupTaskName 'server'
 $serverTaskExists = [bool](Get-ScheduledTask -TaskName $serverTask -ErrorAction SilentlyContinue)

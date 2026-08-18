@@ -68,7 +68,10 @@ function Save-Outcome {
     $path = $ResultPath
     if (-not $path) { $path = Join-Path $script:JobsDir 'renew-due-sweep.json' }
     $outcome.finishedAt = (Get-Date).ToString('o')
-    try { Write-TextFileAtomic -Path $path -Content ($outcome | ConvertTo-Json -Depth 10) } catch { }
+        # The Home page reads this file to answer "when will it renew?". Losing it
+        # is not fatal to the renewal that just happened, but it is worth saying so.
+        try { Write-TextFileAtomic -Path $path -Content ($outcome | ConvertTo-Json -Depth 10) }
+        catch { Write-RunLog "  ! could not write the sweep outcome: $(($_.Exception.Message -split "`n")[0].Trim())" }
 }
 
 try {
@@ -120,7 +123,7 @@ try {
             # found, this fell through to the plain day threshold, and the CA's
             # renewal window was ignored with nothing to show for it.
             $order = Resolve-PAOrderForCert -CertId $cert.certId -Names @($cert.names)
-        } catch { }
+        } catch { $null = $_ }   # the per-certificate loop below reports the real failure
 
         if (-not $order) {
             # Never issued from here. Only due if something is actually expiring;

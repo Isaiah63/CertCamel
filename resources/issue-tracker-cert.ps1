@@ -140,7 +140,7 @@ foreach ($src in @($paCert.CertFile, $paCert.ChainFile, $paCert.FullChainFile, $
 try {
     Write-AuditEvent -Event 'renew' -Object $certId -Outcome 'ok' `
         -Detail "issued by hand with a manual DNS record, expires $($paCert.NotAfter)"
-} catch { }
+        } catch { $null = $_ }   # the certificate was issued; failing to audit it must not undo that
 
 # --------------------------------------------------------------------------- #
 # Make sure something is watching it
@@ -159,7 +159,7 @@ $zoneOk = $false
 try {
     $zones = @((Get-ZoneCache).zones)
     if ($zones.Count) { $zoneOk = [bool](Resolve-HostZone -HostName $name -Zones $zones) }
-} catch { }
+        } catch { $null = $_ }   # zone lookup is advisory here; the prompt below asks anyway
 
 Say ""
 Say ("  Issued. Expires {0}." -f $paCert.NotAfter) 'Green'

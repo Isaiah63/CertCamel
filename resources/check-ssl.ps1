@@ -487,4 +487,4 @@ Write-RunLog "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] [info] $summary"
 Write-AuditEvent -Event 'check' -Object 'domains.txt' `
     -Outcome $(if ($expired -gt 0 -or $failed -gt 0) { 'warn' } else { 'ok' }) -Detail $summary
 
-try { [void](Invoke-LogRetention -Settings (Get-TrackerSettings)) } catch { }
+    try { [void](Invoke-LogRetention -Settings (Get-TrackerSettings)) } catch { $null = $_ }   # housekeeping must never fail the check

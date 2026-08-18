@@ -74,7 +74,7 @@ else {
     try {
         Write-AuditEvent -Event 'settings' -Object 'web' -Outcome 'ok' `
             -Detail 'sos-plain-http.ps1: HTTPS and HSTS turned off'
-    } catch { }
+        } catch { $null = $_ }   # the emergency switch already worked; auditing it is secondary
 
     Say "  now: https=False  hsts=False   (hostname and port kept)" 'Green'
 }
@@ -86,7 +86,7 @@ if (-not $NoStop) {
     $stopped = 0
     foreach ($p in @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue)) {
         if ($p.CommandLine -and $p.CommandLine -match 'serve\.ps1' -and $p.ProcessId -ne $PID) {
-            try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $stopped++ } catch { }
+        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $stopped++ } catch { $null = $_ }   # already gone, or not ours to stop
         }
     }
     if ($stopped) { Say ("  stopped {0} running server process(es)." -f $stopped) 'Green' }

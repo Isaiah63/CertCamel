@@ -345,7 +345,7 @@ try {
             try {
                 $issued = New-Object Security.Cryptography.X509Certificates.X509Certificate2 $paCert.CertFile
                 $entry.serial = $issued.SerialNumber
-            } catch { }
+            } catch { $null = $_ }   # serial unavailable: the entry simply records none
 
             Write-Log "$display issued." 'ok'
 
@@ -429,7 +429,8 @@ try {
         # Per-node detail from the deploy step's own result file, so the email
         # says which node did what rather than only that something failed.
         $deployDetail = @()
-        try { $deployDetail = @(Format-DeploymentSummary -ResultPath (Join-Path $script:JobsDir "renew-deploy-$certId.json")) } catch { }
+        try { $deployDetail = @(Format-DeploymentSummary -ResultPath (Join-Path $script:JobsDir "renew-deploy-$certId.json")) }
+        catch { $null = $_ }   # the summary is decoration for the email; the renewal already happened
 
         Send-RenewalOutcomeAlert -Settings $settings -DisplayName $display -Ok $entry.ok `
             -Deployed $entry.deployed -ErrorMessage $entry.error -Detail $deployDetail

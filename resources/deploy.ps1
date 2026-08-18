@@ -604,7 +604,7 @@ try {
                 if ($prev -and $prev.PSObject.Properties['byTarget'] -and $prev.byTarget) {
                     foreach ($p in $prev.byTarget.PSObject.Properties) { $byTarget[$p.Name] = $p.Value }
                 }
-            } catch { }
+        } catch { $null = $_ }   # no previous result to compare against; treated as a first deployment
         }
         $stamp = (Get-Date).ToString('o')
         foreach ($t in @($entry.targets)) {

@@ -558,7 +558,7 @@ function Get-SecretMasks {
       a CLI script or a second console does.
     #>
     $stamp = $null
-    try { if (Test-Path $script:SecretsFile) { $stamp = (Get-Item $script:SecretsFile).LastWriteTimeUtc } } catch { }
+    try { if (Test-Path $script:SecretsFile) { $stamp = (Get-Item $script:SecretsFile).LastWriteTimeUtc } } catch { $null = $_ }   # no stamp: treated as changed
 
     if ($null -ne $script:SecretMasks -and $stamp -eq $script:SecretMasksStamp) {
         return $script:SecretMasks
@@ -574,7 +574,7 @@ function Get-SecretMasks {
             if ($v -and $v.Length -ge 8) { $masks += $v }
         }
     }
-    catch { }   # unreadable store is not a reason to refuse to log
+    catch { $null = $_ }   # unreadable store is not a reason to refuse to log
 
     $script:SecretMasks = @($masks)
     return $script:SecretMasks
@@ -617,7 +617,7 @@ function Write-RunLog {
     try {
         [IO.File]::AppendAllText($script:RunLogPath, (Protect-LogLine $Line) + "`r`n", [Text.Encoding]::UTF8)
     }
-    catch { }   # a logging failure must never be why a renewal fails
+    catch { $null = $_ }   # a logging failure must never be why a renewal fails
 }
 
 function Write-AuditEvent {
@@ -666,7 +666,7 @@ function Write-AuditEvent {
         }
         [IO.File]::AppendAllText($script:AuditFile, $line + "`r`n", [Text.Encoding]::UTF8)
     }
-    catch { }
+    catch { $null = $_ }   # rotation failing must not stop the line being written
 }
 
 function Get-LogSettings {
@@ -829,7 +829,7 @@ function Invoke-LogRetention {
     foreach ($f in $files) {
         if ($f.LastWriteTime -ge $limit) { continue }
         $sz = $f.Length
-        try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $removed++; $freed += $sz } catch { }
+        try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $removed++; $freed += $sz } catch { $null = $_ }   # locked file skipped; next sweep retries
     }
 
     $remaining = @(Get-ChildItem $script:JobsDir -File -ErrorAction SilentlyContinue |
@@ -841,7 +841,7 @@ function Invoke-LogRetention {
     foreach ($f in $remaining) {
         if ($total -le $cap) { break }
         $sz = $f.Length
-        try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $removed++; $freed += $sz; $total -= $sz } catch { }
+        try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $removed++; $freed += $sz; $total -= $sz } catch { $null = $_ }   # locked file skipped; next sweep retries
     }
 
     if ($removed -gt 0) {
@@ -909,15 +909,15 @@ function Get-AutomationStatus {
         }
 
         $task = $null
-        try { $task = $folder.GetTask($def.name) } catch { }
+        try { $task = $folder.GetTask($def.name) } catch { $null = $_ }   # no such task: the entry reports it as not registered
 
         if ($task) {
             $entry.registered = $true
-            try { $entry.enabled = [bool]$task.Enabled } catch { }
+            try { $entry.enabled = [bool]$task.Enabled } catch { $null = $_ }   # COM property unavailable: the field stays empty
             try { $entry.state = $stateNames[[int]$task.State] } catch { $entry.state = 'unknown' }
-            try { if ($task.NextRunTime -and $task.NextRunTime.Year -gt 1999) { $entry.nextRun = $task.NextRunTime.ToString('o') } } catch { }
-            try { if ($task.LastRunTime -and $task.LastRunTime.Year -gt 1999) { $entry.lastRun = $task.LastRunTime.ToString('o') } } catch { }
-            try { $entry.lastResult = [int]$task.LastTaskResult } catch { }
+            try { if ($task.NextRunTime -and $task.NextRunTime.Year -gt 1999) { $entry.nextRun = $task.NextRunTime.ToString('o') } } catch { $null = $_ }
+            try { if ($task.LastRunTime -and $task.LastRunTime.Year -gt 1999) { $entry.lastRun = $task.LastRunTime.ToString('o') } } catch { $null = $_ }
+            try { $entry.lastResult = [int]$task.LastTaskResult } catch { $null = $_ }
 
             try {
                 $d = $task.Definition
@@ -962,7 +962,7 @@ function Get-AutomationStatus {
                     }
                 }
             }
-            catch { }
+            catch { $null = $_ }   # unparseable path: pathMatches stays false, which is the safe answer
         }
 
         $out.tasks += $entry
@@ -1104,8 +1104,8 @@ function Uninstall-CamelServerTask {
                 $stopped = $true
             }
         }
-        catch { }
-        try { Remove-Item -LiteralPath $session -Force -ErrorAction SilentlyContinue } catch { }
+        catch { $null = $_ }   # a stale or unreadable session file is not worth failing over
+        try { Remove-Item -LiteralPath $session -Force -ErrorAction SilentlyContinue } catch { $null = $_ }
     }
 
     return @{ removed = $removed; stoppedRunning = $stopped }
@@ -1381,7 +1381,9 @@ function Write-EmailAuditEvent {
     }
     if ($Source) { $p.Source = $Source }
 
-    try { Write-AuditEvent @p } catch { }
+    # The audit trail is the record of what changed. It failing is worth a line
+    # in the run log, because nothing else would ever mention it.
+    try { Write-AuditEvent @p } catch { Write-RunLog "  ! audit write failed: $(($_.Exception.Message -split "`n")[0].Trim())" }
 }
 
 function Format-DeploymentSummary {
@@ -1581,11 +1583,19 @@ function Send-ScheduledRenewalAlerts {
                 -Subject "Renewal scheduled: $($entry.name)" -Body $body.ToString()
             $state[$key] = @{ renewAfter = $stamp; notifiedAt = (Get-Date).ToString('o') }
             $changed = $true
-        } catch { }
+        } catch {
+            # The state is deliberately NOT marked on failure, so the next run tries
+            # again rather than going quiet. Recorded because an alert that never
+            # arrives is otherwise indistinguishable from one nobody needed.
+            Write-RunLog "  ! renewal-scheduled alert for $($entry.name) failed: $(($_.Exception.Message -split "`n")[0].Trim())"
+        }
     }
 
     if ($changed) {
-        try { Write-TextFileAtomic -Path $script:AlertStateFile -Content ($state | ConvertTo-Json -Depth 5) } catch { }
+        # Not persisting the state means this same alert is sent again on the next
+        # run. Duplicate mail is the visible symptom and this line is the reason.
+        try { Write-TextFileAtomic -Path $script:AlertStateFile -Content ($state | ConvertTo-Json -Depth 5) }
+        catch { Write-RunLog "  ! could not save alert state: $(($_.Exception.Message -split "`n")[0].Trim())" }
     }
 }
 
@@ -1776,7 +1786,7 @@ function Install-PoshAcmeLocal {
     try {
         [Net.ServicePointManager]::SecurityProtocol =
             [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    } catch { }
+    } catch { $null = $_ }   # already enabled, or the platform refuses to change it; a genuinely missing TLS 1.2 fails visibly on the call below
 
     if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
         Install-PackageProvider -Name NuGet -Scope CurrentUser -Force -ErrorAction Stop | Out-Null
@@ -1837,7 +1847,7 @@ function Invoke-DMERequest {
     try {
         [Net.ServicePointManager]::SecurityProtocol =
             [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    } catch { }
+    } catch { $null = $_ }   # see above: a genuinely missing TLS 1.2 fails visibly on the call below
 
     # RFC 1123 in the invariant culture: a non-English locale would otherwise
     # emit localised day and month names and every signature would fail.
@@ -1865,8 +1875,8 @@ function Invoke-DMERequest {
         $status = $null
         $serverDate = $null
         if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) {
-            try { $status = [int]$_.Exception.Response.StatusCode } catch { }
-            try { $serverDate = $_.Exception.Response.Headers['Date'] } catch { }
+            try { $status = [int]$_.Exception.Response.StatusCode } catch { $null = $_ }
+            try { $serverDate = $_.Exception.Response.Headers['Date'] } catch { $null = $_ }   # no Date header: clock-skew check is skipped
         }
 
         if ($status -eq 403) {
@@ -1932,7 +1942,7 @@ function Get-NS1Zones {
     try {
         [Net.ServicePointManager]::SecurityProtocol =
             [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    } catch { }
+    } catch { $null = $_ }   # see above: a genuinely missing TLS 1.2 fails visibly on the call below
 
     try {
         $resp = Invoke-RestMethod -Uri 'https://api.nsone.net/v1/zones' `
@@ -1942,7 +1952,7 @@ function Get-NS1Zones {
     catch {
         $status = $null
         if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) {
-            try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+            try { $status = [int]$_.Exception.Response.StatusCode } catch { $null = $_ }
         }
         if ($status -eq 401 -or $status -eq 403) {
             throw "NS1 rejected the API key. Check it in the NS1 portal under Account Settings > API Keys, and that it has DNS permissions."
@@ -1971,7 +1981,7 @@ function Get-CloudflareZones {
     try {
         [Net.ServicePointManager]::SecurityProtocol =
             [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    } catch { }
+    } catch { $null = $_ }   # see above: a genuinely missing TLS 1.2 fails visibly on the call below
 
     $headers = @{ 'Authorization' = "Bearer $Token"; 'Accept' = 'application/json' }
     $names = @()
@@ -1989,7 +1999,7 @@ function Get-CloudflareZones {
             $status = $null
             $detail = $null
             if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) {
-                try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+                try { $status = [int]$_.Exception.Response.StatusCode } catch { $null = $_ }
                 try {
                     $sr = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
                     $body = $sr.ReadToEnd(); $sr.Dispose()
@@ -1997,7 +2007,7 @@ function Get-CloudflareZones {
                     if ($parsed.errors -and @($parsed.errors).Count) {
                         $detail = (@($parsed.errors) | ForEach-Object { $_.message }) -join '; '
                     }
-                } catch { }
+                    } catch { $null = $_ }   # error body is not JSON; the status code alone is reported
             }
 
             if ($status -in @(400, 401, 403)) {
@@ -2614,7 +2624,7 @@ function Get-CertificateGroups {
                         }
                     }
                 }
-                catch { }   # unreadable is not worth failing a page load over
+                catch { $null = $_ }   # unreadable is not worth failing a page load over
             }
 
             $out += [pscustomobject]@{
@@ -2682,7 +2692,7 @@ function Save-CertificateHistory {
     # archive an identical copy every time.
     try {
         if ((Get-Content $pem -Raw -Encoding UTF8).Trim() -eq $NewPemContent.Trim()) { return $null }
-    } catch { }
+    } catch { $null = $_ }   # unreadable existing pem: treated as different, so it is rewritten
 
     $stamp   = (Get-Item $pem).LastWriteTime.ToString('yyyy-MM-dd_HHmmss')
     $archive = Join-Path (Join-Path $CertDir 'history') $stamp
@@ -2710,7 +2720,7 @@ function Save-CertificateHistory {
                    notBefore = $c.NotBefore.ToString('o'); notAfter = $c.NotAfter.ToString('o')
                    names = @($names); archivedAt = (Get-Date).ToString('o')
                 } | ConvertTo-Json -Depth 4)
-        } catch { }
+            } catch { $null = $_ }   # the archive itself is written; a missing about.json is cosmetic
     }
 
     return $archive
@@ -2736,7 +2746,7 @@ function Remove-OldCertificateHistory {
     if ($Keep -lt 0) { $Keep = 0 }
     if ($all.Count -gt $Keep) {
         foreach ($d in $all[$Keep..($all.Count - 1)]) {
-            try { Remove-Item -LiteralPath $d.FullName -Recurse -Force; $dropped += $d.Name } catch { }
+            try { Remove-Item -LiteralPath $d.FullName -Recurse -Force; $dropped += $d.Name } catch { $null = $_ }   # locked archive is left; the next sweep retries
         }
     }
 
@@ -2877,7 +2887,7 @@ function Invoke-DataPlaneRequest {
         # never send it, which shows up as a body that silently never uploads.
         # Certificates are small; the round trip buys nothing here.
         [Net.ServicePointManager]::Expect100Continue = $false
-    } catch { }
+    } catch { $null = $_ }   # already enabled, or the platform refuses to change it; a genuinely missing TLS 1.2 fails visibly on the call below
 
     $uri = (Get-DataPlaneBaseUrl $BaseUrl) + $Path
 
@@ -2937,13 +2947,13 @@ function Invoke-DataPlaneRequest {
 
         $status = $null; $detail = $null
         if ($wex.Response) {
-            try { $status = [int]$wex.Response.StatusCode } catch { }
+            try { $status = [int]$wex.Response.StatusCode } catch { $null = $_ }
             try {
                 $sr = New-Object IO.StreamReader($wex.Response.GetResponseStream())
                 $errRaw = $sr.ReadToEnd(); $sr.Dispose()
                 $parsed = $errRaw | ConvertFrom-Json
                 if ($parsed.message) { $detail = $parsed.message } elseif ($errRaw) { $detail = $errRaw }
-            } catch { }
+            } catch { $null = $_ }   # error body is not JSON; the status code alone is reported
         }
 
         $msg = switch ($status) {
@@ -3466,7 +3476,7 @@ function Get-RenewalTally {
             $a = Get-Item $script:AuditFile
             $sig = "$($a.Length)|$($a.LastWriteTimeUtc.Ticks)|$($archives.Count)"
         } else { $sig = "none|$($archives.Count)" }
-    } catch { }
+    } catch { $null = $_ }   # no signature: the audit tail is re-read rather than served from cache
 
     if ($sig -and $script:RenewalTallyCache -and $script:RenewalTallyCache.sig -eq $sig) {
         return @{ renewed = $script:RenewalTallyCache.renewed; since = $script:RenewalTallyCache.since }
@@ -3496,7 +3506,7 @@ function Get-RenewalTally {
             }
             finally { $fs.Dispose() }
         }
-        catch { }   # an unreadable archive must not take the page down
+        catch { $null = $_ }   # an unreadable archive must not take the page down
     }
 
     if ($sig) { $script:RenewalTallyCache = @{ sig = $sig; renewed = $out.renewed; since = $out.since } }
@@ -3663,7 +3673,7 @@ function Push-CertificateToNode {
         $out.apiVersion = $api
 
         $existing = @()
-        try { $existing = Get-HAProxyCertificates -BaseUrl $BaseUrl -User $User -Password $Password -ApiVersion $api -InsecureTls:$InsecureTls } catch { }
+        try { $existing = Get-HAProxyCertificates -BaseUrl $BaseUrl -User $User -Password $Password -ApiVersion $api -InsecureTls:$InsecureTls } catch { $null = $_ }   # cannot list first; the upload below reports the real error
 
         # Match on what the API reports, not on the name we asked for - see
         # Resolve-StoredCertificateName. An exact-match test here is what makes a
@@ -3709,7 +3719,7 @@ function Push-CertificateToNode {
                     $out.storedName = $found
                     $out.renamed    = ($found -ne $RemoteName)
                 }
-            } catch { }
+                } catch { $null = $_ }   # the certificate WAS stored; only the read-back of its name failed, so storedName stays empty
         }
 
         if (-not $out.storedName) { $out.storedName = $RemoteName }
@@ -4069,7 +4079,7 @@ function Read-PemBlocks {
     foreach ($m in [regex]::Matches($Text,
         '-----BEGIN (?<label>[A-Z0-9 ]+)-----(?<b64>[\s\S]*?)-----END \k<label>-----')) {
         $der = $null
-        try { $der = [Convert]::FromBase64String(($m.Groups['b64'].Value -replace '\s','')) } catch { }
+        try { $der = [Convert]::FromBase64String(($m.Groups['b64'].Value -replace '\s','')) } catch { $null = $_ }   # not valid base64: block skipped
         $blocks += [pscustomobject]@{ Label = $m.Groups['label'].Value.Trim(); Der = $der }
     }
     return $blocks
@@ -4821,7 +4831,7 @@ function Get-TrackerAddressStatus {
                     break
                 }
             }
-        } catch { }
+        } catch { $null = $_ }   # unreadable domains file: treated as empty rather than failing the run
     }
 
     # --- renewal: will anything actually keep this alive, and where is it? --- #
@@ -4886,7 +4896,7 @@ function Get-TrackerAddressStatus {
         try {
             $conn = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)[0]
             if ($conn) { $holder = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue }
-        } catch { }
+        } catch { $null = $_ }   # cannot name the listening process; the caller still knows the port is taken
         if ($holder) {
             $out.portCheck.detail = "$Port is held by $($holder.ProcessName) (pid $($holder.Id))."
         }
@@ -5003,7 +5013,7 @@ function Test-CertificateBundle {
         $rsa = $leaf.PublicKey.Key -as [Security.Cryptography.RSA]
         if ($rsa) { $certMod = $rsa.ExportParameters($false).Modulus; $result.keyType = 'RSA' }
         else { $result.keyType = $leaf.PublicKey.Oid.FriendlyName }
-    } catch { }
+    } catch { $null = $_ }   # cannot compare public keys: treated as not matching, which is the safe answer
 
     if ($certMod) {
         $keyMod = Get-RsaModulusFromKeyDer -Der $keys[0].Der -Label $keys[0].Label
