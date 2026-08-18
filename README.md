@@ -275,6 +275,10 @@ creates it, and offers a desktop copy. It is **not** in the repository: a `.lnk`
 bakes in an absolute path, so a committed one would point at whoever built it.
 Re-run setup after moving the folder and it is rebuilt.
 
+![The Tracker address panel: each precondition for serving the page under a name
+answered separately - DNS zone, certificate, renewal, port and hosts
+file.](docs/screenshots/settingsgeneral2.png)
+
 ### Serving the page over HTTPS
 
 Optional, off by default, and it needs a DNS provider already configured — so
@@ -882,6 +886,12 @@ leak one by accident. Where the masking happens depends on who writes the line:
 the audit trail and scheduled runs are masked as they are written, while a run
 started from the page is the child process's own output captured whole — so it is
 masked on read, and the file is swept once the run finishes.
+
+![The audit trail: one line per action with the time, who or what triggered it,
+what changed and whether it worked.](docs/screenshots/auditlogs.png)
+
+![Run logs: every scheduled and manual run, each expandable into the narrative of
+what it did.](docs/screenshots/runlogs.png)
 
 ### Retention
 
