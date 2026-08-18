@@ -2,13 +2,20 @@
 #
 # CodeQL has no PowerShell analyser at all, so the language this project is
 # mostly written in - the server, the credential store, the ACME client - is
-# invisible to it. This is what looks at that part.
+# invisible to it. This is what looks at that part, and it publishes to the same
+# Security tab so both halves of the codebase are reviewed in one place.
 #
-# It NEVER fails the build. There are pre-existing findings, and a workflow that
-# goes red on every commit from day one is a workflow people learn to ignore -
-# at which point it is worse than nothing, because the red stops meaning
-# anything. Results are published to the Security tab instead, where they can be
-# read, triaged and dismissed with a reason.
+# Nothing here is continue-on-error, deliberately.
+#
+# The first version of this file marked the analysis step continue-on-error so
+# that findings could not turn the build red. Findings never could:
+# Invoke-ScriptAnalyzer returns them, it does not throw. What the flag actually
+# hid was the analysis itself failing - a bad -Path argument - and the job
+# reported success having produced nothing at all. That is the same shape as the
+# bug this repository spent a week removing from the update panel: a check that
+# could not run must never look like a check that passed.
+#
+# So: a broken analysis fails loudly, and findings are simply reported.
 
 name: PowerShell lint
 
@@ -34,42 +41,48 @@ jobs:
 
       - name: Install PSScriptAnalyzer
         shell: pwsh
-        run: Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop
+        run: |
+          # Already present on the hosted runner. Installing over a loaded module
+          # only produces a "currently in use" warning and changes nothing, so
+          # ask first and print what is actually going to run.
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+              Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop
+          }
+          $v = (Get-Module -ListAvailable PSScriptAnalyzer | Sort-Object Version -Descending | Select-Object -First 1).Version
+          Write-Host "PSScriptAnalyzer $v"
 
       - name: Analyse
-        id: analyse
-        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Tracked scripts only. Nothing vendored is committed - resources\lib\
-          # is fetched at runtime and gitignored - so there is nothing to exclude
-          # here, and anything that appears later would be worth analysing anyway.
-          $files = Get-ChildItem -Path . -Recurse -Filter *.ps1 -File |
-                   Where-Object { $_.FullName -notmatch '\\node_modules\\|/node_modules/' }
-          Write-Host "Analysing $($files.Count) script(s)"
+          # -Path takes ONE path and walks it with -Recurse. Handing it an array
+          # of file paths throws "Cannot convert 'System.Object[]' to the type
+          # 'System.String'", which is how the first run of this workflow managed
+          # to analyse nothing while reporting success.
+          $scripts = @(Get-ChildItem -Path . -Recurse -File -Include *.ps1,*.psm1,*.psd1)
+          Write-Host "Analysing $($scripts.Count) script(s)"
+          if ($scripts.Count -eq 0) { throw 'No PowerShell files found - the checkout or the filter is wrong.' }
 
-          $found = @(Invoke-ScriptAnalyzer -Path $files.FullName -Severity Error,Warning,Information -ErrorAction Continue)
+          $found = @(Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error,Warning,Information)
+          Write-Host "$($found.Count) finding(s)"
 
-          # Group for the run summary, so the common ones are visible at a glance
+          # Grouped, so the common rules are visible at a glance on the run page
           # rather than as a wall of individual lines.
-          $summary = "## PSScriptAnalyzer`n`n"
+          $summary = "## PSScriptAnalyzer`n`n$($scripts.Count) script(s) analysed.`n`n"
           if (-not $found) {
               $summary += "No findings.`n"
           } else {
               $summary += "| Rule | Severity | Count |`n|---|---|---|`n"
               foreach ($g in ($found | Group-Object RuleName | Sort-Object Count -Descending)) {
-                  $sev = ($g.Group | Select-Object -First 1).Severity
-                  $summary += "| $($g.Name) | $sev | $($g.Count) |`n"
+                  $summary += "| $($g.Name) | $(($g.Group | Select-Object -First 1).Severity) | $($g.Count) |`n"
               }
-              $summary += "`n**$($found.Count) finding(s).** Full detail in the Security tab under Code scanning.`n"
+              $summary += "`n**$($found.Count) finding(s).** Detail in the Security tab under Code scanning.`n"
           }
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
-          # Hand-built SARIF rather than a third-party action: the only thing this
-          # workflow depends on is GitHub's own, which is one less repository to
-          # trust for a project whose whole pitch is that it installs nothing.
+          # Hand-built SARIF rather than a third-party action, so the only thing
+          # this workflow trusts is GitHub's own upload step.
           $levels = @{ 'Error' = 'error'; 'Warning' = 'warning'; 'Information' = 'note' }
           $root = (Get-Location).Path
 
@@ -79,18 +92,17 @@ jobs:
           })
 
           $results = @($found | ForEach-Object {
-              # SARIF wants a repo-relative URI with forward slashes.
-              $rel = $_.ScriptPath
-              if ($rel -and $rel.StartsWith($root)) { $rel = $rel.Substring($root.Length).TrimStart('/','\') }
-              $rel = ($rel -replace '\\', '/')
+              $rel = [string]$_.ScriptPath
+              if ($rel -and $rel.StartsWith($root)) { $rel = $rel.Substring($root.Length) }
+              $rel = ($rel -replace '\\', '/').TrimStart('/')
               @{
                   ruleId  = $_.RuleName
                   level   = $(if ($levels.ContainsKey([string]$_.Severity)) { $levels[[string]$_.Severity] } else { 'warning' })
                   message = @{ text = [string]$_.Message }
                   locations = @(@{ physicalLocation = @{
                       artifactLocation = @{ uri = $rel }
-                      # Line 0 is not valid SARIF; clamp so a rule that reports a
-                      # file-level finding cannot invalidate the whole upload.
+                      # Line 0 is not valid SARIF, and one bad region rejects the
+                      # entire upload rather than the single result.
                       region = @{ startLine = [Math]::Max(1, [int]$_.Line) }
                   } })
               }
@@ -110,13 +122,17 @@ jobs:
           }
 
           # -Depth 10: the default of 2 silently truncates the nested location
-          # objects into the string "System.Collections.Hashtable".
+          # objects to the string "System.Collections.Hashtable".
           $sarif | ConvertTo-Json -Depth 10 | Out-File -FilePath psscriptanalyzer.sarif -Encoding utf8
-          Write-Host "Wrote $($results.Count) result(s) to psscriptanalyzer.sarif"
+
+          # Prove the file is there and parses before handing it to the uploader,
+          # so a malformed SARIF is reported here rather than as a confusing
+          # failure inside somebody else's action.
+          if (-not (Test-Path psscriptanalyzer.sarif)) { throw 'SARIF file was not written.' }
+          $check = Get-Content psscriptanalyzer.sarif -Raw | ConvertFrom-Json
+          Write-Host "SARIF ok: $($check.runs[0].results.Count) result(s), $($check.runs[0].tool.driver.rules.Count) rule(s)"
 
       - name: Publish to the Security tab
-        if: always()
-        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: psscriptanalyzer.sarif
