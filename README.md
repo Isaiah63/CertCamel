@@ -25,6 +25,9 @@ double-click `First Time Setup.bat`, then `Open Tracker.bat` — see
 [Quick start](#quick-start). It is [beta software](#status-and-licence) that
 issues real certificates, so point it at staging first.
 
+![The Cert Camel home page: counts for tracked, renewing and expired certificates, the
+scheduled renewals, and every tracked domain with its expiry and issuer.](docs/screenshots/homepage.png)
+
 ## Deploying to HAProxy
 
 Issuing a certificate does not fix anything until it reaches the load balancers.
@@ -334,6 +337,10 @@ The page never sends `Strict-Transport-Security`. It is a good header on a
 public site and a lockout waiting to happen here — it removes the
 click-through that is the recovery path for a local certificate problem.
 
+![The Certificates page: one row per certificate showing every name it covers, its
+issuer, expiry, days left and which load balancer groups it is deployed
+to.](docs/screenshots/certificates.png)
+
 ## Day-to-day use
 
 | I want to... | Do this |
@@ -446,6 +453,9 @@ so nothing the Data Plane API can be asked will tell you who is master. Reading
 it truthfully needs something on each node publishing keepalived's state, which
 is outside what this tool can arrange. Anything shown here claiming to know
 would be guessing.
+
+![The Load balancers page: each node with its HAProxy and Data Plane API version, and
+every frontend confirmed to be serving the certificate.](docs/screenshots/loadbalancers.png)
 
 ## The Load balancers page
 
