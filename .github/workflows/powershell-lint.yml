@@ -64,7 +64,10 @@ jobs:
           Write-Host "Analysing $($scripts.Count) script(s)"
           if ($scripts.Count -eq 0) { throw 'No PowerShell files found - the checkout or the filter is wrong.' }
 
-          $found = @(Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error,Warning,Information)
+          # Settings file rather than -Severity here: it carries the rule
+          # exclusions and the reasoning for each one, which does not fit on a
+          # command line and should not be invisible to somebody reading a run.
+          $found = @(Invoke-ScriptAnalyzer -Path . -Recurse -Settings .github/PSScriptAnalyzerSettings.psd1)
           Write-Host "$($found.Count) finding(s)"
 
           # Grouped, so the common rules are visible at a glance on the run page
