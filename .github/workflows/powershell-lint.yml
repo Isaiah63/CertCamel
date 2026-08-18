@@ -1,0 +1,123 @@
+# PSScriptAnalyzer, because CodeQL cannot read PowerShell.
+#
+# CodeQL has no PowerShell analyser at all, so the language this project is
+# mostly written in - the server, the credential store, the ACME client - is
+# invisible to it. This is what looks at that part.
+#
+# It NEVER fails the build. There are pre-existing findings, and a workflow that
+# goes red on every commit from day one is a workflow people learn to ignore -
+# at which point it is worse than nothing, because the red stops meaning
+# anything. Results are published to the Security tab instead, where they can be
+# read, triaged and dismissed with a reason.
+
+name: PowerShell lint
+
+on:
+  push:
+    branches: [main]
+    paths: ['**.ps1', '.github/workflows/powershell-lint.yml']
+  pull_request:
+    paths: ['**.ps1', '.github/workflows/powershell-lint.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Invoke-ScriptAnalyzer
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop
+
+      - name: Analyse
+        id: analyse
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Tracked scripts only. Nothing vendored is committed - resources\lib\
+          # is fetched at runtime and gitignored - so there is nothing to exclude
+          # here, and anything that appears later would be worth analysing anyway.
+          $files = Get-ChildItem -Path . -Recurse -Filter *.ps1 -File |
+                   Where-Object { $_.FullName -notmatch '\\node_modules\\|/node_modules/' }
+          Write-Host "Analysing $($files.Count) script(s)"
+
+          $found = @(Invoke-ScriptAnalyzer -Path $files.FullName -Severity Error,Warning,Information -ErrorAction Continue)
+
+          # Group for the run summary, so the common ones are visible at a glance
+          # rather than as a wall of individual lines.
+          $summary = "## PSScriptAnalyzer`n`n"
+          if (-not $found) {
+              $summary += "No findings.`n"
+          } else {
+              $summary += "| Rule | Severity | Count |`n|---|---|---|`n"
+              foreach ($g in ($found | Group-Object RuleName | Sort-Object Count -Descending)) {
+                  $sev = ($g.Group | Select-Object -First 1).Severity
+                  $summary += "| $($g.Name) | $sev | $($g.Count) |`n"
+              }
+              $summary += "`n**$($found.Count) finding(s).** Full detail in the Security tab under Code scanning.`n"
+          }
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+          # Hand-built SARIF rather than a third-party action: the only thing this
+          # workflow depends on is GitHub's own, which is one less repository to
+          # trust for a project whose whole pitch is that it installs nothing.
+          $levels = @{ 'Error' = 'error'; 'Warning' = 'warning'; 'Information' = 'note' }
+          $root = (Get-Location).Path
+
+          $rules = @($found | Select-Object -ExpandProperty RuleName -Unique | ForEach-Object {
+              @{ id = $_; shortDescription = @{ text = $_ }
+                 helpUri = "https://learn.microsoft.com/powershell/utility-modules/psscriptanalyzer/rules/$_" }
+          })
+
+          $results = @($found | ForEach-Object {
+              # SARIF wants a repo-relative URI with forward slashes.
+              $rel = $_.ScriptPath
+              if ($rel -and $rel.StartsWith($root)) { $rel = $rel.Substring($root.Length).TrimStart('/','\') }
+              $rel = ($rel -replace '\\', '/')
+              @{
+                  ruleId  = $_.RuleName
+                  level   = $(if ($levels.ContainsKey([string]$_.Severity)) { $levels[[string]$_.Severity] } else { 'warning' })
+                  message = @{ text = [string]$_.Message }
+                  locations = @(@{ physicalLocation = @{
+                      artifactLocation = @{ uri = $rel }
+                      # Line 0 is not valid SARIF; clamp so a rule that reports a
+                      # file-level finding cannot invalidate the whole upload.
+                      region = @{ startLine = [Math]::Max(1, [int]$_.Line) }
+                  } })
+              }
+          })
+
+          $sarif = @{
+              '$schema' = 'https://json.schemastore.org/sarif-2.1.0.json'
+              version   = '2.1.0'
+              runs      = @(@{
+                  tool = @{ driver = @{
+                      name = 'PSScriptAnalyzer'
+                      informationUri = 'https://github.com/PowerShell/PSScriptAnalyzer'
+                      rules = $rules
+                  } }
+                  results = $results
+              })
+          }
+
+          # -Depth 10: the default of 2 silently truncates the nested location
+          # objects into the string "System.Collections.Hashtable".
+          $sarif | ConvertTo-Json -Depth 10 | Out-File -FilePath psscriptanalyzer.sarif -Encoding utf8
+          Write-Host "Wrote $($results.Count) result(s) to psscriptanalyzer.sarif"
+
+      - name: Publish to the Security tab
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: psscriptanalyzer.sarif
+          category: psscriptanalyzer
