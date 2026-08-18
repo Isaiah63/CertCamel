@@ -193,6 +193,7 @@ here is presumably something you intend to renew, so the two halves are one tool
     <li><a href="#trouble">When it breaks</a></li>
     <li><a href="#clock">The 47-day future</a></li>
     <li><a href="#files">Files</a></li>
+    <li><a href="#updating">Updating</a></li>
   </ol>
 </nav>
 
@@ -944,6 +945,7 @@ sos-plain-http.ps1    turn HTTPS back off when the console will not load
 readme.html           this page
 haproxy-setup.html    step-by-step HAProxy Data Plane API guide
 security.html         what is protected, what is not, and what is on your disk
+VERSION               what this copy calls itself
 LICENSE               MIT
 
 domains.txt           the list you edit                   (yours, gitignored)
@@ -991,13 +993,57 @@ Renewal adds <a href="https://poshac.me" target="_blank" rel="noopener">Posh-ACM
 into <code>resources\lib\</code> inside this folder rather than installed system-wide &mdash; no admin rights
 at any point.</p>
 
+<h2 id="updating">19. Updating</h2>
+
+<p>This copy names itself in <code>VERSION</code> at the root of the folder, and
+<strong>Settings &rarr; General &rarr; Update</strong> shows it back to you next to whatever else it
+could work out.</p>
+
+<h3>If you cloned the repository</h3>
+
+<p><em>Check for updates</em> fetches your remote, compares, and offers <em>Update now</em> when
+there is something to take. That only ever fast-forwards &mdash; never a merge &mdash; so on a
+machine running unattended the worst outcome is a refusal rather than a conflicted working tree
+nobody is sitting in front of. It refuses, on purpose, when a tracked file has local edits, or when
+this copy has commits the remote does not.</p>
+
+<p>Nothing of yours is in the repository &mdash; settings, secrets, domains, certificates and logs
+are all gitignored &mdash; so an update replaces code and leaves your data alone.</p>
+
+<div class="callout note">
+  <div class="h">The running page is the old code until you restart it</div>
+  <p>The panel says so after an update, and it means it: the server read those files into memory when
+  it started.</p>
+</div>
+
+<h3>If you downloaded a ZIP</h3>
+
+<p>There is no clone to pull from, so the panel asks GitHub for the newest published release and
+shows you both version numbers. It compares them for <em>difference</em>, not order &mdash; the
+version scheme here is not semver, and guessing an order would eventually tell you that you were
+current when you were a release behind. If they differ, download the new one and read the two
+numbers yourself.</p>
+
+<p>That release lookup is the only request Cert Camel makes to a host you did not configure, and it
+only happens <strong>when you press the button</strong> &mdash; never on a schedule, and never from a
+clone, which has a better answer already. It sends nothing about your install.
+<a href="security.html#not">Security</a> has the detail.</p>
+
+<h3>A check that cannot complete says so</h3>
+
+<p>No network, a proxy in the way, DNS down, a credential problem, GitHub having a bad morning
+&mdash; the row goes grey and tells you which. It will not show a tick over a failure, because
+&ldquo;the check failed&rdquo; and &ldquo;you are up to date&rdquo; are not the same statement, and a
+tool you only look at twice a year has to be trusted the twice you do.</p>
+
 </article>
 </div>
 
 <footer>
   Cert Camel &mdash; a local certificate watcher and ACME renewal console.
-  Everything runs on this machine; nothing is sent anywhere except to your DNS provider and your
-  certificate authority.
+  Everything runs on this machine; nothing is sent anywhere except to your DNS provider, your
+  certificate authority, and &mdash; only if you press <em>Check for updates</em> &mdash; wherever
+  this copy came from.
 </footer>
 
 </div>

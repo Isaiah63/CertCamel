@@ -1,4 +1,4 @@
-# Cert Camel v2
+# Cert Camel
 
 Watches when your TLS certificates expire, renews them, **deploys them to your
 load balancers without a reload, and proves they are actually being served.**
@@ -20,22 +20,16 @@ certificates possible, which HTTP-01 cannot issue at all.
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-> ### About v2
->
-> v2 forked from **v1 commit `d96274d`** ([Isaiah63/CertCamel](https://github.com/Isaiah63/CertCamel)).
->
-> v1 remains a working, standalone certificate watcher and ACME renewal console.
-> It is stable and in maintenance. v2 adds deployment to HAProxy, verification
-> that the deployment actually took, and unattended renewal.
->
-> The two repositories share no git history, so **fixes do not propagate between
-> them** — anything found in one has to be ported by hand.
+**Windows, PowerShell 5.1, nothing installed system-wide.** Clone or download it,
+double-click `First Time Setup.bat`, then `Open Tracker.bat` — see
+[Quick start](#quick-start). It is [beta software](#status-and-licence) that
+issues real certificates, so point it at staging first.
 
 ## Deploying to HAProxy
 
 Issuing a certificate does not fix anything until it reaches the load balancers.
-v2 pushes it there over the **HAProxy Data Plane API**, without a reload, and
-then checks that every node is genuinely serving it.
+Cert Camel pushes it there over the **HAProxy Data Plane API**, without a reload,
+and then checks that every node is genuinely serving it.
 
 ### Why the Data Plane API and not the Runtime API
 
@@ -245,7 +239,7 @@ monthly trigger to reach for instead. `First Time Setup.bat` can register it.
 ## Quick start
 
 1. Clone or download this repository somewhere **outside** OneDrive, Dropbox or
-   any other synced folder — see [Security](#security) for why.
+   any other synced folder — see [Security notes](#security-notes) for why.
 2. Double-click **`First Time Setup.bat`** (once).
 3. Double-click **`Open Tracker.bat`**.
 
@@ -899,6 +893,43 @@ stated one — so it is stated, on the page as well as here. If a retention poli
 genuinely requires audit expiry, that wants to be its own explicit setting rather
 than a side effect of a disk cap.
 
+## Updating
+
+This copy names itself in `VERSION` at the root of the folder, and **Settings →
+General → Update** shows it back to you next to whatever else it could work out.
+
+**If you cloned the repository**, *Check for updates* fetches your remote,
+compares, and offers *Update now* when there is something to take. That only ever
+fast-forwards — never a merge — so on a machine running unattended the worst
+outcome is a refusal rather than a conflicted working tree nobody is sitting in
+front of. It refuses, on purpose, when a tracked file has local edits, or when
+this copy has commits the remote does not. Nothing of yours is in the repository
+— settings, secrets, domains, certificates and logs are all gitignored — so an
+update replaces code and leaves your data alone.
+
+**The running page is the old code until you restart it.** The panel says so
+after an update, and it means it: the server read those files into memory when it
+started.
+
+**If you downloaded a ZIP**, there is no clone to pull from, so the panel asks
+GitHub for the newest published release and shows you both version numbers. It
+compares them for *difference*, not order — the version scheme here is not
+semver, and guessing an order would eventually tell you that you were current
+when you were a release behind. If they differ, download the new one and read the
+two numbers yourself.
+
+That release lookup is the only request Cert Camel makes to a host you did not
+configure, and it only happens **when you press the button** — never on a
+schedule, and never from a clone, which has a better answer already. It sends
+nothing about your install. See [Security](security.html#not) for what that does
+and does not mean.
+
+**A check that cannot complete says so.** No network, a proxy in the way, DNS
+down, a credential problem, GitHub having a bad morning — the row goes grey and
+tells you which. It will not show a tick over a failure, because "the check
+failed" and "you are up to date" are not the same statement, and a tool you only
+look at twice a year has to be trusted the twice you do.
+
 ## Moving or sharing this folder
 
 Copy the folder anywhere and it works, with two exceptions worth knowing:
@@ -1185,3 +1216,11 @@ Licensed under the [MIT licence](LICENSE). In particular:
 You are responsible for what it does to your certificates and your load
 balancers. Read [the security notes](#security-notes) before pointing it at
 anything you care about.
+
+### Where it came from
+
+Cert Camel began as a plain certificate watcher and ACME renewal console. What
+you have here grew out of that and adds deployment to HAProxy, verification that
+a deployment actually took, and unattended renewal. The two share no git history,
+so nothing here is a continuation of that earlier codebase — it is the one that
+is maintained.
