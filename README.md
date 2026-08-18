@@ -1010,6 +1010,11 @@ Three things to know before you edit:
 
 ### Keeping the page running (server installs)
 
+A full server runbook &mdash; which account must own the tasks and the
+credentials, and why that cannot be changed afterwards &mdash; is in
+[windows-server-setup.html](windows-server-setup.html). The short version is
+below.
+
 Normally Cert Camel runs while `Open Tracker.bat` is open and stops when you sign
 out. On a server that means it is gone after every reboot until somebody signs in
 and starts it again.
@@ -1168,6 +1173,7 @@ sos-plain-http.ps1    turn HTTPS back off when the console will not load
 
 readme.html           the documentation as a browser page
 haproxy-setup.html    step-by-step HAProxy Data Plane API guide
+windows-server-setup.html  installing where nobody is signed in
 security.html         what is protected, what is not, and what is on your disk
 LICENSE               MIT
 

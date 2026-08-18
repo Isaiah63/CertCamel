@@ -23,7 +23,7 @@ const scripts = ['assets\\app.js', 'assets\\views\\home.js', 'assets\\views\\cer
 // root of the URL space either way.
 const GUIDE_DIR = path.join(ROOT, '..') + path.sep;
 const guides = {};
-['readme.html', 'haproxy-setup.html', 'security.html'].forEach(function(f){
+['readme.html', 'haproxy-setup.html', 'security.html', 'windows-server-setup.html'].forEach(function(f){
   const src = fs.readFileSync(GUIDE_DIR + f, 'utf8');
   const ids = {};
   (src.match(/id="[^"]+"/g) || []).forEach(function(m){ ids[m.slice(4, -1)] = true; });
@@ -85,7 +85,7 @@ w.CertCamel.loadState(function(){
   });
 
   const links = Array.from(d.querySelectorAll(
-    'a[href*="readme.html"], a[href*="haproxy-setup.html"], a[href*="security.html"]'));
+    'a[href*="readme.html"], a[href*="haproxy-setup.html"], a[href*="security.html"], a[href*="windows-server-setup.html"]'));
 
   console.log('\n=== every guide link resolves ===');
   check('the views rendered some guide links', links.length > 0, 'found none');

@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cert Camel &mdash; Installing on Windows Server</title>
+<link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAlpSURBVFhHtVdpUFTZFe7UZKlMth+pSqWmKpNKTcZMVVIzmYhabrihIPu+NtAgSwPdNN3QNDS9AM3W0N3sOy371tiCDWIEkUVRkGlAEAEBRQccl8TZomOZkS/3PZ84lqYmpGa+qlP33fPOvfd755x7z32s5wDw88zEqpFs6dH2ybH5baa2wUPneif2Ev0PGZPvF2traz+JD9XdCnFQQRiYgxi/HMRx8qASlU+UqFulBn1vwI251fcY8+8HbTU9kijPLPjbJCLAVgqXPXwEHE4C3ysbAh8NkrhFT1qr/h7KmH+3IB74qVJQPBlkr0SQgxwcexn8bOIRaCdFMOkHkX6QrRJSbsHnKysrv2aGfXdoLO/k8b1z4GklAvtwAo44KnDEiZCxUyDCLQPR3tkIdUyDNLwQVyeXNjHDqNx5A4/wNvmA3zCqjYNM8gM5v3CaY6uA6z4+LP/qTbdsEor4EN3neSkNZdUFHQl5yqYOQ9VpDjWGypm6IpNMzi+eFfhnfRUTmP1Zuriyt7fjghU96UYwa160EAbkwPdQPB17621B2PqeM4K9JDM3b959hzFbx8P7D9/KTqoe5ZHcYNtIyTgJvK3EYB+Sgu+XibpSk5Ax/d/Qe3xUFu1DCFjHw982Ef6HExHipkRP9/ABxmQd5Mt/qU7QT4U5pRG7BJowFTI/GwkhIobnPhFCXZKhEpcdK8pqDC/KbOAUZzUGUVJIiboxpLNl0JqZ7hmOHz3bHuqsgg+ZgFo80FYG8RHdA+psYEzWUZzReoznng3PvbG0eOwRwc0yBi67BHDayYfTDh7stnLhtD2avI+DB7Fxp22EcN39zI7roUJhZr2CmZLFatcPmIPtFcSNsSTrk3DEQYmE0Lwvyde+lO3t9X18CacQgYdlaCjtwuSlOcxMLuHK+AIt0+PXMGWmZB6XP5rH5NgckVliR4Q8jwxdRo5CD5vNYYjhZM4z07JYJxsvzoQ6J8Nzv5DecuEuqRD56dBUdiqTMWGd6Rhxl3NLnnJsFNAk1RLnAP/64hHmppaxePUWFhihnhdnn7XP+1Q7P72Mfz/5mh7H9UpFqLviCjM1izVwfHJCHJgLV8toQkCBSPd0RLimQRKUj1xFfW9+ctNJWXgxeB5qchYoUF/cRU8kjyiG/0HiMftkIkqmfSHBdpROSVoFfPcnICexhh6XxCsAx0k6zSzPYl3ovtJdKG+D864o2gN8ryxaeORUjPXLQ5x/PvjeakT7qOmJ64tPYm2NTERI8T3ViHTLRJT7C3nRz1rX8TyykBGrpwkkROoQ6Ch5QWCsby79VK2ZxD+RzoNoZjGBbzZdE54L1Q9xTKEJgBBIiaqAJqEOx2vO4ngtEaplpJ0SRtde249MUTW00gaagDg8B372cS8IfDz/ybaBtinkJjbCiXiBygeRv5ZeVMjWQMTW0n0ReQ5zUqGh5BmBDEE1Wkp7sHrjPlaW7mHl+mtk6S55fw9HNSYUKQ00gdiwbPjYil4QoNB/3Hy+p34CisgSuOzmIdIjHWJSDemFGaHIhDunobGkG3gKFCcfg1pUB424Adr4RmglTdDR0ozchGdC9bXiRuTENqBWR8YRCEMy4X045mUCt5b+sfVMyzhMlRegElSQHSGiawG1cBxJ0NgAHf3MdU1fJ6DPMqEgyYDF6RU8uP8FHtx5jRD9rHkZBVIDWop6aQKC4HS4W/NeJkBh4twCb/DYDLr0IyhNNSLMLQXeB8UIc00lSZhF50CwQzKq80/QBBpyT6Mq3YS2UhLnqkF0EDlZdxHd9Rdxqn4EnTXD6NAPwljeD31GJ4wVAzSBaI4KblZRrxKgMHl+gX+mdfwpFQ5j+SDSYqroI9rPWkKXZupEq8hpoydqLe5DZZoJlSoT9OmdaNT1QMWvpEs3142cdnIDmnJ7ybsu2qaLEKLAJwScD0S8ngCFpfnV3b2Gjy53Ek/0No2jVGVcrxEee0XQyJ/t509vf4lr4yu4Pn0bS5dvQxysgfWWEKgkJYghbrb8Mxu1+SbcnL2Lpcnb+OqzJ/S4QNd4uB2K/O8EKNTqDbuC3RNRmNyCs62XUSBvoaslRYJNpNtwDreuf0IynWT5rbs403kB9tu5mBidhfniDG4srqBU20xczcO1q8tYXljBwtwyqgoM2LrJFf7OsdeYpV6Phw8fvnVoF/vRB+/YICFch1O1Y+SOqKND4WeTQKoeVbhk8LdOgte+OOx/n4M8VR2pAXP429suYNvHYWX5Dhwtudj9F19YbQ7C3g/8sW2TB+x2ciETamuYpV4P6sLhYRd168M/2uLDTYe/NtUP/bMywwSvA3EIIeU2S6pvT4+vLE2NLSvLkFQYnXZGoUzTgi5jPyz+4Abb7aGYubwA94PR8LAW3BFz1WWi8IzyuIisSk2qXk4i8UqlfQW+TtFXNm9ywN4tXmtTE3Oepppzy0GkakZ5ZeJ0x7A7Y8Z6/Pjxu2HuyTDq+3Hx9AxIdUVH9RAmh5aQLChDoIt4mDHdGNjOAvOWPznDbs8RjI6O/nZu7GZEYkgRKcdyZEgqWxkzVk/HeYsYfzX6jZOYOLuEIlUzDGVnMDP0MSrVHfC1jxllTDcGtovw6haSML6OMfdWV1ffJG77VSK5FQfZJUMt1VcwZjQBYUA2+trMmOy/Dj/bOGTF6zF3YRWlacfg6yDaOAEqRp62/LuHtgWjWFMvYNSsFGFxH88jB1X5Rj6jIgRGLeKCtDh3YhoLo3dQn9+N082jWBq7hyr1CeKB/4PA0tWVTc77I9b8HIR3CZk3GTUrW1ZdKGLnoabghA+jYp3vMVvEB+ciT9aIwpQmFKY2Iz+lkYSiBbEcUsC8FBsnUKZr4rruE0AarSljVDQ0ytoMETsf1QXt9PWcwmj/lAV1N6D+ITz3xcLHSgK3PUI4kp3ha5UAWWThxghMmefeD/GULjtZRqE8r8WbUVNb8xdKQel4mHMG2fMNaYyaZT4/a6GMLEd8QBHSBHpUqI1GrazBrAivQIx3LtLjqkYY02+HWlEl8HeUYO/7gfCyFqGrbXAHpb80OP07paBkMdie3OfIH5IupW7dM8N90ztKUtpRmm4cvtQ/Q/+YkLD96ETDQKw2sflTrax+kTb8NpBBP04RFw5yXBLnQ73lM3JhnpF89c+od6fahnzSRFU3JKHaKxli/ZSpbWj9n2F8YObd0f7Z9ZB8Ew8ePPj92ROXwgwGwxuM6htgsf4DXYXSX74ZynQAAAAASUVORK5CYII=">
+<script>
+(function(){
+  try {
+    // See readme.html: the guides honour which SIDE a theme sits on, not the
+    // theme itself, so opening one from Matrix does not flash a white page.
+    var SIDE = {light:'light', usa:'light', dawn:'light', spring:'light', summer:'light', winter:'light', autumn:'light', dark:'dark', thunderstorm:'dark', matrix:'dark', synthwave:'dark'};
+    var t = SIDE[localStorage.getItem('certcamel-theme')];
+    if (t) { document.documentElement.setAttribute('data-theme', t); }
+  } catch (e) { }
+})();
+</script>
+<style>
+:root{
+  color-scheme:light;
+  /* Soft grey rather than white: pure #fff panels on a near-white ground put
+     most of the screen at maximum brightness with nothing to rest on. --faint
+     darkened with it - at #8a93a4 it failed AA on the background. */
+  --bg:#e9ebf1; --glow-1:rgba(99,102,241,.14); --glow-2:rgba(168,85,247,.12);
+  --surface:rgba(255,255,255,.62); --surface-solid:#f7f8fb;
+  --border:rgba(17,24,39,.11); --border-strong:rgba(17,24,39,.18);
+  --text:#0b0d12; --muted:#4d5666; --faint:#606875;
+  --accent:#6366f1; --accent-2:#a855f7;
+  --amber:#b45309; --amber-bg:rgba(245,158,11,.10);
+  --green:#15803d; --green-bg:rgba(34,197,94,.10);
+  --blue:#1d4ed8; --blue-bg:rgba(59,130,246,.10);
+  --red:#b91c1c; --red-bg:rgba(239,68,68,.10);
+  --shadow:0 1px 2px rgba(17,24,39,.04), 0 10px 30px -14px rgba(17,24,39,.20);
+  --radius:16px; --radius-sm:11px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#808a9c;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#808a9c;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box;}
+body{margin:0; min-height:100vh; color:var(--text); background:var(--bg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background-image:radial-gradient(58rem 58rem at 6% -10%,var(--glow-1),transparent 60%),
+    radial-gradient(48rem 48rem at 104% 2%,var(--glow-2),transparent 55%);
+  background-attachment:fixed; -webkit-font-smoothing:antialiased; line-height:1.65;}
+
+.shell{max-width:min(96rem,96vw); margin:0 auto; padding:clamp(1.25rem,3vw,2.25rem) clamp(1rem,3vw,2.5rem) 5rem;}
+.masthead{display:flex; align-items:center; gap:1.5rem; padding:.2rem 0 1.15rem;
+  border-bottom:1px solid var(--border); margin-bottom:1.6rem;}
+.masthead .side{flex:1 1 0; min-width:0;}
+.masthead .actions{display:flex; align-items:center; gap:.5rem; justify-content:flex-end;}
+.brand{display:flex; align-items:center; gap:.75rem; flex:none;}
+/* The logo is a finished lockup, so it gets no tile or border around it - a box
+   around artwork that is already a composition reads as a box inside a box.
+   Height fixed, width follows. */
+.brand .mark{display:block; flex:none; height:2.75rem;}
+.brand .mark img{height:100%; width:auto; display:block;}
+.brand h1{font-size:1.65rem; line-height:1.1; letter-spacing:-.025em; font-weight:850;
+  margin:0; padding-bottom:.06em; white-space:nowrap;
+  background:linear-gradient(135deg,var(--text) 38%,var(--accent) 145%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;}
+.back{display:inline-flex; align-items:center; gap:.45rem; text-decoration:none; color:var(--muted);
+  font-size:.85rem; font-weight:550; padding:.4rem .8rem; border:1px solid var(--border);
+  border-radius:999px; background:var(--surface); backdrop-filter:blur(14px); white-space:nowrap;}
+.back:hover{color:var(--text); border-color:var(--border-strong);}
+.tag{font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; font-weight:700; color:var(--faint);}
+.lede{font-size:clamp(1rem,2vw,1.12rem); color:var(--muted); max-width:56rem; margin:0 0 2rem;}
+@media (max-width:56rem){
+  .masthead{flex-wrap:wrap; justify-content:space-between;}
+  .masthead .side{flex:0 0 auto;}
+  .brand{order:-1; flex-basis:100%; margin-bottom:.4rem;}
+}
+
+.cols{display:grid; grid-template-columns:15rem 1fr; gap:2.5rem; align-items:start;}
+@media (max-width:60rem){.cols{grid-template-columns:1fr;}}
+nav.toc{position:sticky; top:1.5rem; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); padding:1rem 1.1rem; box-shadow:var(--shadow);}
+nav.toc h2{font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);
+  margin:0 0 .6rem; font-weight:800;}
+nav.toc ol{list-style:none; margin:0; padding:0; counter-reset:t;}
+nav.toc li{counter-increment:t; margin:.25rem 0;}
+nav.toc a{display:block; text-decoration:none; color:var(--muted); font-size:.84rem; padding:.15rem 0;}
+nav.toc a::before{content:counter(t) ". "; color:var(--faint);}
+nav.toc a:hover{color:var(--accent);}
+
+article h2{font-size:1.3rem; font-weight:750; letter-spacing:-.015em; margin:2.8rem 0 .7rem;
+  scroll-margin-top:1.5rem;}
+article h2:first-child{margin-top:0;}
+article h3{font-size:1rem; font-weight:700; margin:1.6rem 0 .4rem;}
+article p{margin:.7rem 0; max-width:62rem;}
+article ul,article ol{margin:.7rem 0; padding-left:1.3rem; max-width:62rem;}
+article li{margin:.35rem 0;}
+strong{font-weight:700;}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.87em;
+  background:var(--surface-solid); border:1px solid var(--border); border-radius:6px; padding:.1rem .35rem;}
+pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.82rem; line-height:1.55;
+  overflow-x:auto; margin:.9rem 0; padding:.9rem 1.1rem; color:var(--muted);
+  border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
+pre code{background:none; border:none; padding:0; font-size:1em;}
+pre .c{color:var(--faint);}
+
+.tablewrap{overflow-x:auto; margin:1rem 0; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);}
+table{border-collapse:collapse; width:100%; font-size:.9rem;}
+th,td{text-align:left; padding:.65rem 1rem; border-bottom:1px solid var(--border); vertical-align:top;}
+thead th{font-size:.68rem; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); font-weight:800;}
+tbody tr:last-child td{border-bottom:none;}
+
+.callout{border:1px solid var(--border); border-left-width:4px; border-radius:var(--radius-sm);
+  padding:.85rem 1.1rem; margin:1.2rem 0; background:var(--surface); max-width:62rem;}
+.callout .h{font-weight:700; font-size:.92rem; margin-bottom:.15rem;}
+.callout p{margin:.3rem 0 0; font-size:.92rem;}
+.callout.warn{border-left-color:var(--amber); background:var(--amber-bg);} .callout.warn .h{color:var(--amber);}
+.callout.crit{border-left-color:var(--red); background:var(--red-bg);} .callout.crit .h{color:var(--red);}
+.callout.note{border-left-color:var(--blue); background:var(--blue-bg);} .callout.note .h{color:var(--blue);}
+.callout.good{border-left-color:var(--green); background:var(--green-bg);} .callout.good .h{color:var(--green);}
+
+.step{display:inline-block; font-size:.7rem; font-weight:800; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--accent); margin-bottom:.2rem;}
+footer{margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border);
+  color:var(--faint); font-size:.82rem;}
+</style>
+</head>
+<body>
+<div class="shell">
+<header class="masthead">
+  <span class="tag side">Windows Server</span>
+  <div class="brand">
+    <span class="mark">
+      <img src="assets/logo.png" alt="" width="244" height="256">
+    </span>
+    <h1>Cert Camel</h1>
+  </div>
+  <div class="side actions">
+    <a class="back" href="readme.html">Read me</a>
+    <a class="back" href="security.html">Security</a>
+  </div>
+</header>
+
+<p class="lede">Installing on a server that nobody is signed in to, where renewal has to run
+unattended and more than one person needs to open the console. One decision &mdash; which Windows
+account you are signed in as when you run setup &mdash; determines whether any of that works, and it
+cannot be changed afterwards from inside the program.</p>
+
+<div class="cols">
+
+<nav class="toc">
+  <h2>Steps</h2>
+  <ol>
+    <li><a href="#identity">The one decision</a></li>
+    <li><a href="#ask">Ask your systems team</a></li>
+    <li><a href="#login">Sign in as the service account</a></li>
+    <li><a href="#folder">Get the folder onto the server</a></li>
+    <li><a href="#setup">Run First Time Setup</a></li>
+    <li><a href="#verify">Prove the tasks are right</a></li>
+    <li><a href="#creds">Enter the credentials</a></li>
+    <li><a href="#https">A name and HTTPS</a></li>
+    <li><a href="#daily">Who can open it</a></li>
+    <li><a href="#never">What must never happen</a></li>
+    <li><a href="#handover">Handover checklist</a></li>
+    <li><a href="#trouble">When it breaks</a></li>
+  </ol>
+</nav>
+
+<article>
+
+<h2 id="identity">1. The one decision</h2>
+
+<p>Everything on this page follows from a single line, which appears in <code>setup.ps1</code> and
+again in <code>acme-lib.ps1</code>:</p>
+
+<pre><code>$userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name</code></pre>
+
+<p><strong>Whoever runs First Time Setup becomes the account that all four scheduled tasks run
+as.</strong> There is no prompt for this and no setting to change it afterwards. The program does not
+ask, because it has no way to verify a password you typed on somebody else's behalf.</p>
+
+<p>A second constraint arrives from the other direction. Credentials &mdash; your DNS API token, load
+balancer API passwords &mdash; are encrypted with Windows DPAPI, which ties them to <em>one Windows
+user on one machine</em>. The account that saves a credential is the only account that can ever read
+it back.</p>
+
+<div class="callout crit">
+  <div class="h">These two facts have to agree</div>
+  <p>Renewal runs as the task's account and needs to decrypt the DNS token. If the tasks run as
+  <code>svc-certcamel</code> but the credentials were saved by <em>you</em>, renewal fails at the DNS
+  step &mdash; and it fails <em>quietly</em>, months later, when a certificate first comes up for
+  renewal. Task Scheduler reports <strong>Ready</strong> the entire time.</p>
+</div>
+
+<p>Making them agree is simple: <strong>do the whole install signed in as the service
+account.</strong> Not as yourself, and not as whichever domain admin happens to be helping.</p>
+
+<h2 id="ask">2. Ask your systems team</h2>
+
+<p>Send this before you book the change window. The account has to exist before you touch the
+machine, and two of these are easy to forget and painful to discover live on a screen share.</p>
+
+<table>
+  <thead><tr><th>What to ask for</th><th>Why it matters</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>A service account, e.g. <code>svc-certcamel</code></td>
+      <td>It owns the scheduled tasks and the encrypted credentials, permanently.</td>
+    </tr>
+    <tr>
+      <td>Password set not to expire</td>
+      <td>Renewal is unattended. An expired password stops it with no warning.</td>
+    </tr>
+    <tr>
+      <td><strong>Local administrator on this VM</strong></td>
+      <td>Registering a task that runs while signed out needs elevation. Needed for setup only
+      &mdash; the tasks themselves run unelevated.</td>
+    </tr>
+    <tr>
+      <td><strong>Allowed to sign in over RDP</strong></td>
+      <td>You have to <em>be</em> this account to install. Service accounts are often denied
+      interactive logon by policy, which is precisely the thing that stops this install dead.</td>
+    </tr>
+    <tr>
+      <td><strong>&ldquo;Log on as a batch job&rdquo;</strong></td>
+      <td>Scheduled tasks need it. Usually granted implicitly &mdash; ask explicitly rather than find
+      out at 3:20 AM that it was not.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Nothing needs opening on the firewall. The console binds to <code>127.0.0.1</code> and is
+reachable only from the machine itself, over RDP. Renewal uses DNS-01 challenges, so it needs no
+inbound anything &mdash; only outbound HTTPS to your DNS provider and your certificate authority.</p>
+
+<h2 id="login">3. Sign in as the service account</h2>
+
+<p>RDP to the server <strong>as the service account itself</strong>. Not as yourself with a plan to
+switch over later.</p>
+
+<div class="callout warn">
+  <div class="h">The trap that silently ruins the install</div>
+  <p>If the service account is <em>not</em> a local administrator, right-click &rarr;
+  <strong>Run as administrator</strong> asks for admin credentials and then runs the program <em>as
+  that administrator</em>. <code>GetCurrent().Name</code> returns the admin, every task is registered
+  to the wrong account, and there is no error and nothing on screen to notice.</p>
+  <p>That is why local admin on the account matters. When the account is already an administrator,
+  elevation keeps its own identity.</p>
+</div>
+
+<p>Confirm who you are before going any further:</p>
+
+<pre><code>whoami</code></pre>
+
+<p>It must print the service account. If it prints you, stop and sign out.</p>
+
+<h2 id="folder">4. Get the folder onto the server</h2>
+
+<p>Two ways, and on a server the choice has a consequence worth a moment's thought.</p>
+
+<pre><code>git clone https://github.com/Isaiah63/CertCamel.git C:\CertCamel</code></pre>
+
+<p>A clone lets <strong>Settings &rarr; Update</strong> pull new versions in place, which is worth
+having on a machine you visit twice a year. It also skips the unblock step below, because the files
+never arrived through a browser. It does need git installed on the server, which is sometimes a
+conversation of its own.</p>
+
+<p>Otherwise download the release <code>.zip</code>, and <em>before</em> extracting it: right-click
+&rarr; Properties &rarr; tick <strong>Unblock</strong> &rarr; OK. Windows marks files that came from
+the internet and PowerShell refuses to run them. If you have already extracted it:</p>
+
+<pre><code>Get-ChildItem -Recurse C:\CertCamel | Unblock-File</code></pre>
+
+<div class="callout crit">
+  <div class="h">Not in a synced or redirected folder</div>
+  <p><code>C:\CertCamel</code> is fine. Not OneDrive, not a redirected Documents folder, not a
+  roaming profile path. The folder holds unencrypted private <em>certificate</em> keys, and a synced
+  folder copies them to somebody else's servers. Folder redirection is common on servers and easy to
+  miss &mdash; check where <code>C:\Users\svc-certcamel\Documents</code> actually resolves before
+  using anything beneath it.</p>
+</div>
+
+<h2 id="setup">5. Run First Time Setup</h2>
+
+<p>Right-click <strong>First Time Setup.bat</strong> &rarr; <strong>Run as administrator</strong>.</p>
+
+<p>Elevation is not optional here. Without it, task registration falls back to a mode that runs only
+while that user is signed in, and it does so with a warning that is easy to click past. Section
+<a href="#verify">6</a> is how you prove that did not happen to you.</p>
+
+<p>Setup asks whether to keep the page running. Say <strong>yes</strong>. On a server the alternative
+is a console that exists only while somebody has a window open, and is gone after every reboot until
+a human signs in and starts it again.</p>
+
+<p>It offers a fixed port for that. Take it &mdash; a pinned port is what makes the address
+predictable enough to write down in a runbook.</p>
+
+<h2 id="verify">6. Prove the tasks are right</h2>
+
+<p>Do not take the screen's word for it. Run this before moving on:</p>
+
+<pre><code>Get-ScheduledTask -TaskName 'Cert Camel Renew','SSL Cert Check',
+    'Cert Camel Monthly Report','Cert Camel Server' |
+  Select-Object TaskName,
+                @{n='RunsAs';   e={$_.Principal.UserId}},
+                @{n='LogonType';e={$_.Principal.LogonType}}</code></pre>
+
+<p>Every row must show:</p>
+
+<ul>
+  <li><strong>RunsAs</strong> &mdash; the service account. If it shows you, the elevation trap in
+  section <a href="#login">3</a> caught you. Sign in properly as the service account and run setup
+  again.</li>
+  <li><strong>LogonType</strong> &mdash; <code>S4U</code>. If it says <code>Interactive</code>, setup
+  was not elevated. Renewal will never fire while nobody is signed in, and Task Scheduler will still
+  show <strong>Ready</strong>.</li>
+</ul>
+
+<p>The third task really is called <code>SSL Cert Check</code> rather than
+<code>Cert Camel Check</code> &mdash; an older name that stuck.</p>
+
+<div class="callout note">
+  <div class="h">Why S4U rather than a stored password</div>
+  <p>S4U signs the account on without a password, so no password has to be stored anywhere to run
+  the tasks. The obvious worry is that a passwordless logon cannot reach DPAPI, and would therefore
+  fail to decrypt the DNS token at 3:20 AM. It can, and it does &mdash; that was tested rather than
+  assumed.</p>
+</div>
+
+<h2 id="creds">7. Enter the credentials</h2>
+
+<p>Open the console with <strong>Open Tracker.bat</strong>, still signed in as the service account,
+and add your DNS provider and any load balancer credentials under <strong>Settings</strong>.</p>
+
+<p>There is a detail here that is reassuring once you see it. <strong>The person at the keyboard
+never writes the credential &mdash; the server does.</strong> The page is a window onto a process
+already running as the service account, so anything saved through the console is encrypted as that
+account no matter who clicked the button. That is what makes section <a href="#daily">9</a>
+possible.</p>
+
+<p>Issue one certificate against <strong>staging</strong> before you finish. Settings &rarr;
+Certificate Authorities has the switch. Staging certificates are untrusted by browsers and free of
+rate limits, which makes them the right way to prove the DNS credential works while somebody is
+still watching.</p>
+
+<h2 id="https">8. A name and HTTPS</h2>
+
+<p>Optional, and worth doing on a shared server. By default the console is served over plain HTTP on
+<code>127.0.0.1</code>. Settings &rarr; General &rarr; <strong>Tracker address</strong> will issue a
+certificate for a name of your choosing and serve itself over HTTPS instead.</p>
+
+<p>The name resolves to <code>127.0.0.1</code> through the machine's hosts file &mdash; no public DNS
+record is needed or wanted. Read the warnings on that panel before ticking HSTS; they describe how to
+get back in if it goes wrong.</p>
+
+<h2 id="daily">9. Who can open it</h2>
+
+<p>This is the part most people picture incorrectly.</p>
+
+<p><strong>Installing</strong> had to happen as the service account. <strong>Opening the console day
+to day does not.</strong> Any <em>local administrator</em> on the server can sign in as themselves
+and use it, without ever knowing the service account's password.</p>
+
+<p>The token granting access to the API lives in <code>jobs\session.json</code>, and that file is
+locked to exactly three principals: <code>SYSTEM</code>, <code>BUILTIN\Administrators</code>, and the
+account running the server. A local administrator can read it. Anybody else cannot, and gets no
+console at all.</p>
+
+<p>For them the routine is simply: RDP in, double-click <strong>Open Tracker.bat</strong>. It detects
+the copy already running from the boot task, opens the browser at its address, and closes itself
+rather than starting a second server.</p>
+
+<div class="callout note">
+  <div class="h">Themes are per person, not shared</div>
+  <p>The theme is stored in the browser rather than on the server, so two administrators never
+  overwrite each other's choice &mdash; each keeps their own. It is also per address: the same person
+  opening <code>https://tracker.example.com:8787</code> and <code>http://127.0.0.1:8787</code> gets
+  two independent themes, which looks like a bug and is not.</p>
+</div>
+
+<h2 id="never">10. What must never happen</h2>
+
+<div class="callout crit">
+  <div class="h">Nobody re-runs First Time Setup as themselves</div>
+  <p>It re-registers <strong>all four tasks</strong> to whoever runs it. A colleague running it in
+  six months to &ldquo;repair&rdquo; something would silently move renewal onto their own account,
+  which then cannot decrypt <code>secrets.xml</code>. Renewal stops. Nothing reports an error until a
+  certificate expires.</p>
+  <p>Write it on the change ticket. If setup genuinely does need re-running &mdash; after moving the
+  folder, for instance &mdash; sign in as the service account first, exactly as on day one.</p>
+</div>
+
+<p>The same applies to <code>resources\setup.ps1 -RepairTasks</code>, which exists for the case where
+the folder moved and the tasks still point at the old path. Useful, and it must be run as the service
+account.</p>
+
+<h2 id="handover">11. Handover checklist</h2>
+
+<p>Everything on this list is something you can demonstrate on the screen share, which is what makes
+it the right place to stop.</p>
+
+<ul>
+  <li><code>whoami</code> printed the service account while you installed</li>
+  <li>All four tasks show the service account and <code>S4U</code></li>
+  <li>A staging certificate was issued end to end</li>
+  <li>The console is reachable after a reboot with nobody signed in</li>
+  <li>A second administrator has opened it as themselves</li>
+  <li>Alerts are configured and a test email arrived &mdash; on an unattended box, email is the only
+  thing that will tell you renewal has stopped</li>
+  <li>The folder is not in a synced or redirected path</li>
+  <li>The change ticket says: never re-run First Time Setup as anyone but the service account</li>
+</ul>
+
+<h2 id="trouble">12. When it breaks</h2>
+
+<table>
+  <thead><tr><th>What you see</th><th>What it is</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Tasks show <code>Interactive</code>, not <code>S4U</code></td>
+      <td>Setup was not elevated. Run it as administrator, signed in as the service account.</td>
+    </tr>
+    <tr>
+      <td>Tasks show the wrong account</td>
+      <td>Setup ran as somebody else &mdash; usually the elevation trap in section
+      <a href="#login">3</a>. Sign in as the service account and run setup again.</td>
+    </tr>
+    <tr>
+      <td>Renewal fails on the DNS credential</td>
+      <td>The credential was saved by a different account than the task runs as. Re-enter it through
+      the console while the server is running as the task's account.</td>
+    </tr>
+    <tr>
+      <td>Console is gone after a reboot</td>
+      <td>The <code>Cert Camel Server</code> task was not installed, or was declined during setup.
+      Run setup again and answer yes.</td>
+    </tr>
+    <tr>
+      <td>A colleague gets no console</td>
+      <td>They are not a local administrator, so they cannot read the session token. That is the
+      design rather than a fault.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;Not recognised as a cmdlet&rdquo; on a fresh extract</td>
+      <td>The archive was not unblocked before extracting. Run the <code>Unblock-File</code> line
+      from section <a href="#folder">4</a>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The run logs in <code>jobs\</code> carry the narrative of every scheduled run, including the ones
+nobody watched. <strong>Logs &rarr; Run logs</strong> in the console is the same thing with a reader
+attached.</p>
+
+</article>
+</div>
+
+<footer>
+  Cert Camel &mdash; this page covers the server-specific parts only. Certificates, renewal,
+  wildcards and deployment are in the <a href="readme.html">Read me</a>, and what the loopback
+  binding and the token actually protect is in <a href="security.html">Security</a>.
+</footer>
+
+</div>
+</body>
+</html>
