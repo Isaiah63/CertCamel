@@ -136,7 +136,7 @@ jobs:
           Write-Host "SARIF ok: $($check.runs[0].results.Count) result(s), $($check.runs[0].tool.driver.rules.Count) rule(s)"
 
       - name: Publish to the Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: psscriptanalyzer.sarif
           category: psscriptanalyzer
