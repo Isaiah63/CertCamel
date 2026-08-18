@@ -300,23 +300,54 @@ first symptom is an expired certificate.</p>
 <h2 id="not">6. What it does not do</h2>
 
 <ul>
-  <li>No telemetry, no analytics, no phoning home.</li>
-  <li>No CDN and no external fetch of any kind &mdash; the page loads nothing from the internet, so
-  it works on an isolated network. That includes these guides: they ship in the folder and are served
-  from it, which is why they are readable exactly when a DNS or TLS problem has broken everything
-  else.</li>
+  <li>No telemetry, no analytics, no phoning home. Nothing here runs on a timer and reports back,
+  and no request carries anything about you or your certificates.</li>
+  <li>No CDN &mdash; the page loads nothing from the internet, so it works on an isolated network.
+  That includes these guides: they ship in the folder and are served from it, which is why they are
+  readable exactly when a DNS or TLS problem has broken everything else. The one exception is
+  described below, and it only happens when you press a button.</li>
   <li>No build step and no package manager. What you download is what runs.</li>
   <li>Nothing that belongs to you is committed to git &mdash; domains, credentials, certificates and
   logs are all excluded, so the folder can be handed on clean.</li>
 </ul>
 
+<h3>The one outbound call, and when it happens</h3>
+
+<p><strong>Check for updates</strong> in Settings is the only thing here that reaches a host you did
+not configure, and it only reaches one when you press it. What it does depends on how this copy was
+installed:</p>
+
+<ul>
+  <li>If the folder is a <strong>git clone</strong>, it runs <code>git fetch</code> against whichever
+  remote the clone already has &mdash; the same host you cloned from, and nowhere else.</li>
+  <li>If it is <strong>not</strong> a clone &mdash; a ZIP download, or a machine with no git &mdash;
+  there is nothing to fetch, so it asks <code>api.github.com</code> for the version number of the
+  newest published release and compares it with the one in <code>VERSION</code>.</li>
+</ul>
+
+<p>That request is an ordinary unauthenticated GET. It sends no identifier, no domain list, no
+version of yours &mdash; the comparison happens here, on what comes back. GitHub learns what any web
+server learns from a request: that an IP asked. If that is one call too many, do not press the
+button; nothing else in the tool makes it, and no scheduled task ever will.</p>
+
+<p>The check is also pinned so it cannot sit and wait for a human. Git is run with prompting disabled
+and a stall timeout, and the release lookup times out in ten seconds &mdash; the page is served by a
+single-threaded loop, so anything that blocked there would take the whole console with it.</p>
+
 <h2 id="report">7. Reporting something</h2>
 
-<p>There is no public issue tracker yet. If you find a security problem, get in touch through
-wherever you obtained this, and please do that rather than posting it somewhere public.</p>
+<p><strong>Please do not open a public issue for a security problem.</strong> Use GitHub's private
+vulnerability reporting &mdash; the <em>Report a vulnerability</em> button on the repository's
+Security tab &mdash; which opens a thread only the maintainer can see. Ordinary bugs and questions
+are welcome as normal issues; this is only about the ones worth not announcing.</p>
+
+<p>Include the version from the <code>VERSION</code> file, your Windows and PowerShell versions, and
+what you did. <strong>Leave out real credentials, private keys and certificate bodies</strong>
+&mdash; Cert Camel masks those in its own logs on purpose, and a bug report should not undo that.</p>
 
 <p>This is a one-person beta project. There is no security team and no response-time promise, which
-is itself worth weighing before you deploy it somewhere that matters.</p>
+is itself worth weighing before you deploy it somewhere that matters. What is promised is that a
+report gets read and answered.</p>
 
 <footer>
   <p>Cert Camel is beta software, MIT licensed, and comes with no warranty.</p>
