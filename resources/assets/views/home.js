@@ -863,10 +863,15 @@
 
     if (!res.checkedAt) { return; }
 
+    // Side by side rather than stacked. A group is a short card - a couple of
+    // node rows and a deployment line - and one per row left most of the width
+    // empty. .wide still opts out of the 64rem card cap; the grid track is what
+    // sets the width now, and it keeps the right edge level with the table
+    // above, which is what .wide was for.
+    var grid = el('div', 'lbgrid');
+    box.appendChild(grid);
+
     (res.targets || []).forEach(function(t){
-      // .wide so it runs to the same right edge as the domains table above it.
-      // The default .card caps at 64rem, which left it visibly short of the
-      // table and made the page read as two columns of different lengths.
       var card = el('div', 'card wide lbgroup');
       card.appendChild(el('h4', null, t.label));
 
@@ -881,7 +886,7 @@
         card.appendChild(d);
       }
 
-      box.appendChild(card);
+      grid.appendChild(card);
     });
   }
 

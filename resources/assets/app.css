@@ -887,6 +887,22 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
   grid-template-columns:.9rem 6rem 5rem 1fr; border-top:1px solid var(--border);
   font-size:.85rem;}
 .lbgroup > .lbnode:first-of-type{border-top:none;}
+/* Load balancer groups, side by side rather than stacked.
+
+   Stacked and full width, a two-node group ran the whole 120rem of the content
+   area to show about a third of it - the trailing 1fr column in .lbnode handed
+   most of the row to a short version string.
+
+   Capped at 60rem rather than left as 1fr, which is the difference between this
+   and .cardrow above. Two groups still fill the row and keep the right edge
+   level with the domains table, which is why these cards were .wide in the
+   first place. But a single group - the common case for anyone with one pair -
+   would stretch across the whole page under 1fr, and 60rem lands it just under
+   the 64rem every other card on the page uses. */
+.lbgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(28rem,60rem));
+  gap:1.3rem; align-items:start;}
+.lbgrid > .card{margin:0; height:100%;}
+
 .lbname{font-weight:700; color:var(--text);}
 /* HAProxy's own node name - the thing that tells two nodes behind one address
    apart, so it reads as an identifier rather than prose. */
