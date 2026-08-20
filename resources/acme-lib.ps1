@@ -2341,6 +2341,31 @@ function Get-FallbackZone {
     return ($parts[-2..-1] -join '.')
 }
 
+# When the certificate on disk was actually issued.
+#
+# NOT the PEM file's timestamp, which records when this tool last WROTE the
+# file. A renewal the CA declines as unnecessary still rewrites it - Posh-ACME
+# hands back the existing certificate and the PEM is regenerated from it - so
+# the file time reports a certificate issued weeks ago as issued today.
+#
+# Falls back to the file time when the leaf cannot be read, which is what this
+# always was: a wrong-but-present answer beats an empty column.
+function Get-CertificateIssuedAt {
+    param([string]$CertDir, [string]$PemPath)
+
+    $leaf = Join-Path $CertDir 'cert.cer'
+    if (Test-Path $leaf) {
+        try {
+            $c = New-Object Security.Cryptography.X509Certificates.X509Certificate2 $leaf
+            try   { return $c.NotBefore.ToString('o') }
+            finally { $c.Dispose() }
+        }
+        catch { $null = $_ }   # unreadable leaf; the file time below still answers
+    }
+    if (Test-Path $PemPath) { return (Get-Item $PemPath).LastWriteTime.ToString('o') }
+    return $null
+}
+
 function Get-CertificateGroups {
     <#
       Turn the checker's results into one certificate per zone.
@@ -2420,6 +2445,7 @@ function Get-CertificateGroups {
                 deferredNames = @()
                 categories    = @()
                 notAfter      = $null
+                notAfterByHost = @{}
             }
         }
         $g = $groups[$zone]
@@ -2435,6 +2461,9 @@ function Get-CertificateGroups {
         if ($r.ok -and $r.notAfter) {
             $na = [datetime]$r.notAfter
             if (-not $g.notAfter -or $na -lt $g.notAfter) { $g.notAfter = $na }
+            # Kept per host as well: one zone can hold several certificates, and
+            # each is only as good as the soonest of ITS OWN names.
+            $g.notAfterByHost[([string]$hostName).ToLowerInvariant()] = $na
         }
 
         if ($r.PSObject.Properties['sans'] -and $r.sans) {
@@ -2598,11 +2627,29 @@ function Get-CertificateGroups {
             # the default or points at a profile that has since been removed.
             $ca = Get-CaProfile -Settings $Settings -CaId $caId
 
-            # A wildcard certificate has no live counterpart to measure - nothing
-            # serves "*.example.com" - so it borrows the zone's soonest expiry
-            # when there is one, purely so it sorts sensibly next to the others.
+            # Measured across THIS certificate's own names, not the zone's.
+            #
+            # Sharing a DNS zone does not mean sharing a certificate. The console
+            # has its own, and taking the zone's soonest expiry reported it as two
+            # days from expiry while it had months - because a load balancer host
+            # in the same zone did expire in two days. Right identity, borrowed
+            # date, and the page said it in red.
+            #
+            # A wildcard still borrows the zone's soonest: nothing serves
+            # "*.example.com", so there is no live counterpart to measure, and the
+            # borrowed value exists only so it sorts sensibly beside the rest.
             $notAfter = $null
-            if ($g -and $g.notAfter) { $notAfter = $g.notAfter.ToString('o') }
+            $ownNotAfter = $null
+            if ($g -and $g.notAfterByHost) {
+                foreach ($n in @($names)) {
+                    $nk = ([string]$n).ToLowerInvariant()
+                    if (-not $g.notAfterByHost.ContainsKey($nk)) { continue }
+                    $na = $g.notAfterByHost[$nk]
+                    if (-not $ownNotAfter -or $na -lt $ownNotAfter) { $ownNotAfter = $na }
+                }
+            }
+            if ($ownNotAfter)            { $notAfter = $ownNotAfter.ToString('o') }
+            elseif ($g -and $g.notAfter) { $notAfter = $g.notAfter.ToString('o') }
 
             # The apex rule changes what gets ISSUED, not what is already on
             # disk. Until this certificate is renewed, the old one still carries
@@ -2654,7 +2701,7 @@ function Get-CertificateGroups {
                 overridden    = [bool]($override -and $override.ContainsKey('sans') -and $override.sans)
                 notAfter      = $notAfter
                 hasLocalCert  = (Test-Path $pemPath)
-                issuedAt      = $(if (Test-Path $pemPath) { (Get-Item $pemPath).LastWriteTime.ToString('o') } else { $null })
+                issuedAt      = $(Get-CertificateIssuedAt -CertDir $certDir -PemPath $pemPath)
             }
         }
     }
