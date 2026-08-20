@@ -155,10 +155,30 @@
     var run   = new Date(renewTask.nextRun);
     if (isNaN(after) || isNaN(run)) { return null; }
 
-    // Bounded so a bad pair of dates cannot spin. A year of daily steps is far
-    // past any renewal window a certificate can have.
-    for (var i = 0; run < after && i < 400; i++) {
-      run.setDate(run.getDate() + 1);
+    /* Step by the task's own interval. A repeating trigger fires several times
+       between one StartBoundary and the next - every six hours by default - so
+       stepping a whole day would name a run up to eighteen hours after the one
+       that will really do the work.
+
+       repeatMinutes is absent on a task that does not repeat, and a day is the
+       right step there. */
+    var repeat = Number(renewTask.repeatMinutes);
+    var useRepeat = isFinite(repeat) && repeat > 0;
+
+    // Bounded so a bad pair of dates cannot spin. A year of steps is far past
+    // any renewal window a certificate can have, at either cadence.
+    var limit = useRepeat ? Math.ceil(525600 / repeat) : 400;
+    for (var i = 0; run < after && i < limit; i++) {
+      if (useRepeat) {
+        // Minutes, not setDate: an interval that divides into the day evenly
+        // keeps the wall clock anyway, and one that does not should drift the
+        // way the scheduler drifts it rather than the way a date walk would.
+        run = new Date(run.getTime() + repeat * 60000);
+      } else {
+        // Whole days move by wall clock, so a daily 03:20 task stays 03:20
+        // across a daylight-saving change instead of sliding to 02:20.
+        run.setDate(run.getDate() + 1);
+      }
     }
     return run < after ? null : run;
   };

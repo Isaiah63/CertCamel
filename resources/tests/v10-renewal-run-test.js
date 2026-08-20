@@ -71,5 +71,32 @@ check('boot trigger has no daily time', CertCamel.renewalRun('2026-08-20T14:26:4
       {registered:true, enabled:true, triggerType:'boot', nextRun:null}), 'null');
 check('unparseable dates', CertCamel.renewalRun('not-a-date', task), 'null');
 
+/* A repeating trigger fires several times between one StartBoundary and the
+   next, so the step has to be the repetition interval. Stepping a whole day
+   here would name a run up to eighteen hours after the one that does the work.
+   repeatMinutes is what Get-AutomationStatus reads off the trigger. */
+const sixHourly = (nextRun) => ({registered:true, enabled:true, triggerType:'daily',
+                                 nextRun, repeatMinutes:360});
+
+console.log('six-hourly: the window opens between two runs, so the NEXT one takes it');
+check('window 10:26 -> run 15:20 the same day',
+      local(CertCamel.renewalRun('2026-08-20T14:26:40Z', sixHourly('2026-08-20T03:20:00'))),
+      '8/20/2026, 3:20:00 PM');
+
+console.log('six-hourly: a window just after a run waits only to the next one');
+check('window 03:30 -> run 09:20 the same day',
+      local(CertCamel.renewalRun('2026-08-20T07:30:00Z', sixHourly('2026-08-20T03:20:00'))),
+      '8/20/2026, 9:20:00 AM');
+
+console.log('six-hourly: a window days out still lands on a real firing time');
+check('window 00:11 Oct 15 -> run 03:20 Oct 15',
+      local(CertCamel.renewalRun('2026-10-15T04:11:02Z', sixHourly('2026-08-20T03:20:00'))),
+      '10/15/2026, 3:20:00 AM');
+
+console.log('a task that does not repeat still steps by whole days');
+check('no repeatMinutes -> next day, same wall clock',
+      local(CertCamel.renewalRun('2026-08-20T14:26:40Z', daily('2026-08-20T03:20:00'))),
+      '8/21/2026, 3:20:00 AM');
+
 console.log(failed ? '\n' + failed + ' CHECK(S) FAILED' : '\nall checks passed');
 process.exit(failed ? 1 : 0);

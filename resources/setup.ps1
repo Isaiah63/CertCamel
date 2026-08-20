@@ -523,7 +523,7 @@ Write-Host "      Set up load balancers in Settings first, or renewal will issue
 Write-Host "      certificates that go nowhere." -ForegroundColor DarkGray
 Write-Host ""
 
-$wantRenew = Read-Host "      Register daily unattended renewal? (Y/N)"
+$wantRenew = Read-Host "      Register unattended renewal, every six hours? (Y/N)"
 
 if ($wantRenew -match '^[Yy]') {
     try {
@@ -532,8 +532,29 @@ if ($wantRenew -match '^[Yy]') {
 
         # 03:20 rather than on the hour: ACME rate limits are per-CA and shared
         # by everyone, and the top of the hour is where every naive scheduler
-        # piles up.
+        # piles up. The repeats inherit those twenty past.
+        #
+        # Every six hours rather than once a day, for one reason above the
+        # others: a run that fails has to be able to try again. A DNS provider
+        # blip or an unreachable load balancer at 03:20 used to mean the next
+        # attempt was twenty-four hours later; now it is six, and a certificate
+        # gets four chances a day instead of one.
+        #
+        # It also renews closer to the moment the authority's window opens.
+        # Renewal is refused before that moment, so a daily sweep waits an
+        # average of twelve hours after the window opens for no reason - and
+        # certificate lifetimes are getting shorter, which makes that lag
+        # matter more, not less. Nothing here polls the CA harder: the renewal
+        # check is an unauthenticated ARI request, which is not rate limited,
+        # and no order is placed until a certificate is genuinely due.
+        #
+        # PowerShell 5.1's New-ScheduledTaskTrigger has no -RepetitionInterval
+        # on a -Daily trigger, so the repetition is lifted off a throwaway
+        # -Once trigger. This is the documented way to do it, not a trick.
         $rTrigger = New-ScheduledTaskTrigger -Daily -At 3:20am
+        $rTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At 3:20am `
+            -RepetitionInterval (New-TimeSpan -Hours 6) `
+            -RepetitionDuration (New-TimeSpan -Hours 24)).Repetition
 
         $rSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
             -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries `
@@ -543,7 +564,7 @@ if ($wantRenew -match '^[Yy]') {
             -Settings $rSettings -Description 'Renews certificates the CA reports as due, deploys them, and verifies each load balancer is serving them.')
 
         Write-Host ""
-        Write-Host "      Registered. Runs daily at 3:20 AM." -ForegroundColor Green
+        Write-Host "      Registered. Runs every 6 hours, from 3:20 AM." -ForegroundColor Green
         Write-Host "      Try it safely first:" -ForegroundColor DarkGray
         Write-Host "        powershell -ExecutionPolicy Bypass -File `"$renewScript`" -WhatIfOnly" -ForegroundColor DarkGray
     }

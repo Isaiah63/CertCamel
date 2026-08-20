@@ -530,6 +530,20 @@
     return d.toLocaleString(undefined, {weekday:'short', hour:'numeric', minute:'2-digit'});
   }
 
+  /* "every 6 hours" from a repetition interval in minutes, or null when the
+     trigger does not repeat. Whole hours and whole minutes are spelled out
+     because those are the only shapes a schedule here actually takes; anything
+     else falls back to minutes rather than inventing a unit. */
+  function everyText(mins){
+    var m = Number(mins);
+    if (!isFinite(m) || m <= 0) { return null; }
+    if (m % 60 === 0) {
+      var h = m / 60;
+      return 'every ' + (h === 1 ? 'hour' : h + ' hours');
+    }
+    return 'every ' + m + (m === 1 ? ' minute' : ' minutes');
+  }
+
   function taskOf(a, key){
     var found = null;
     (a && a.tasks ? a.tasks : []).forEach(function(t){ if (t.key === key) { found = t; } });
@@ -579,7 +593,15 @@
       }
       else {
         var clock = clockOf(s.schedule);
-        when = clock ? 'daily ' + clock : 'scheduled';
+        /* A repeating trigger fires several times from one StartBoundary, so
+           "daily <clock>" would understate a task that runs four times a day.
+           The clock is still worth naming: it is where the repeats start from,
+           and it is the field somebody changes. */
+        var every = everyText(s.repeatMinutes);
+        if (every && clock)  { when = every + ', from ' + clock; }
+        else if (every)      { when = every; }
+        else if (clock)      { when = 'daily ' + clock; }
+        else                 { when = 'scheduled'; }
       }
       row.appendChild(el('span', 'v', when));
       row.title = s.detail || '';

@@ -1045,7 +1045,7 @@
       return box;
     }
 
-    toggle('al-scheduled-renewal', 'Renewal scheduled (the day before)',
+    toggle('al-scheduled-renewal', 'Renewal scheduled (before the run that does it)',
       'Sent the run before it happens: which certificate, which names, when, and which load ' +
       'balancers it will be pushed to. The window in which acting is still cheap.');
 

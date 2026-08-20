@@ -197,11 +197,12 @@ That reports what it would renew and stops.
 
 ## Email alerts
 
-Under Settings > Alerts, four independently switchable alerts:
+Under Settings > Alerts, five independently switchable alerts:
 
 | Alert | Fires when |
 |---|---|
 | Certificate expiring soon | A watched host crosses a configured threshold (default 30, 14, 7 days). Once per host per threshold, not on every check. |
+| Renewal scheduled | The run before a renewal happens: which certificate, which names, when, and which load balancers it will be pushed to. Sent once per renewal cycle, not once per run. |
 | Renewal succeeded | Issuance and every deployment check passed. |
 | Automated deployment failed | Anything on the unattended path did not fully succeed. The one that matters most — it is the only signal an unattended renewal has stopped working. |
 | Monthly summary | 1st of the month: everything due within 31 days, and anything currently failing. |
@@ -973,7 +974,7 @@ after the PC has been off. Only **one of the three can change anything**:
 
 | Task | Runs | What that run does |
 |---|---|---|
-| `Cert Camel Renew` | daily 03:20 | Renews what the CA says is due, deploys each one, verifies every node is serving it |
+| `Cert Camel Renew` | every 6 hours, from 03:20 | Renews what the CA says is due, deploys each one, verifies every node is serving it |
 | `SSL Cert Check` | daily 09:00 | Re-reads expiry dates. Never issues or deploys |
 | `Cert Camel Monthly Report` | daily 08:00 | Emails a summary on the 1st; does nothing on other days |
 
@@ -988,6 +989,20 @@ From there, right-click any of them for **Run**, **End**, **Disable** and
 **Properties**, where the Triggers tab holds the time. **The times are yours to
 change** — 03:20 is only a default, chosen because it is quiet and after most
 backup windows. Nothing in Cert Camel depends on those exact times.
+
+**An existing install keeps the schedule it was registered with.** Updating
+Cert Camel does not touch a task that already exists — `setup.ps1 -RepairTasks`
+deliberately preserves whatever schedule is there. To move an older install onto
+the six-hourly renewal, re-run `First Time Setup.bat` **as administrator** and
+answer yes when it offers to register unattended renewal.
+
+Renewal repeats **every six hours** from that start, so it also runs at 09:20,
+15:20 and 21:20. That is not about renewing sooner — a renewal is refused
+until the authority's window opens — it is so a run that fails has another
+chance the same day. A DNS provider blip at 03:20 used to mean the next attempt
+was twenty-four hours later. The repeat costs nothing at the authority: the
+check is an unauthenticated ARI request, which is not rate limited, and no
+order is placed until a certificate is genuinely due.
 
 Worth turning on while you are in there: **Enable All Tasks History**, in the
 right-hand Actions pane. It is a global Windows setting and it is **off by
@@ -1099,7 +1114,8 @@ Get-ScheduledTask -TaskName "Cert Camel Renew" | Select-Object -Expand Principal
 administrator to fix it.
 
 03:20 rather than the top of the hour because ACME rate limits are per-CA and
-shared by everyone, and every naive scheduler piles up on the hour.
+shared by everyone, and every naive scheduler piles up on the hour. The
+six-hourly repeats inherit those twenty past.
 
 ```powershell
 # Run one right now
@@ -1121,12 +1137,12 @@ powershell -ExecutionPolicy Bypass -File .\resources\renew-due.ps1 -WhatIfOnly
 The Home page reports what the scheduler actually has registered, so none of the
 above has to be taken on trust. The **Automation** box lists each service and
 when it runs, with an overall state — a list rather than a sentence, because the
-three run at three different times and any one-line summary of them is wrong:
+three run on three different schedules and any one-line summary of them is wrong:
 
 ```
 AUTOMATION                        On
-Renew and deploy       daily 3:20 AM
-Expiry check           daily 9:00 AM
+Renew and deploy   every 6 hours, from 3:20 AM
+Expiry check                    daily 9:00 AM
 Monthly summary email     not set up
 ```
 

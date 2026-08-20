@@ -664,7 +664,7 @@ hidden window, with <code>StartWhenAvailable</code> so they catch up after the P
 <div class="tablewrap"><table>
   <thead><tr><th>Task</th><th>Runs</th><th>What that run does</th></tr></thead>
   <tbody>
-    <tr><td><code>Cert Camel Renew</code></td><td>daily 03:20</td><td>Renews what the CA says is due,
+    <tr><td><code>Cert Camel Renew</code></td><td>every 6 hours, from 03:20</td><td>Renews what the CA says is due,
     deploys each one, verifies every node is serving it</td></tr>
     <tr><td><code>SSL Cert Check</code></td><td>daily 09:00</td><td>Re-reads expiry dates. Never
     issues or deploys anything</td></tr>
@@ -673,7 +673,8 @@ hidden window, with <code>StartWhenAvailable</code> so they catch up after the P
   </tbody>
 </table></div>
 <p>03:20 rather than the top of the hour because ACME rate limits are per-CA and shared by everyone,
-and the top of the hour is where every naive scheduler piles up.</p>
+and the top of the hour is where every naive scheduler piles up. The six-hourly repeats inherit
+those twenty past.</p>
 
 <h3>Seeing and changing them</h3>
 <p>These are ordinary Windows scheduled tasks &mdash; nothing about them is private to Cert Camel.
@@ -686,6 +687,16 @@ time.</p>
 depends on those exact times, and the Home page reads the schedule back out of Windows rather than
 assuming the defaults &mdash; so a time you change here shows up there, which is the quickest way
 to confirm the edit took.</p>
+<p>Renewal repeats <strong>every six hours</strong> from that start, so it also runs at 09:20, 15:20
+and 21:20. That is not about renewing sooner &mdash; a renewal is refused until the authority's
+window opens &mdash; it is so a run that fails has another chance the same day, instead of waiting
+twenty-four hours. It costs nothing at the authority: the check is an unauthenticated ARI request,
+which is not rate limited, and no order is placed until a certificate is genuinely due.</p>
+<p><strong>An existing install keeps the schedule it was registered with.</strong> Updating Cert
+Camel does not touch a task that already exists, and <code>setup.ps1 -RepairTasks</code>
+deliberately preserves whatever schedule is there. To move an older install onto the six-hourly
+renewal, re-run <code>First Time Setup.bat</code> <strong>as administrator</strong> and answer yes
+when it offers to register unattended renewal.</p>
 <div class="callout note">
   <div class="h">Turn on task history while you are in there</div>
   <p><strong>Enable All Tasks History</strong> in the right-hand Actions pane. It is a global
@@ -719,8 +730,8 @@ has registered. The <strong>Automation</strong> box lists each service and when 
 list rather than a sentence, because the three run at three different times and any one-line summary
 of them is wrong:</p>
 <pre><code>AUTOMATION                        On
-Renew and deploy       daily 3:20 AM
-Expiry check           daily 9:00 AM
+Renew and deploy   every 6 hours, from 3:20 AM
+Expiry check                    daily 9:00 AM
 Monthly summary email     not set up</code></pre>
 <p><code>On</code> refers to unattended renewal specifically &mdash; the only one of the three that
 can change a certificate. It reads <code>Off</code> when the task is registered but disabled,
@@ -754,12 +765,15 @@ it reports on the tasks, it does not administer them.</p>
 </div>
 
 <h2 id="alerts">13. Email alerts</h2>
-<p>Under Settings &gt; Alerts, four independently switchable alerts:</p>
+<p>Under Settings &gt; Alerts, five independently switchable alerts:</p>
 <div class="tablewrap"><table>
   <thead><tr><th>Alert</th><th>Fires when</th></tr></thead>
   <tbody>
     <tr><td>Certificate expiring soon</td><td>A watched host crosses a configured threshold
     (default 30, 14, 7 days). Once per host per threshold, not on every check.</td></tr>
+    <tr><td>Renewal scheduled</td><td>The run before a renewal happens: which certificate, which
+      names, when, and which load balancers it will be pushed to. Sent once per renewal cycle, not
+      once per run.</td></tr>
     <tr><td>Renewal succeeded</td><td>Issuance and every deployment check passed.</td></tr>
     <tr><td>Automated deployment failed</td><td>Anything on the unattended path did not fully
     succeed &mdash; the one that matters most, since it is the only signal an unattended renewal

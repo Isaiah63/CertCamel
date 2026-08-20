@@ -890,7 +890,7 @@ function Get-AutomationStatus {
                 level = $def.level; detail = $def.detail
                 registered = $false; enabled = $false; state = 'unknown'
                 nextRun = $null; lastRun = $null; lastResult = $null
-                schedule = $null; triggerType = $null; pathMatches = $true; commandPath = $null
+                schedule = $null; triggerType = $null; repeatMinutes = $null; pathMatches = $true; commandPath = $null
             }
         }
         return $out
@@ -905,7 +905,7 @@ function Get-AutomationStatus {
             level = $def.level; detail = $def.detail
             registered = $false; enabled = $false; state = 'not registered'
             nextRun = $null; lastRun = $null; lastResult = $null
-            schedule = $null; triggerType = $null; pathMatches = $true; commandPath = $null
+            schedule = $null; triggerType = $null; repeatMinutes = $null; pathMatches = $true; commandPath = $null
         }
 
         $task = $null
@@ -936,6 +936,25 @@ function Get-AutomationStatus {
                             default { 'other' }
                         }
                     }
+
+                    # A repeating trigger fires several times from one
+                    # StartBoundary, so the time of day alone understates it -
+                    # "daily 3:20 AM" for a task that actually runs four times a
+                    # day. Reported in minutes, which is what the page needs to
+                    # work out when a renewal will really happen: it steps from
+                    # the next run by this interval until the authority's window
+                    # has opened, and stepping by a day would overshoot.
+                    #
+                    # XmlConvert reads the ISO 8601 duration the scheduler
+                    # stores ("PT6H") without a parser of our own.
+                    if ($tr.Repetition -and $tr.Repetition.Interval) {
+                        try {
+                            $entry.repeatMinutes = [int]([Xml.XmlConvert]::ToTimeSpan(
+                                [string]$tr.Repetition.Interval)).TotalMinutes
+                        }
+                        catch { $null = $_ }   # unreadable interval: the page falls back to the plain schedule
+                    }
+
                     if ($tr.StartBoundary) { $entry.schedule = [string]$tr.StartBoundary; break }
                 }
 
