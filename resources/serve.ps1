@@ -2322,7 +2322,26 @@ function Test-TlsServerHandshake {
         if (-not $client.ConnectAsync('127.0.0.1', $listener.LocalEndpoint.Port).Wait(5000)) {
             return $false
         }
-        $server = $listener.AcceptTcpClient()
+        # The peer has to be the client this function created. The listener sits
+        # on an ephemeral loopback port for only a few milliseconds, but any
+        # local process could reach it first, and a handshake against somebody
+        # else's socket answers a different question than the one being asked:
+        # it would report a working certificate as unusable and drop the server
+        # to plain HTTP. Anything that is not our own client is closed and the
+        # accept retried, bounded so a process connecting in a loop cannot hold
+        # startup here. Our own connection is already queued by the time
+        # ConnectAsync has completed, so a bounded retry always reaches it.
+        $server = $null
+        for ($attempt = 0; $attempt -lt 4 -and -not $server; $attempt++) {
+            $accepted = $listener.AcceptTcpClient()
+            if ($accepted.Client.RemoteEndPoint.ToString() -eq $client.Client.LocalEndPoint.ToString()) {
+                $server = $accepted
+            }
+            else {
+                try { $accepted.Close() } catch { $null = $_ }   # not our client, and the retry is what matters
+            }
+        }
+        if (-not $server) { return $false }
 
         # Both sockets get a deadline before either end starts a handshake.
         # AuthenticateAsClient takes no timeout and blocks on a read, so when the
