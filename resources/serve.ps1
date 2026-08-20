@@ -2310,6 +2310,16 @@ function Test-TlsServerHandshake {
       is a script block, and a script block invoked on a .NET thread-pool thread
       has no runspace to run in. So the server half is the one that goes async.
     #>
+    # The validation callback below declares four parameters and uses none of
+    # them, which PSReviewUnusedParameter reports four times. The signature is
+    # not ours to shorten - it is .NET's RemoteCertificateValidationCallback -
+    # and ignoring every argument is the entire point: both ends of that socket
+    # are this process, so there is no peer to make a trust decision about.
+    #
+    # Suppressed here rather than excluded in PSScriptAnalyzerSettings.psd1, so
+    # the rule keeps reporting genuinely unused parameters everywhere else.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
+        Justification = 'Fixed RemoteCertificateValidationCallback signature; the callback exists to ignore its arguments.')]
     param([Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
 
     $listener = $null; $client = $null; $server = $null
