@@ -568,7 +568,8 @@ proxying on 80 and 443 keeps answering everyone exactly as it did before.</p>
 </div>
 <p>One more, about Cert Camel rather than about the API: it <strong>retries on a schedule with a
 stored password</strong>. Rotate the credential on the load balancer without updating it here, and
-the 03:20 renewal produces failed logins against every node until somebody notices. Anything that
+unattended renewal produces failed logins against every node until somebody notices &mdash; every
+six hours, not once a day, so a ban threshold arrives sooner than you might expect. Anything that
 bans on repeated failures will duly ban Cert Camel, and keep it banned after you have fixed the
 password &mdash; so exempt its address from the ban rather than discovering this at four in the
 morning.</p>
