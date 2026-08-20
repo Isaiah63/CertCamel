@@ -29,7 +29,7 @@ Get-ChildItem *-test.js | ForEach-Object {
 ```
 
 Each prints what it found rather than asserting silently, so the output is meant
-to be read. The newer suites (`v7`, `v8`) also exit non-zero on failure, so they
+to be read. The newer suites (`v7`, `v8`, `v9`, `v10`) also exit non-zero on failure, so they
 can be checked mechanically; the older ones report `all errors: none` as their
 pass condition and rely on being read — anything else there, including a
 `TypeError`, is a failure.
@@ -47,6 +47,8 @@ pass condition and rely on being read — anything else there, including a
 | `v6-loadbalancers-test.js` | The Load balancers view: node status, certificates grouped by what serves them, and a certificate deployed to a crt-list no frontend reads |
 | `v7-renewal-split-test.js` | Scheduled vs manual renewal across the tiles, callout and group headers; the console certificate renewing without the deployment picker; assignment reachable from the row menu |
 | `v8-guide-links-test.js` | Every in-app link into a guide resolves to an anchor that actually exists |
+| `v9-update-panel-test.js` | The Update panel, including that a check which could not run never reports as up to date |
+| `v10-renewal-run-test.js` | When a certificate actually renews: the next scheduled run at or after the CA's window opens, across a daylight-saving change, and the cases where that is not knowable |
 
 ## How they work
 
@@ -67,6 +69,11 @@ Three things worth knowing before writing another:
 - `TZ=America/New_York` matters for `v5`, which asserts that a UTC renewal
   window renders in local time. On a machine already in Eastern it passes
   either way, so do not read a pass there as proof the conversion works.
+  `v10` sets `TZ` itself rather than relying on the caller, because every
+  assertion in it is about local wall-clock scheduling.
+- **`v10` needs no jsdom.** It pulls `CC.renewalRun` straight out of
+  `assets/app.js` and runs it, so it works before `npm install` has been near
+  this folder - which also means it keeps working if the jsdom install breaks.
 
 ## Dependencies
 

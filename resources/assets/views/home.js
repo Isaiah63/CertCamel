@@ -6,7 +6,7 @@
   "use strict";
   var CC = window.CertCamel;
   var el = CC.el, api = CC.api, daysUntil = CC.daysUntil, fmtDate = CC.fmtDate, ago = CC.ago;
-  var fmtDateTime = CC.fmtDateTime;
+  var fmtDateTime = CC.fmtDateTime, fmtTime = CC.fmtTime;
   var RENEW_DAYS = CC.RENEW_DAYS, STALE_DAYS = CC.STALE_DAYS;
 
   var UNCATEGORIZED = 'Uncategorized';
@@ -307,9 +307,20 @@
         var status = el('td');
         var due = scheduledFor(r);
         if (due) {
-          var auto = el('span', 'st auto', 'Renews ' + fmtDate(due));
-          auto.title = 'Renewed automatically by Cert Camel, from ' + new Date(due).toLocaleString() +
-                       '. The certificate authority sets this window and it can move.';
+          // The run, not the window. They can be a day apart: the window opens
+          // at whatever hour the CA chose, and nothing happens until the next
+          // unattended sweep after it.
+          var run  = renewalRunFor(r.raw.host);
+          var auto = el('span', 'st auto',
+            run ? 'Renews ' + fmtDate(run) + ', ' + fmtTime(run)
+                : 'Renews ' + fmtDate(due));
+          auto.title = run
+            ? 'Renews ' + new Date(run).toLocaleString() +
+              ' - the next scheduled run after the certificate authority opens ' +
+              'the window, which it does at ' + new Date(due).toLocaleString() +
+              '. The authority sets that window and it can move.'
+            : 'Renewed automatically by Cert Camel, from ' + new Date(due).toLocaleString() +
+              '. The certificate authority sets this window and it can move.';
           status.appendChild(auto);
         } else {
           status.appendChild(el('span', 'st ' + r.state, LABEL[r.state]));
@@ -419,6 +430,17 @@
      rendered rows instead and looked right in isolation, but the table is
      rebuilt on every state refresh - so the badges reverted moments later. */
   var lastForecast = null;
+
+  /* The renew task, cached beside the forecast for the same reason: the table is
+     rebuilt on every state refresh, and the run time is half of what the badges
+     now say. Without it they fall back to naming the window. */
+  var lastRenewTask = null;
+
+  // When Cert Camel will actually renew this host's certificate, as opposed to
+  // when the CA's window opens. Null when that is not knowable.
+  function renewalRunFor(host){
+    return CC.renewalRun(scheduledRenewalFor(host), lastRenewTask);
+  }
 
   /* The single rule the row badges, the tiles, the callout and the group
      headers all ask, so they cannot drift apart again - which is exactly what
@@ -654,9 +676,18 @@
       if (c.due) {
         b.appendChild(el('div', 'w', 'Due now — ' + (c.reason || 'the CA says so')));
       } else if (c.renewAfter) {
-        // The full local timestamp, not just a date: "renews Oct 4" does not say
-        // whether that is tonight or tomorrow morning where you are sitting.
-        b.appendChild(el('div', 'd', fmtDateTime(c.renewAfter)));
+        // Two separate facts, and conflating them was the bug. The CA's window
+        // opening is a floor - nothing runs at that moment - and the run is when
+        // this tool acts on it. Showing only the first read as an appointment.
+        var run = CC.renewalRun(c.renewAfter, lastRenewTask);
+        if (run) {
+          b.appendChild(el('div', 'd', 'Renews ' + fmtDateTime(run)));
+          b.appendChild(el('div', 'g', 'CA window opens ' + fmtDateTime(c.renewAfter)));
+        } else {
+          // No usable schedule to work from, so the window is all that can be
+          // said honestly - naming a run time would be inventing one.
+          b.appendChild(el('div', 'd', 'CA window opens ' + fmtDateTime(c.renewAfter)));
+        }
       } else {
         b.appendChild(el('div', 'd', 'Renewal date not known yet'));
       }
@@ -743,6 +774,7 @@
 
       // Cached for the domain table, which renders before this returns. The
       // re-render is what makes the badges pick it up on the first paint too.
+      lastRenewTask = taskOf(a, 'renew');
       if (res.forecast && !lastForecast) { lastForecast = res.forecast; render(); }
       else { lastForecast = res.forecast; }
     });

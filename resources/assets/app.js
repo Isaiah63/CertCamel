@@ -119,6 +119,50 @@
       hour:'numeric', minute:'2-digit', timeZoneName:'short'
     });
   };
+  // Just the clock part, for places already carrying the date.
+  CertCamel.fmtTime = function(iso){
+    var d = new Date(iso);
+    if (isNaN(d)) { return ''; }
+    return d.toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
+  };
+
+  /* When Cert Camel will ACTUALLY renew a certificate.
+
+     Not the same question as renewAfter, and the difference is a whole day on a
+     real certificate here. renewAfter is Posh-ACME's copy of the ARI
+     suggestedWindow.START (Update-PAOrder.ps1) - the earliest the CA will allow
+     a renewal, a floor rather than an appointment. Nothing runs at that moment.
+     Renewal happens on the next unattended sweep at or after it.
+
+     So: start at the renew task's next run and step a day at a time until the
+     window has opened. A window opening at 10:26 with the task at 03:20 renews
+     the FOLLOWING morning, not that day - which is what the scheduled-renewal
+     email has always said and the pages did not.
+
+     Stepping with setDate rather than adding 86400000 ms: the task fires at a
+     wall-clock time, so it stays 03:20 across a daylight-saving change, and
+     fixed-millisecond arithmetic would drift it by an hour.
+
+     Returns null when the answer is not knowable - no forecast, or a renew task
+     that is missing, disabled, or not on a daily trigger. Callers fall back to
+     showing the window instead of inventing a time. */
+  CertCamel.renewalRun = function(renewAfterIso, renewTask){
+    if (!renewAfterIso || !renewTask) { return null; }
+    if (!renewTask.registered || !renewTask.enabled) { return null; }
+    if (renewTask.triggerType !== 'daily' || !renewTask.nextRun) { return null; }
+
+    var after = new Date(renewAfterIso);
+    var run   = new Date(renewTask.nextRun);
+    if (isNaN(after) || isNaN(run)) { return null; }
+
+    // Bounded so a bad pair of dates cannot spin. A year of daily steps is far
+    // past any renewal window a certificate can have.
+    for (var i = 0; run < after && i < 400; i++) {
+      run.setDate(run.getDate() + 1);
+    }
+    return run < after ? null : run;
+  };
+
   CertCamel.ago = function(iso){
     var mins = Math.floor((new Date() - new Date(iso)) / 60000);
     if (mins < 1)    return 'just now';

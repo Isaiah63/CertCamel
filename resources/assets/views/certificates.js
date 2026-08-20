@@ -7,9 +7,58 @@
   "use strict";
   var CC = window.CertCamel;
   var el = CC.el, api = CC.api, daysUntil = CC.daysUntil, fmtDate = CC.fmtDate, ago = CC.ago;
+  var fmtTime = CC.fmtTime, fmtDateTime = CC.fmtDateTime;
   var RENEW_DAYS = CC.RENEW_DAYS;
 
   function certDays(c){ return c.notAfter ? daysUntil(c.notAfter) : null; }
+
+  /* The renewal forecast and the renew task, for the same "when does this
+     actually renew" answer the Home page gives. Fetched once per view render
+     rather than shared with Home: the two views load independently, and a stale
+     cache would be worse than a second cheap request.
+
+     Held at module scope because the table is rebuilt on every state refresh and
+     on every finished job, so the answer has to survive a re-render. */
+  var lastForecast = null, lastRenewTask = null;
+
+  // The forecast keys on certId, which is what this table is a row per - so no
+  // host matching is needed here, unlike the Home page's domain rows.
+  function renewalRunForCert(certId){
+    if (!lastForecast || !lastForecast.considered) { return null; }
+    var after = null;
+    lastForecast.considered.forEach(function(e){
+      if (e && e.certId === certId && e.renewAfter && !e.due) { after = e.renewAfter; }
+    });
+    return CC.renewalRun(after, lastRenewTask);
+  }
+
+  /* Asked for once per page load, not once per render: render() runs again on
+     every finished job and every state refresh, and re-fetching from inside it
+     is how this turned into a render -> fetch -> render loop. */
+  var forecastRequested = false;
+
+  /* True while render() is building the view.
+
+     The stubbed XHR in the DOM suites answers SYNCHRONOUSLY, so this callback
+     can land in the middle of the render that started it. Calling render() again
+     from there re-entered a half-built view - it cleared the host element the
+     outer call was still appending to. Nothing needs re-rendering in that case
+     anyway: the fetch is kicked before the table is built, so the outer render
+     reads the values this just set. */
+  var rendering = false;
+
+  function loadRenewalForecast(){
+    if (forecastRequested) { return; }
+    forecastRequested = true;
+    api('GET', '/api/automation', null, function(err, res){
+      if (err || !res) { return; }          // the table is still correct without it
+      var a = res.automation || {};
+      lastRenewTask = null;
+      (a.tasks || []).forEach(function(t){ if (t.key === 'renew') { lastRenewTask = t; } });
+      lastForecast = res.forecast || null;
+      if (!rendering) { render(); }
+    });
+  }
 
   /* Both download entry points - the row menu and the detail card - go through
      here. It used to be an <a href> in each place with the token on the query
@@ -216,6 +265,11 @@
   }
 
   function render(){
+    rendering = true;
+    try { renderInner(); } finally { rendering = false; }
+  }
+
+  function renderInner(){
     // The menu lives on document.body, so a re-render (a finished job, a state
     // refresh) would otherwise strip its trigger out of the table and leave the
     // menu floating with nothing behind it.
@@ -240,6 +294,9 @@
     host.appendChild(head);
 
     host.appendChild(buildDomainsEditor(editBtn));
+
+    // Late-arriving, and the table renders correctly without it.
+    loadRenewalForecast();
 
     var state = CC.state;
     var certs = (state && state.certs) || [];
@@ -358,7 +415,25 @@
       if (c.caInherited) { caCell.appendChild(el('div', 'mini', 'default')); }
       tr.appendChild(caCell);
 
-      tr.appendChild(el('td', 'dim', c.notAfter ? fmtDate(c.notAfter) : '—'));
+      /* Expiry to the minute, and the renewal underneath it. A date alone does
+         not say whether "expires Aug 22" is tonight or tomorrow evening, and the
+         renewal line is the answer to the question the expiry always prompts:
+         is anything going to do something about it. Same pairing the Home page
+         row badges use, so the two pages cannot tell different stories. */
+      var expCell = el('td', 'dim');
+      if (c.notAfter) {
+        expCell.appendChild(el('div', null, fmtDate(c.notAfter) + ', ' + fmtTime(c.notAfter)));
+      } else {
+        expCell.appendChild(el('div', null, '\u2014'));
+      }
+      var certRun = c.external ? null : renewalRunForCert(c.certId);
+      if (certRun) {
+        var rn = el('div', 'mini renews', 'Renews ' + fmtDate(certRun) + ', ' + fmtTime(certRun));
+        rn.title = 'Renews ' + certRun.toLocaleString() +
+                   ' - the next scheduled run after the certificate authority opens the window.';
+        expCell.appendChild(rn);
+      }
+      tr.appendChild(expCell);
 
       var d = el('td', 'n days', days === null ? '—' : days + ' d');
       if (days !== null && days < 0)                { tr.className = 'gone'; }
@@ -464,12 +539,16 @@
     }
     grid.appendChild(fact('Covers', (c.names || []).join(', ')));
     grid.appendChild(fact('Issuer', c.caLabel || '—'));
-    grid.appendChild(fact('Expires', c.notAfter ? new Date(c.notAfter).toLocaleDateString() : '—'));
+    grid.appendChild(fact('Expires', c.notAfter
+      ? fmtDate(c.notAfter) + ', ' + fmtTime(c.notAfter) : '—'));
     grid.appendChild(fact('Days left', days === null ? '—' : String(days),
                           (days !== null && days <= 14) ? 'bad' : ''));
+    var consoleRun = c.external ? null : renewalRunForCert(c.certId);
     grid.appendChild(fact('Renewal',
       c.external ? 'NOT renewed here — this certificate is marked managed elsewhere'
-                 : 'Automatic. Renewed and applied without anything to press.',
+                 : (consoleRun
+                     ? 'Automatic, next on ' + fmtDateTime(consoleRun) + '.'
+                     : 'Automatic. Renewed and applied without anything to press.'),
       c.external ? 'bad' : 'good'));
     card.appendChild(grid);
 

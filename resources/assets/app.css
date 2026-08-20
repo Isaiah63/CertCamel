@@ -1003,5 +1003,11 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 /* A .mini line that is telling you to do something, rather than just adding
    detail. Amber because it is a "this needs a renewal" nudge, not a fault. */
 .mini.warnline{color:var(--amber); font-weight:600;}
+/* The renewal line under an expiry date. Blue, matching .st.auto and the
+   "Renews itself" tile, because it carries the same meaning everywhere: this is
+   scheduled and nobody has to act. Deliberately not a pill - it sits inside a
+   table cell under the date, where a second badge would crowd the row. The
+   margin overrides .mini's, which is spaced for standalone paragraphs. */
+.mini.renews{margin:.15rem 0 0; color:var(--blue); font-weight:600;}
 .hidden{display:none !important;}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
