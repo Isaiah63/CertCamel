@@ -2273,10 +2273,93 @@ $script:TlsResolveEvery = 120
 $script:TlsResolvedAt   = $null
 $script:TlsReloadFailed = $null
 
+# A single failed handshake is normally a browser opening a speculative
+# connection and hanging up, which is why the accept loop swallows it. A RUN of
+# them with no success in between is a different thing entirely: a certificate
+# that loaded and cannot serve. Counted so that case can reach the log, since
+# nothing else in it would say so.
+$script:TlsHandshakeFails    = 0
+$script:TlsHandshakeLoggedAt = $null
+$script:TlsHandshakeAlertAt  = 5
+
 # Read once at startup rather than per response. -NoTls implicitly disables it
 # too: that switch exists to get the console back when TLS is the problem, and a
 # recovery mode that still sent HSTS would be no recovery at all.
 $script:HstsEnabled = [bool]($script:Web.hsts) -and -not $NoTls
+
+function Test-TlsServerHandshake {
+    <#
+      Prove a certificate can complete a server handshake, rather than trusting
+      that it loaded.
+
+      HasPrivateKey is not that proof. A PFX can load, report a private key, and
+      still be unusable by schannel - which is what a boot-time S4U start
+      produces when no user profile has been loaded. The startup line then
+      announces HTTPS while every connection dies mid-handshake, and the
+      connection-level catch in the accept loop swallows the reason, so the log
+      of a server that cannot serve one page is identical to a healthy one.
+
+      So: one real handshake against ourselves on a throwaway loopback port.
+      Milliseconds, once per candidate certificate.
+
+      The client half accepts any certificate deliberately. It is not a trust
+      decision - both ends are this process, and the question is whether the key
+      can be used at all, not whether the name matches.
+
+      The client half also has to stay on THIS thread. Its validation callback
+      is a script block, and a script block invoked on a .NET thread-pool thread
+      has no runspace to run in. So the server half is the one that goes async.
+    #>
+    param([Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
+
+    $listener = $null; $client = $null; $server = $null
+    $serverSsl = $null; $clientSsl = $null
+    try {
+        $listener = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+
+        $client = New-Object Net.Sockets.TcpClient
+        if (-not $client.ConnectAsync('127.0.0.1', $listener.LocalEndpoint.Port).Wait(5000)) {
+            return $false
+        }
+        $server = $listener.AcceptTcpClient()
+
+        # Both sockets get a deadline before either end starts a handshake.
+        # AuthenticateAsClient takes no timeout and blocks on a read, so when the
+        # server half cannot authenticate - the exact case this function exists
+        # to detect - the client would otherwise wait forever and hang startup,
+        # which is a worse failure than the one being tested for. The underlying
+        # NetworkStream honours these and throws, which the catch turns into the
+        # $false this is asking about. Three seconds is enormous for a handshake
+        # between two sockets in one process on loopback.
+        $client.ReceiveTimeout = 3000
+        $client.SendTimeout    = 3000
+        $server.ReceiveTimeout = 3000
+        $server.SendTimeout    = 3000
+
+        $serverSsl  = New-Object Net.Security.SslStream($server.GetStream(), $false)
+        $serverTask = $serverSsl.AuthenticateAsServerAsync(
+            $Certificate, $false, [Net.SecurityProtocolType]::Tls12, $false)
+
+        $clientSsl = New-Object Net.Security.SslStream(
+            $client.GetStream(), $false, { param($a, $b, $c, $d) $true })
+        $clientSsl.AuthenticateAsClient('localhost')
+
+        # Wait throws if the server half faulted, and the catch turns that into
+        # $false - which is the answer either way.
+        return $serverTask.Wait(5000)
+    }
+    catch { return $false }
+    finally {
+        # Teardown of a throwaway test rig: a failure closing any of it says
+        # nothing about whether the handshake worked, which is already decided.
+        if ($clientSsl) { try { $clientSsl.Dispose() } catch { $null = $_ } }
+        if ($serverSsl) { try { $serverSsl.Dispose() } catch { $null = $_ } }
+        if ($client)    { try { $client.Close()      } catch { $null = $_ } }
+        if ($server)    { try { $server.Close()      } catch { $null = $_ } }
+        if ($listener)  { try { $listener.Stop()     } catch { $null = $_ } }
+    }
+}
 
 if ($script:Web.https -and -not $NoTls) {
     $match = Find-CertificateForHost -HostName $script:Web.hostname
@@ -2292,39 +2375,73 @@ if ($script:Web.https -and -not $NoTls) {
             # EphemeralKeySet would be tidier still and must NOT be used -
             # schannel cannot do server authentication with an ephemeral key, so
             # every handshake would fail.
-            $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
-            try {
-                $script:TlsCert = New-Object Security.Cryptography.X509Certificates.X509Certificate2(
-                    $match.pfx, $script:PfxPassword, $flags)
-            }
-            catch {
-                # Under the startup task the logon is S4U and the user profile
-                # may not be loaded, which leaves no per-user key store to write
-                # into. MachineKeys needs no profile.
-                $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::MachineKeySet
-                $script:TlsCert = New-Object Security.Cryptography.X509Certificates.X509Certificate2(
-                    $match.pfx, $script:PfxPassword, $flags)
+            #
+            # Each store is made to prove itself with a real handshake instead of
+            # being chosen by whether loading threw. Loading is not the step that
+            # fails: under a boot-time S4U start there is no loaded user profile,
+            # and UserKeySet can hand back a certificate that reports a private
+            # key and still cannot serve, so a fallback keyed on a load exception
+            # never fires. Testing the capability is also indifferent to WHY a
+            # store does not work, including reasons not anticipated here.
+            $rejected = @()
+            foreach ($flags in @(
+                [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet,
+                [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::MachineKeySet)) {
+
+                $candidate = $null
+                try {
+                    $candidate = New-Object Security.Cryptography.X509Certificates.X509Certificate2(
+                        $match.pfx, $script:PfxPassword, $flags)
+                }
+                catch {
+                    $rejected += "$flags could not load ($(($_.Exception.Message -split "`n")[0].Trim()))"
+                    continue
+                }
+
+                if ($candidate.HasPrivateKey -and (Test-TlsServerHandshake -Certificate $candidate)) {
+                    $script:TlsCert      = $candidate
+                    $script:TlsCertPath  = $match.pfx
+                    $script:TlsCertId    = $match.certId
+                    # Remembered so a reload after renewal uses the store proven
+                    # to work here, instead of rediscovering it.
+                    $script:TlsKeyFlags  = $flags
+                    # Named in the startup line because otherwise a start that
+                    # fell back to the second store reads exactly like one that
+                    # did not, and which store answered is the single most
+                    # useful fact about a start nobody watched.
+                    $script:TlsKeyStore  = $(
+                        if ($flags -eq [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::MachineKeySet) {
+                            'machine key store'
+                        } else {
+                            'user key store'
+                        })
+                    # Watched so a renewal that replaces the file underneath us is
+                    # picked up. Without this the server keeps presenting the old
+                    # certificate until something restarts it, which looks exactly
+                    # like a renewal that did not happen.
+                    $script:TlsCertStamp = (Get-Item -LiteralPath $match.pfx).LastWriteTimeUtc
+                    # Startup IS a resolve, so the interval runs from here rather
+                    # than firing a redundant scan on the first connection.
+                    $script:TlsResolvedAt = Get-Date
+                    break
+                }
+
+                $rejected += $(if ($candidate.HasPrivateKey) {
+                    "$flags loaded but could not complete a handshake"
+                } else {
+                    "$flags has no usable private key"
+                })
+                # A candidate that cannot serve is of no further use, and the
+                # next one is what decides the outcome.
+                try { $candidate.Dispose() } catch { $null = $_ }
             }
 
-            if (-not $script:TlsCert.HasPrivateKey) {
-                $script:TlsCert.Dispose()
-                $script:TlsCert = $null
-                $tlsNote = "$($match.certId) has no usable private key - serving plain HTTP"
-            }
-            else {
-                $script:TlsCertPath  = $match.pfx
-                $script:TlsCertId    = $match.certId
-                # Remembered so a reload after renewal uses whichever of the two
-                # key stores worked here, instead of rediscovering it.
-                $script:TlsKeyFlags  = $flags
-                # Watched so a renewal that replaces the file underneath us is
-                # picked up. Without this the server keeps presenting the old
-                # certificate until something restarts it, which looks exactly
-                # like a renewal that did not happen.
-                $script:TlsCertStamp = (Get-Item -LiteralPath $match.pfx).LastWriteTimeUtc
-                # Startup IS a resolve, so the interval runs from here rather
-                # than firing a redundant scan on the first connection.
-                $script:TlsResolvedAt = Get-Date
+            if (-not $script:TlsCert) {
+                # Plain HTTP is the right failure. The page stays reachable on
+                # loopback and this line says why, where a listener that accepts
+                # every connection and closes it mid-handshake says nothing at
+                # all - and leaves no way in to read the explanation.
+                $tlsNote = "$($match.certId) cannot serve TLS - $($rejected -join '; ') - serving plain HTTP"
             }
         }
         catch {
@@ -2412,6 +2529,16 @@ function Update-TlsCertificate {
             $target, $script:PfxPassword, $script:TlsKeyFlags)
         if (-not $fresh.HasPrivateKey) { $fresh.Dispose(); throw "no private key" }
 
+        # A renewal has to clear the same bar as the certificate we started with.
+        # Without this a renewed file that loads but cannot handshake would be
+        # swapped in unattended and take the page down with nobody watching -
+        # the failure this tool exists to catch, happening to the tool. Throwing
+        # here keeps the current certificate serving, which is still valid.
+        if (-not (Test-TlsServerHandshake -Certificate $fresh)) {
+            $fresh.Dispose()
+            throw "loaded but could not complete a handshake"
+        }
+
         $old = $script:TlsCert
         $script:TlsCert      = $fresh
         $script:TlsCertPath  = $target
@@ -2479,7 +2606,7 @@ Write-Diag ""
 Write-Diag "  Listening on 127.0.0.1:$actualPort (this PC only)" 'Green'
 
 if ($script:TlsCert) {
-    Write-Diag "  HTTPS as $($script:Web.hostname), using $script:TlsCertId (expires $($script:TlsCert.NotAfter.ToString('d MMM yyyy')))" 'Green'
+    Write-Diag "  HTTPS as $($script:Web.hostname), using $script:TlsCertId ($script:TlsKeyStore, expires $($script:TlsCert.NotAfter.ToString('d MMM yyyy')))" 'Green'
 
     # A certificate that loaded is not the same as a URL that opens. If the name
     # does not resolve to this machine the browser never reaches us at all, and
@@ -2573,12 +2700,28 @@ try {
                         # revoke.
                         $ssl.AuthenticateAsServer($script:TlsCert, $false,
                             [Net.SecurityProtocolType]::Tls12, $false)
+                        $script:TlsHandshakeFails = 0
                     }
                     catch {
                         # A client with no TLS 1.2, or one that hung up mid
                         # handshake. Drop that one connection and carry on - an
                         # unhandled throw here would end the accept loop and take
                         # the server down with it.
+                        $why = ($_.Exception.Message -split "`n")[0].Trim()
+
+                        # One failure is noise and stays unlogged. A run of them
+                        # with no success in between is a certificate that loaded
+                        # and cannot serve, which is otherwise invisible: the
+                        # startup line reads identically either way. Rate-limited
+                        # so a sustained outage cannot itself flood the log.
+                        $script:TlsHandshakeFails++
+                        if ($script:TlsHandshakeFails -ge $script:TlsHandshakeAlertAt -and
+                            ((-not $script:TlsHandshakeLoggedAt) -or
+                             ((Get-Date) - $script:TlsHandshakeLoggedAt).TotalMinutes -ge 10)) {
+                            $script:TlsHandshakeLoggedAt = Get-Date
+                            Write-Diag "  ! $($script:TlsHandshakeFails) TLS handshakes in a row have failed - $($script:TlsCertId) loaded but cannot serve. Latest: $why" 'Red'
+                        }
+
                         try { $ssl.Dispose() } catch { $null = $_ }   # already failing; the throw below carries the real error
                         throw
                     }
