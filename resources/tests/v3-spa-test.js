@@ -261,4 +261,19 @@ w.CertCamel.loadState(function(){
   console.log('  auto stores nothing: ' + (store['certcamel-theme'] === undefined));
 
   console.log('\nall errors so far: ' + (errors.length ? errors.join('\n') : 'none'));
+
+  /* Tear the window down, or this suite never exits.
+
+     Not a missing process.exit: none of the suites here have one and the rest
+     end fine. jsdom is what holds the process open - close() releases it and
+     the process ends on its own, where process.exit would force it down
+     whatever state it was in and could hide a real failure behind a clean exit.
+
+     Why this suite and not the others is not established. They all construct
+     jsdom the same way, with the same flags; this is the one that drives
+     routing and the theme menu and replaces HTMLAnchorElement.prototype.click,
+     and something in that leaves jsdom with work outstanding. Closing the
+     window is right regardless of which, and is worth copying into any suite
+     that starts hanging the same way. */
+  dom.window.close();
 });
