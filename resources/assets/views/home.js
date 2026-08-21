@@ -614,7 +614,9 @@
   // The three conditions worth acting on. They are attention items rather than
   // status, so they belong with the expired/expiring callouts rather than
   // padding out a card that is otherwise just a schedule.
-  function automationAlerts(box, a, callout){
+  // f is the sweep outcome from /api/automation, used only to quote the
+  // reason a failed run gave; the failure itself comes from the scheduler.
+  function automationAlerts(box, a, callout, f){
     if (!a) { return; }
 
     if (a.available === false) {
@@ -632,6 +634,34 @@
     } else if (renew && !renew.enabled) {
       box.appendChild(callout('warn', 'Unattended renewal is switched off',
         'The task is registered but disabled, so nothing will renew on its own.'));
+    }
+
+    /* An unattended run that failed - the one thing on this page that was
+       invisible. A renewal dying mid-run left the schedule reading normally,
+       the renewals card listing what it still intends to do, and nothing at all
+       saying the last attempt had not worked.
+
+       Driven by the scheduler's own exit code, NOT by the sweep file. A preview
+       started from this page writes that same file, so keying on it would mean
+       pressing refresh erased the evidence of a real failure without fixing
+       anything - a check that can be silently cleared, which is the shape of
+       the bug this warning exists to report.
+
+       The sweep error is still the best sentence available, so it is used when
+       the file still describes that failed run rather than a later preview.
+
+       267009 is "currently running" and 267011 is "has not run yet". Neither is
+       a failure, and a fresh install sits on the second one. */
+    var TASK_RUNNING = 267009, TASK_NEVER_RUN = 267011;
+    if (renew && renew.registered && renew.enabled && renew.lastRun &&
+        renew.lastResult !== 0 && renew.lastResult !== null &&
+        renew.lastResult !== TASK_RUNNING && renew.lastResult !== TASK_NEVER_RUN) {
+      var why = (f && f.mode === 'run' && f.ok === false && f.error) ? f.error : null;
+      box.appendChild(callout('warn', 'The last unattended renewal did not finish',
+        'It ran ' + ago(renew.lastRun) + ' and stopped with an error. ' +
+        (why ? why + ' ' : '') +
+        'Certificates it meant to renew have not been renewed. It tries again on the ' +
+        'next scheduled run; the full run is on the Logs page.'));
     }
 
     // A task pointing at a script somewhere else has silently stopped driving
@@ -789,7 +819,7 @@
       if (autoSlot.parentNode) {
         autoSlot.parentNode.replaceChild(automationTile(a), autoSlot);
       }
-      automationAlerts(alertsBox, a, callout);
+      automationAlerts(alertsBox, a, callout, res.forecast);
 
       // Prepended so the schedule reads before the history beside it.
       cardRow.insertBefore(renewalsCard(res), cardRow.firstChild);
