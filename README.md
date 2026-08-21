@@ -437,12 +437,11 @@ Alert failures used to be recorded only in the run log, where nobody looks for
 "have my alerts stopped working". They are in the audit trail now too. A failed
 alert still never fails the renewal it was reporting on — that is deliberate.
 
-## The load balancer panel
+## How load balancer health is gathered
 
-Under Tracked domains, when — and only when — deployment targets are
-configured. Per node: whether its Data Plane API answered, HAProxy's own **node
-name** (`hap1`, `hap2` — the thing that tells two nodes behind one address
-apart), the running HAProxy version, and the group's last deployment result.
+Per node: whether its Data Plane API answered, HAProxy's own **node name**
+(`hap1`, `hap2` — the thing that tells two nodes behind one address apart),
+the running HAProxy version, and the group's last deployment result.
 
 **It never probes while you wait.** A node that blackholes packets takes ten
 seconds to fail, and the web server handles one connection at a time — so the
@@ -464,9 +463,8 @@ every frontend confirmed to be serving the certificate.](docs/screenshots/loadba
 
 ## The Load balancers page
 
-The panel on Home is the summary; this is the detail, and it answers a question
-nothing else can: **is any frontend actually reading the crt-list a certificate
-is deployed to?**
+This page answers a question nothing else can: **is any frontend actually
+reading the crt-list a certificate is deployed to?**
 
 That matters because Cert Camel writes certificate storage and crt-list entries
 and **never a bind line**. A wrong crt-list path produces a green deployment, a

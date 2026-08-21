@@ -878,31 +878,9 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 /* Load balancers on Home. A grid rather than a table: four short facts per node
    that should stay on one line on a wide window and stack on a narrow one,
    which a table fights. */
-/* Clear air above it. Without this the heading sat straight under the table and
-   the two sections read as one run-on block. */
-.lbsection{margin-top:2.4rem;}
-.lbsection .card.lbgroup{margin:0 0 1rem;}
-.lbgroup > h4{margin:0 0 .6rem;}
 .lbnode{display:grid; align-items:baseline; gap:.15rem .8rem; padding:.5rem 0;
   grid-template-columns:.9rem 6rem 5rem 1fr; border-top:1px solid var(--border);
   font-size:.85rem;}
-.lbgroup > .lbnode:first-of-type{border-top:none;}
-/* Load balancer groups, side by side rather than stacked.
-
-   Stacked and full width, a two-node group ran the whole 120rem of the content
-   area to show about a third of it - the trailing 1fr column in .lbnode handed
-   most of the row to a short version string.
-
-   Capped at 60rem rather than left as 1fr, which is the difference between this
-   and .cardrow above. Two groups still fill the row and keep the right edge
-   level with the domains table, which is why these cards were .wide in the
-   first place. But a single group - the common case for anyone with one pair -
-   would stretch across the whole page under 1fr, and 60rem lands it just under
-   the 64rem every other card on the page uses. */
-.lbgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(28rem,60rem));
-  gap:1.3rem; align-items:start;}
-.lbgrid > .card{margin:0; height:100%;}
-
 .lbname{font-weight:700; color:var(--text);}
 /* HAProxy's own node name - the thing that tells two nodes behind one address
    apart, so it reads as an identifier rather than prose. */
@@ -911,11 +889,9 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 .lbdetail{color:var(--muted); word-break:break-word;}
 .lbdetail.bad{color:var(--red);}
 .lburl{grid-column:2 / -1; font-size:.74rem; color:var(--faint); word-break:break-all;}
-.lbdeploy{margin:.7rem 0 0; padding-top:.6rem; border-top:1px solid var(--border);}
 .dot{width:.55rem; height:.55rem; border-radius:50%; display:inline-block;
   background:var(--faint); flex:none; align-self:center;}
 .dot.ok{background:var(--green);} .dot.bad{background:var(--red);}
-.lbdeploy .dot{margin-right:.45rem;}
 @media (max-width:44rem){
   .lbnode{grid-template-columns:.9rem 1fr;}
   .lbid,.lbdetail,.lburl{grid-column:2 / -1;}

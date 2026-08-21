@@ -58,7 +58,7 @@ pass condition and rely on being read — anything else there, including a
 | `v8-guide-links-test.js` | Every in-app link into a guide resolves to an anchor that actually exists |
 | `v9-update-panel-test.js` | The Update panel, including that a check which could not run never reports as up to date |
 | `v10-renewal-run-test.js` | When a certificate actually renews: the next scheduled run at or after the CA's window opens, across a daylight-saving change, and the cases where that is not knowable |
-| `v11-home-panels-test.js` | Home's load balancer grid, and that a failed unattended run raises a warning a preview cannot clear |
+| `v11-home-run-failure-test.js` | Home raises a warning when an unattended run fails, and a preview cannot clear it |
 | `v12-script-args-test.ps1` | Every parameter one script passes to another exists on the script it is passed to |
 
 ## How they work

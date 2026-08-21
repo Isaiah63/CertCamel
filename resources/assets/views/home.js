@@ -73,12 +73,6 @@
 
     renderActivity(cardRow);
 
-    // Load balancer health has nothing to do with whether the checker has run,
-    // so it is created here and placed in BOTH paths below - an install with no
-    // certificate data yet still wants to know its load balancers are alive.
-    // It removes itself if no deployment targets are configured.
-    var lbBox = el('section', 'lbsection');
-
     if (!hasData) {
       // Still worth answering "is anything automated?" when there is no checker
       // data at all - arguably that is exactly when it matters.
@@ -93,8 +87,6 @@
       p.appendChild(document.createTextNode(' page to see tracked domains here.'));
       empty.appendChild(p);
       host.appendChild(empty);
-      host.appendChild(lbBox);
-      renderLoadBalancers(lbBox);
       return;
     }
 
@@ -266,12 +258,6 @@
     section.appendChild(tw);
 
     host.appendChild(section);
-
-    // Below Tracked domains, as asked. The table rows are appended into
-    // `section` after this point, which is fine - it is already in the DOM, so
-    // they land above this rather than after it.
-    host.appendChild(lbBox);
-    renderLoadBalancers(lbBox);
 
     var rowsByHost = {};
 
@@ -829,183 +815,6 @@
       lastRenewTask = taskOf(a, 'renew');
       if (res.forecast && !lastForecast) { lastForecast = res.forecast; render(); }
       else { lastForecast = res.forecast; }
-    });
-  }
-
-  /* --- Load balancers ------------------------------------------------------- //
-
-     Reads a CACHE the server wrote out of process. Nothing here ever waits on a
-     load balancer: an unreachable node takes ten seconds to fail and the server
-     handles one connection at a time, so probing on the request thread would
-     freeze every other view for as long as it took - exactly when someone is
-     trying to find out what is wrong.
-
-     Shows what the Data Plane API can actually be asked for and no more. There
-     is no VRRP row because there is no honest way to fill one in: MASTER and
-     BACKUP live in keepalived, which has no API, and HAProxy binds its
-     frontends on every node whether or not it holds the virtual address. */
-
-  function renderLoadBalancers(box){
-    api('GET', '/api/loadbalancers', null, function(err, res){
-      // No deployment targets configured means this install only watches and
-      // renews. Remove the section rather than showing an empty one - plenty of
-      // people will never deploy anywhere.
-      if (err || !res || !res.haveTargets) {
-        if (box.parentNode) { box.parentNode.removeChild(box); }
-        return;
-      }
-      drawLoadBalancers(box, res);
-    });
-  }
-
-  function drawLoadBalancers(box, res){
-    box.textContent = '';
-
-    /* Same shape as Tracked domains: the control lives in the heading, right of
-       the rule, so it costs the page no vertical space and the two sections
-       read as one pattern rather than two. */
-    var h = el('h2', null, 'Load balancers');
-    h.appendChild(el('span', 'rule'));
-    h.appendChild(el('span', 'filternote',
-      res.checkedAt ? 'checked ' + ago(res.checkedAt) : 'not checked yet'));
-
-    // A certificate deployed to a crt-list nothing reads is served to nobody,
-    // and Home is where someone looks first. Say it here and send them to the
-    // page that explains it, rather than leaving it to be found.
-    var broken = 0;
-    (res.groups || []).forEach(function(g){
-      (g.certificates || []).forEach(function(c){ if (c.state === 'unreferenced') { broken++; } });
-    });
-    if (broken) {
-      var warn = el('a', 'filternote bad');
-      warn.href = '#/loadbalancers';
-      warn.textContent = broken + (broken === 1 ? ' certificate is' : ' certificates are') + ' not being served — see Load balancers';
-      h.appendChild(warn);
-    }
-
-    var btn = el('button', 'btn sm filterbtn', 'Check now');
-    btn.type = 'button';
-    btn.title = 'Asks each node whether it is answering. Changes nothing.';
-    btn.addEventListener('click', function(){ refreshLoadBalancers(box, btn); });
-    h.appendChild(btn);
-
-    box.appendChild(h);
-
-    if (!res.checkedAt) { return; }
-
-    // Side by side rather than stacked. A group is a short card - a couple of
-    // node rows and a deployment line - and one per row left most of the width
-    // empty. .wide still opts out of the 64rem card cap; the grid track is what
-    // sets the width now, and it keeps the right edge level with the table
-    // above, which is what .wide was for.
-    var grid = el('div', 'lbgrid');
-    box.appendChild(grid);
-
-    (res.targets || []).forEach(function(t){
-      var card = el('div', 'card wide lbgroup');
-      card.appendChild(el('h4', null, t.label));
-
-      (t.nodes || []).forEach(function(n){ card.appendChild(lbNodeRow(n)); });
-
-      var dep = lastDeployFor(t.id);
-      if (dep) {
-        var d = el('p', 'mini lbdeploy');
-        d.appendChild(el('span', 'dot ' + (dep.ok ? 'ok' : 'bad')));
-        d.appendChild(document.createTextNode(
-          'Last deployment ' + ago(dep.at) + ' — ' + dep.name + (dep.ok ? ' succeeded' : ' failed')));
-        card.appendChild(d);
-      }
-
-      grid.appendChild(card);
-    });
-  }
-
-  function lbNodeRow(n){
-    var row = el('div', 'lbnode' + (n.reachable ? '' : ' down'));
-
-    row.appendChild(el('span', 'dot ' + (n.reachable ? 'ok' : 'bad')));
-    row.appendChild(el('span', 'lbname', n.name));
-
-    // HAProxy's own `node` directive - the only identity the box gives out, and
-    // the thing that tells two nodes behind one address apart.
-    row.appendChild(el('span', 'lbid', n.node || '—'));
-
-    var detail = el('span', 'lbdetail');
-    if (n.reachable) {
-      // The Data Plane BUILD version when it is known, not the /v3 path version.
-      // They are different things and showing both reads as noise - and the
-      // build number is the one that answers real questions, since whether a
-      // node can manage crt-lists at all depends on it (3.1 cannot, 3.3 can).
-      // It also implies the path version, so nothing is lost by preferring it.
-      detail.textContent = 'HAProxy ' + (n.haproxyVersion || 'unknown') +
-                           (n.dataplaneVersion ? '  ·  Data Plane ' + n.dataplaneVersion
-                                               : (n.apiVersion ? '  ·  API ' + n.apiVersion : ''));
-    } else {
-      // The reason, not just the fact. "Unreachable" alone sends people looking
-      // at the network when the answer is often a wrong password.
-      detail.textContent = n.error || 'did not answer';
-      detail.className = 'lbdetail bad';
-    }
-    row.appendChild(detail);
-
-    row.appendChild(el('span', 'lburl', n.url));
-    return row;
-  }
-
-  // The most recent deployment that touched this target group. Matched on the
-  // group, not the node: jobs\deploy-<certId>.json keys its node entries by
-  // verify host rather than by the configured node name, so a per-node match
-  // would be guesswork.
-  function lastDeployFor(targetId){
-    var state = CC.state || {};
-    var deployment = state.deployment || {};
-    var best = null;
-
-    Object.keys(deployment).forEach(function(certId){
-      var last = deployment[certId] && deployment[certId].last;
-      if (!last || !last.at || !last.targets) { return; }
-      var mine = null;
-      last.targets.forEach(function(t){ if (t && t.targetId === targetId) { mine = t; } });
-      if (!mine) { return; }
-      if (!best || new Date(last.at) > new Date(best.at)) {
-        best = {at: last.at, ok: !!last.ok, name: last.name || certId};
-      }
-    });
-    return best;
-  }
-
-  /* Polled here rather than through CC.runJob, which opens the full job panel
-     with a scrolling log - right for a renewal that takes minutes, far too much
-     for a sweep that usually finishes in under a second. */
-  function refreshLoadBalancers(box, btn){
-    btn.disabled = true;
-    btn.textContent = 'Checking...';
-
-    api('POST', '/api/loadbalancers/refresh', null, function(err, res){
-      if (err || !res || !res.jobId) {
-        btn.disabled = false;
-        btn.textContent = 'Check now';
-        return;
-      }
-
-      var tries = 0;
-      (function poll(){
-        // Bounded: two nodes that both blackhole packets take ten seconds each,
-        // and something has to give up rather than spin forever on a job that
-        // died.
-        if (++tries > 60) {
-          btn.disabled = false;
-          btn.textContent = 'Check now';
-          return;
-        }
-        window.setTimeout(function(){
-          api('GET', '/api/job/' + res.jobId, null, function(e2, st){
-            if (e2) { btn.disabled = false; btn.textContent = 'Check now'; return; }
-            if (st && st.running) { poll(); return; }
-            renderLoadBalancers(box);
-          });
-        }, 700);
-      })();
     });
   }
 

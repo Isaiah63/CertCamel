@@ -1,15 +1,14 @@
-/* Two things Home has to get right, both of which fail silently.
+/* A failed unattended run has to be visible on Home.
 
-   The load balancer panel: groups sit in a grid, not stacked.
+   A renewal that died mid-run left the schedule reading normally, the renewals
+   card still listing what it intended to do, and nothing saying the last
+   attempt had not worked. It was found by someone noticing a certificate had
+   not changed.
 
-   A group is a short card - a couple of node rows and a deployment line - and
-   one per row left most of the width empty, because .lbnode ends in a 1fr
-   column that a full-width card hands far more space than the version string
-   in it needs.
-
-   What this pins is the structure rather than the pixels: every group card is
-   inside .lbgrid, and none is left as a direct child of the section. Getting
-   that wrong is silent - the page still renders, it just stacks again.
+   The warning is keyed on the exit code the scheduler reports, NOT on the sweep
+   file, because a preview started from the page rewrites that file - so a
+   warning driven by it could be cleared by pressing refresh while nothing was
+   fixed. That case is pinned below.
 
    Exits non-zero on failure, and fails on any uncaught error while rendering,
    which is the trap v8 was rewritten for: a panel that never rendered would
@@ -43,18 +42,6 @@ const STATE = {
   catalog: {}, targetCatalog: {}, acmeReady: true
 };
 
-const node = (name, id) => ({ name, node:id, reachable:true, url:'https://localhost:5555',
-                              haproxyVersion:'3.3.13', dataplaneVersion:'3.3.5', apiVersion:'v3' });
-
-// Two groups is the shape that motivated the change; one group is the case a
-// plain 1fr grid would still stretch across the whole page.
-// haveTargets is what keeps the section on the page at all: an install with
-// no deployment targets removes it rather than showing an empty one.
-let LB = { haveTargets: true, checkedAt: new Date().toISOString(), targets: [
-  { id:'t1', label:'Haproxy-Home-Lab', nodes:[node('lbtest1','hap1'), node('lbtest2','hap2')] },
-  { id:'t2', label:'Haproxy-Prod-Pair', nodes:[node('lbprod1','lbprod1'), node('lbprod2','lbprod2')] }
-]};
-
 /* The renew task as the Windows scheduler reports it. lastResult is the exit
    code of the last run, and it is what the failure callout keys on - not the
    sweep file, which a preview started from this page overwrites. */
@@ -76,7 +63,6 @@ function XHR(){
   this.send=()=>{
     let r={ok:true};
     if(this._u.indexOf('/api/state')===0) r=STATE;
-    else if(this._u.indexOf('/api/loadbalancers')===0) r=LB;
     else if(this._u.indexOf('/api/automation')===0) r={automation:AUTOMATION, forecast:FORECAST,
                                                        folder:'C:/x'};
     this.status=200; this.readyState=4; this.responseText=JSON.stringify(r);
@@ -105,18 +91,6 @@ function check(name, ok, detail){
 
 w.location.hash = '#/home';
 w.dispatchEvent(new w.Event('hashchange'));
-
-const grid = d.querySelector('#view-home .lbgrid');
-check('the load balancer grid rendered', !!grid, 'no .lbgrid in #view-home');
-
-const inGrid = grid ? grid.querySelectorAll(':scope > .lbgroup').length : 0;
-check('both groups are inside the grid', inGrid === 2, 'found ' + inGrid);
-
-/* The regression that matters: a group appended to the section instead of the
-   grid still renders, and silently stacks full width again. */
-const strays = Array.from(d.querySelectorAll('#view-home .lbgroup'))
-  .filter(c => !c.closest('.lbgrid')).length;
-check('no group left outside the grid', strays === 0, strays + ' stray group(s)');
 
 check('no uncaught errors while rendering', errors.length === 0, errors.join(' | '));
 
