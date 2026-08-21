@@ -60,6 +60,7 @@ pass condition and rely on being read — anything else there, including a
 | `v10-renewal-run-test.js` | When a certificate actually renews: the next scheduled run at or after the CA's window opens, across a daylight-saving change, and the cases where that is not knowable |
 | `v11-home-run-failure-test.js` | Home raises a warning when an unattended run fails, and a preview cannot clear it |
 | `v12-script-args-test.ps1` | Every parameter one script passes to another exists on the script it is passed to |
+| `v13-autorefresh-test.js` | The page picks up new data on its own, re-renders only when something changed, and never while a menu or dialog is open |
 
 ## How they work
 

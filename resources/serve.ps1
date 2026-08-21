@@ -1357,6 +1357,24 @@ function Invoke-Route {
             return
         }
 
+        <#
+          The checker's output as data.
+
+          ssl-data.js reaches the browser as a <script> tag at page load, which
+          is why every expiry date on the page was frozen at whatever it said
+          when the tab opened - a renewal could land and the page went on
+          showing the old date until somebody pressed reload. A script tag
+          cannot be re-read; this can.
+
+          Same content, parsed rather than executed. The file stays exactly as
+          it is: it is what makes ssl-tracker.html work from disk with no server
+          at all, and that is worth keeping.
+        #>
+        '^/api/checker$' {
+            Send-Json $Stream (Get-CheckerResults)
+            return
+        }
+
         '^/api/settings$' {
             if ($Request.Method -ne 'POST') { Send-Error $Stream 405 'Use POST.'; return }
             try { Send-Json $Stream (Invoke-SaveSettings -Payload $payload) }

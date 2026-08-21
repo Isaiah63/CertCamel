@@ -395,15 +395,21 @@
         if (!j.running) {
           window.clearInterval(jobTimer); jobTimer = null; setBusy(false);
 
-          // A check job rewrote ssl-data.js, which only arrives as a fresh
-          // <script> tag - a full reload is the honest way to pick that up.
-          //
-          // But NOT when the run reported a problem. Reloading takes the log
-          // off the screen, and the log is the only place the reason appears -
-          // so the one run you most need to read is the one that vanishes
-          // after 900ms. When something failed, hold the panel and let the
-          // person press it themselves.
-          if (j.kind === 'check') {
+          /* A run that changed anything rewrote ssl-data.js, which only
+             arrives as a fresh <script> tag - a full reload is the honest way
+             to pick that up.
+
+             Renew and deploy belong here as much as check does. They were left
+             out, so finishing a renewal re-rendered from state the page already
+             had and went on showing the old certificate until somebody reloaded
+             by hand - which looked exactly like nothing having happened.
+
+             But NOT when the run reported a problem. Reloading takes the log
+             off the screen, and the log is the only place the reason appears,
+             so the one run you most need to read would be the one that vanishes
+             after 900ms. When something failed, hold the panel and let the
+             person press it themselves. */
+          if (j.kind === 'check' || j.kind === 'renew' || j.kind === 'deploy') {
             if (jobHadTrouble(j.log)) { offerReload(); }
             else { window.setTimeout(function(){ location.reload(); }, 900); }
           }
@@ -652,6 +658,11 @@
 
     var view = CertCamel.views[viewName];
     if (view && view.render) { view.render(r.sub); }
+
+    // What is now on screen. refreshIfChanged compares against this rather than
+    // a snapshot taken before its own fetch: the question is "does the page
+    // still match the data".
+    lastRendered = dataSignature();
   }
   CertCamel.navigate = function(hash){
     if (hash) { location.hash = hash; }   // triggers hashchange -> navigate()
@@ -659,6 +670,95 @@
   };
 
   window.addEventListener('hashchange', navigate);
+
+  /* Pick up new data without being told to.
+
+     Everything on the page was frozen at page load. `window.SSL_DATA` arrives
+     as a <script> tag and cannot be re-read, so a renewal could complete,
+     deploy, and be recorded while the page went on showing the old expiry until
+     somebody pressed reload - which is exactly how it behaved.
+
+     Two rules keep this from being annoying:
+
+     1. RE-RENDER ONLY WHEN SOMETHING CHANGED. Every view rebuilds itself from
+        scratch (`host.textContent = ''`), so refreshing unconditionally would
+        close an open menu or filter panel and move the scroll under somebody
+        reading.
+     2. NEVER WHILE SOMEBODY IS MID-ACTION. A job running, a row menu or filter
+        panel open, the deploy picker up, or text selected all mean hands are on
+        the page.
+
+     There is deliberately NO timer here. A run started from the page reloads on
+     its own when it finishes, and this catches the unattended run that happened
+     while you were in another tab. A timer would add a third path that only
+     matters for a page left open and stared at - and it keeps the JavaScript
+     event loop alive, which stopped every DOM suite from ever exiting. */
+
+  // Set by navigate(), below.
+  var lastRendered = null;
+
+  /* What the page is showing, as one comparable string. The checker stamp moves
+     when a check runs; the state stamp and tally move when the estate does. */
+  function signatureOf(checker, state){
+    return [
+      (checker && checker.generated) || '',
+      (state && state.generated) || '',
+      (state && state.tally && JSON.stringify(state.tally)) || ''
+    ].join('|');
+  }
+  function dataSignature(){ return signatureOf(CertCamel.sslData, CertCamel.state); }
+
+  /* Hands on the page. Deliberately generous: skipping a refresh costs nothing
+     much, and interrupting somebody costs them their place. */
+  function busyWithSomething(){
+    if (jobTimer) { return true; }                                    // a run is in progress
+    if (document.querySelector('.rowmenu')) { return true; }           // per-certificate menu
+    if (document.querySelector('.filterpanel:not(.hidden)')) { return true; }
+    if (document.querySelector('dialog[open]')) { return true; }       // the deploy picker
+    try {
+      var sel = window.getSelection();
+      if (sel && String(sel).length > 0) { return true; }              // mid copy
+    } catch (e) { /* no selection API is not a reason to skip */ }
+    return false;
+  }
+
+  var refreshing = false;
+
+  /* Look, then decide.
+
+     Both fetches are deliberately raw rather than CC.loadState, because
+     loadState notifies every view and each one re-renders itself on the spot.
+     Calling it to find out whether anything had changed would have rebuilt the
+     page before there was an answer - the exact thing this exists to avoid. So:
+     fetch quietly, compare, and only then go through the normal path. */
+  CertCamel.refreshIfChanged = function(){
+    if (refreshing || busyWithSomething()) { return; }
+    refreshing = true;
+
+    api('GET', '/api/checker', null, function(err, checker){
+      api('GET', '/api/state', null, function(stateErr, state){
+        refreshing = false;
+
+        // A failed poll is not worth reporting: the page still shows the last
+        // good data and the next one tries again.
+        if (err || stateErr || !checker || !state) { return; }
+        if (signatureOf(checker, state) === lastRendered) { return; }
+
+        // Checked again: the fetches take time, and a menu can open inside them.
+        if (busyWithSomething()) { return; }
+
+        CertCamel.sslData = checker;
+        CertCamel.loadState();   // updates the state, the tally, and re-renders
+      });
+    });
+  };
+
+  // The renewal that landed while you were reading something else. A listener
+  // costs nothing while nothing happens, and holds no timer open.
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden) { CertCamel.refreshIfChanged(); }
+  });
+
 
   // --- Boot ------------------------------------------------------------------- //
 
