@@ -209,10 +209,20 @@ try {
         $renewScript = Join-Path $PSScriptRoot 'renew.ps1'
         $resultFile  = Join-Path $script:JobsDir "renew-due-$($cert.certId).json"
 
-        # -Source rides along so the audit line for a 03:20 renewal says 'task'
-        # and not 'cli'. Without it every unattended renewal would be recorded as
-        # though a person had typed it, which is the one thing that column is for.
-        $renewArgs = @('-Cert', $cert.certId, '-ResultPath', $resultFile, '-Source', $Source)
+        # -Zone, not -Cert. renew.ps1 takes -ZoneList (aliased -Zone) and
+        # deploy.ps1 takes -CertList (aliased -Cert); the two scripts are called
+        # the same way and take different names for the same-looking value, so
+        # the deploy spelling reads as correct here and is not.
+        #
+        # This path only runs when a certificate is genuinely due, and
+        # -WhatIfOnly stops before it, so the mismatch survived every safe check
+        # there was until a real renewal came around.
+        #
+        # -Source rides along so the audit line for an unattended renewal says
+        # 'task' and not 'cli'. Without it every unattended renewal would be
+        # recorded as though a person had typed it, which is the one thing that
+        # column is for.
+        $renewArgs = @('-Zone', $cert.certId, '-ResultPath', $resultFile, '-Source', $Source)
         if ($NoDeploy) { $renewArgs += '-NoDeploy' }
 
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $renewScript @renewArgs 2>&1 |
