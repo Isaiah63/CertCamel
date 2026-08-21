@@ -27,7 +27,26 @@ const day = n => new Date(Date.now() + n * 864e5).toISOString();
 
 const STATE = {
   generated: new Date().toISOString(),
-  certs: [], unmapped: [], haveZones: true, groupError: null,
+  /* Two certificates in ONE zone, which is the shape that broke the row badge.
+     hosts is zone-wide and identical on both; names is what each certificate
+     actually covers. Matching on hosts handed every row the first certificate
+     it found. */
+  certs: [
+    { certId:'example.com', displayName:'example.com', kind:'san', zone:'example.com',
+      names:['a.example.com','example.com'],
+      hosts:['a.example.com','console.example.com'],
+      deferredNames:[], categories:[], wildcard:false, tracker:false, external:false,
+      targets:[], caId:'le', caLabel:'LE', caStaging:false, caInherited:true,
+      overridden:false, notAfter:day(6), hasLocalCert:true, issuedAt:day(-1) },
+    { certId:'console.example.com', displayName:'console.example.com', kind:'tracker',
+      zone:'example.com',
+      names:['console.example.com'],
+      hosts:['a.example.com','console.example.com'],
+      deferredNames:[], categories:[], wildcard:false, tracker:true, external:false,
+      targets:[], caId:'le', caLabel:'LE', caStaging:false, caInherited:true,
+      overridden:false, notAfter:day(85), hasLocalCert:true, issuedAt:day(-1) }
+  ],
+  unmapped: [], haveZones: true, groupError: null,
   zones: { refreshed: new Date().toISOString(), count: 1, errors: [] },
   deployment: { 'camelnuggets.com': { targets: ['t1'], bindings: [{id:'t1',overrides:null}],
                                       last: { at: day(-3), ok: true, name: 'camelnuggets.com' } } },
@@ -54,7 +73,10 @@ function renewTask(o){
   }, o);
 }
 let AUTOMATION = { available:true, error:null, tasks:[renewTask({})] };
-let FORECAST = null;
+let FORECAST = { ok:true, mode:'run', error:null, finishedAt:day(-0.1), considered:[
+  { certId:'example.com',         name:'example.com',         due:false, reason:null, renewAfter:day(4)  },
+  { certId:'console.example.com', name:'console.example.com', due:false, reason:null, renewAfter:day(60) }
+]};
 
 function XHR(){
   this.readyState=0; this.status=0; this.responseText='';
@@ -75,7 +97,10 @@ vc.on('jsdomError', e=>errors.push(e.detail?e.detail.stack:e.message));
 const dom=new JSDOM(html,{url:'http://127.0.0.1:1/?t=abc',runScripts:'outside-only',
                           pretendToBeVisual:true,virtualConsole:vc});
 const w=dom.window, d=dom.window.document;
-w.SSL_DATA={generated:new Date().toISOString(), results:[]};
+w.SSL_DATA={generated:new Date().toISOString(), results:[
+  { host:'a.example.com',       ok:true, notAfter:day(6),  issuer:'LE', category:'Prod', renewOnly:false },
+  { host:'console.example.com', ok:true, notAfter:day(85), issuer:'LE', category:'Prod', renewOnly:false }
+]};
 w.XMLHttpRequest=XHR;
 const store={};
 w.sessionStorage.getItem=k=>Object.prototype.hasOwnProperty.call(store,k)?store[k]:null;
@@ -89,8 +114,50 @@ function check(name, ok, detail){
   console.log((ok ? '  ok   ' : '  FAIL ') + name + (ok ? '' : '  -- ' + detail));
 }
 
+/* Boot the way the real page does: state first, then render. DOMContentLoaded
+   has already fired by the time these scripts are eval'd, so the app's own boot
+   handler never runs here and this stands in for it. Without it CC.state stays
+   null, and every check that depends on the certificate list quietly measures
+   nothing at all. */
 w.location.hash = '#/home';
-w.dispatchEvent(new w.Event('hashchange'));
+w.CertCamel.loadState(function(){ w.CertCamel.navigate(); });
+
+/* A row badge has to name the renewal of the certificate that actually covers
+   that host.
+
+   hosts is zone-wide and identical on every certificate in the zone, so
+   matching on it gave every row whichever certificate came first. The console
+   row claimed the SAN certificate's date while the renewals card, three inches
+   above it, showed the console certificate's own - two months apart, both on
+   screen at once. */
+console.log('\na row badge names its own certificate');
+AUTOMATION = { available:true, error:null, tasks:[renewTask({ lastResult:0 })] };
+// The preview case above emptied the forecast, and the badges are driven by it.
+FORECAST = { ok:true, mode:'run', error:null, finishedAt:day(-0.1), considered:[
+  { certId:'example.com',         name:'example.com',         due:false, reason:null, renewAfter:day(4)  },
+  { certId:'console.example.com', name:'console.example.com', due:false, reason:null, renewAfter:day(60) }
+]};
+render();
+
+function badgeFor(host){
+  const rows = Array.from(d.querySelectorAll('#view-home table tr'));
+  const row = rows.find(function(tr){
+    const cell = tr.querySelector('td.host');
+    return cell && cell.textContent.indexOf(host) === 0;
+  });
+  const b = row && row.querySelector('.st.auto');
+  return b ? b.textContent.replace(/\s+/g, ' ').trim() : null;
+}
+
+const sanBadge     = badgeFor('a.example.com');
+const consoleBadge = badgeFor('console.example.com');
+console.log('   a.example.com       -> ' + sanBadge);
+console.log('   console.example.com -> ' + consoleBadge);
+
+check('both rows carry a renewal badge', !!sanBadge && !!consoleBadge,
+      'a row that renews automatically showed no badge at all');
+check('the two rows do not share one date', sanBadge !== consoleBadge,
+      'both rows show "' + sanBadge + '" - the badge matched the zone, not the certificate');
 
 check('no uncaught errors while rendering', errors.length === 0, errors.join(' | '));
 

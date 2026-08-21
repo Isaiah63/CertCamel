@@ -448,7 +448,16 @@
     var when = null;
     ((CC.state && CC.state.certs) || []).forEach(function(c){
       if (when || c.external) { return; }     // renewed elsewhere: countdown still earns its place
-      var covers = (c.hosts || []).some(function(x){ return String(x).toLowerCase() === h; });
+      /* names, not hosts. hosts is every watched host in the DNS ZONE and is
+         identical on every certificate in it, so matching on it returned
+         whichever certificate happened to come first - the console row showed
+         the SAN certificate's renewal date while the card three inches above it
+         showed the console certificate's own, two months apart.
+
+         names is what this certificate actually covers, which is the question
+         being asked. Same confusion the expiry column had: a shared zone is not
+         a shared certificate. */
+      var covers = (c.names || []).some(function(x){ return String(x).toLowerCase() === h; });
       if (!covers) { return; }
       lastForecast.considered.forEach(function(e){
         if (e && e.certId === c.certId && e.renewAfter) { when = e.renewAfter; }
