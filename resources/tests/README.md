@@ -19,6 +19,15 @@ cd tests
 node v5-automation-test.js
 ```
 
+**`v12` is PowerShell, not Node**, because what it checks is PowerShell: it asks
+`Get-Command` which parameters and aliases each script really binds, and reads
+the call sites out of the AST rather than by pattern matching. It needs no
+`node_modules` at all.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .12-script-args-test.ps1
+```
+
 Or all of them, reporting which failed:
 
 ```powershell
@@ -29,7 +38,7 @@ Get-ChildItem *-test.js | ForEach-Object {
 ```
 
 Each prints what it found rather than asserting silently, so the output is meant
-to be read. The newer suites (`v7`, `v8`, `v9`, `v10`, `v11`) also exit non-zero on failure, so they
+to be read. The newer suites (`v7` onward) also exit non-zero on failure, so they
 can be checked mechanically; the older ones report `all errors: none` as their
 pass condition and rely on being read — anything else there, including a
 `TypeError`, is a failure.
@@ -49,7 +58,8 @@ pass condition and rely on being read — anything else there, including a
 | `v8-guide-links-test.js` | Every in-app link into a guide resolves to an anchor that actually exists |
 | `v9-update-panel-test.js` | The Update panel, including that a check which could not run never reports as up to date |
 | `v10-renewal-run-test.js` | When a certificate actually renews: the next scheduled run at or after the CA's window opens, across a daylight-saving change, and the cases where that is not knowable |
-| `v11-home-lb-layout-test.js` | The Home page's load balancer panel: every group card sits inside the grid rather than stacking full width |
+| `v11-home-panels-test.js` | Home's load balancer grid, and that a failed unattended run raises a warning a preview cannot clear |
+| `v12-script-args-test.ps1` | Every parameter one script passes to another exists on the script it is passed to |
 
 ## How they work
 
