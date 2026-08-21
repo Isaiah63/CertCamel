@@ -234,6 +234,68 @@ try {
         Save-Outcome
     }
 
+    <#
+      Everything below happened BEFORE this point in the old order of things, and
+      that was the bug the page showed: the verdicts and the expiry data were
+      both computed before anything renewed, so a certificate that had just been
+      replaced still read as pending renewal until the next sweep or the next
+      day's check. Refresh both while the run still knows what it did.
+    #>
+    $renewedOk = @($outcome.renewed | Where-Object { $_.ok })
+
+    if ($renewedOk.Count) {
+        # The verdicts were worked out before the renewals ran, so a certificate
+        # that just renewed still carries the window that made it due. The child
+        # process wrote the new window to the order on disk; re-importing is what
+        # makes this process see it rather than its own cached copy.
+        try {
+            Import-PoshAcme
+            foreach ($r in $renewedOk) {
+                $cert = @($renewable | Where-Object { $_.certId -eq $r.certId })[0]
+                if (-not $cert) { continue }
+
+                $ca = Get-CaProfile -Settings $settings -CaId $cert.caId
+                Set-PAServer -DirectoryUrl (Get-ActiveDirectoryUrl -Ca $ca) -ErrorAction Stop
+                $fresh = Resolve-PAOrderForCert -CertId $cert.certId -Names @($cert.names)
+                if (-not $fresh) { continue }
+
+                foreach ($c in $outcome.considered) {
+                    if ($c.certId -ne $r.certId) { continue }
+                    $c.due    = $false
+                    $c.reason = $null
+                    $c.renewAfter = $(if ($fresh.PSObject.Properties['RenewAfter']) { $fresh.RenewAfter } else { $null })
+                }
+            }
+        }
+        catch {
+            # A stale verdict is a cosmetic problem and the renewal already
+            # succeeded; failing the run over it would be the wrong trade.
+            Write-Log "Could not refresh the renewal forecast: $(($_.Exception.Message -split "`n")[0].Trim())" 'warn'
+        }
+
+        # The certificate being served changed, so every expiry date the page
+        # shows is now wrong until the checker runs again - which is otherwise
+        # not until tomorrow morning.
+        #
+        # ErrorActionPreference is Stop for this script, and under Stop ANY
+        # native command writing to stderr raises a terminating error. Left
+        # alone, a checker warning would abandon a run whose renewals had all
+        # succeeded - which is how a wrong parameter took down the whole sweep
+        # once already.
+        Write-Log "Re-checking what is being served now..."
+        $prevEap = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+                -File (Join-Path $PSScriptRoot 'check-ssl.ps1') -Source $Source 2>&1 |
+              ForEach-Object { Write-Output $_ }
+        }
+        catch {
+            Write-Log "The re-check did not run: $(($_.Exception.Message -split "`n")[0].Trim())" 'warn'
+        }
+        finally { $ErrorActionPreference = $prevEap }
+    }
+
     $outcome.ok = ($failed -eq 0)
     Write-Log "-----------------------------------------------------------"
     if ($outcome.ok) { Write-Log "$(@($due).Count) certificate(s) renewed and deployed." 'ok' }
