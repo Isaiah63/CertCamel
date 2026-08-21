@@ -113,6 +113,28 @@ w.CertCamel.loadState(function(){
   check('all ' + links.length + ' carry target=_blank rel=noopener', bad.length === 0,
         bad.map(a=>a.getAttribute('href')).join(', '));
 
+  /* Existing on disk is not the same as being served.
+
+     serve.ps1 keeps an allow-list of the guides it will hand out, and the Docs
+     view keeps its own list of what it offers. windows-server-setup.html was
+     added to the second and not the first, so the page drew a link to a guide
+     the server answered with 404 - and this suite passed, because the file was
+     on disk and its anchors resolved. Both lists have to agree. */
+  console.log('\n=== and the server will actually serve them ===');
+  const serveSrc = fs.readFileSync(ROOT + 'serve.ps1', 'utf8');
+  const listed = (serveSrc.match(/\$docPages\s*=\s*@\(([\s\S]*?)\)/) || [null, ''])[1];
+  const served = (listed.match(/'([^']+\.html)'/g) || []).map(function(q){ return q.replace(/'/g, ''); });
+  check('serve.ps1 has an allow-list to compare against', served.length > 0,
+        'no $docPages found - the shape changed, so this is checking nothing');
+
+  const wanted = Array.from(new Set(links
+    .map(function(a){ return (a.getAttribute('href') || '').split('#')[0]; })
+    .filter(function(h){ return /\.html$/.test(h); })));
+  wanted.forEach(function(f){
+    check('the server serves ' + f, served.indexOf(f) !== -1,
+          'linked by the Docs view but missing from $docPages in serve.ps1, so it 404s');
+  });
+
   // An exception during render means a panel never built, and its links were
   // never checked - which would let this suite pass by not looking.
   check('no uncaught errors while rendering', errors.length === 0, errors.join('\n'));

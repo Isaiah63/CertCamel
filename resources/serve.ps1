@@ -1261,9 +1261,14 @@ function Invoke-Route {
     # every time the token rules moved. They link to each other now, and the
     # way back to the tracker is the tab it was opened from.
     #
-    # An allow-list, not a directory: these three are the whole set, so a
+    # An allow-list, not a directory: these four are the whole set, so a
     # membership test does the job a traversal guard would otherwise have to.
-    $docPages = @('readme.html', 'haproxy-setup.html', 'security.html')
+    #
+    # It has to match what the Docs view offers. windows-server-setup.html was
+    # added to that list and not to this one, so the app linked to a guide the
+    # server refused to serve - a 404 from a link the page itself drew.
+    $docPages = @('readme.html', 'haproxy-setup.html', 'security.html',
+                  'windows-server-setup.html')
     if ($docPages -contains $path.TrimStart('/')) {
         $name = $path.TrimStart('/')
         $file = Join-Path $script:Root $name
