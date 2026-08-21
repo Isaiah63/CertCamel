@@ -1510,6 +1510,89 @@ function Send-RenewalOutcomeAlert {
     }
 }
 
+function Send-SweepFailureAlert {
+    <#
+      The unattended run itself did not complete.
+
+      renew.ps1 already alerts per certificate, so a renewal that fails on its
+      own terms is covered. This is the level above: the sweep could not get
+      that far - it threw, or it launched renew.ps1 and that died before
+      reaching its own alert. That is not a hypothetical. renew-due.ps1 called
+      renew.ps1 with a parameter it does not have for the entire life of the
+      project, and every unattended renewal with real work to do failed in
+      silence, because the only code that alerts on a failed renewal is inside
+      the script that was never getting to run.
+
+      Gated on deploymentFailure, which the manual already describes as "the one
+      that matters most - the only signal an unattended renewal has stopped
+      working". That is exactly this.
+
+      Repeats are held down to one a day rather than one per run: six-hourly
+      runs against a broken install would otherwise send four identical emails
+      every day until somebody looked. A DIFFERENT error sends immediately -
+      the thing that changed is the thing worth reading about.
+
+      Never throws. An alert about a failed run must not become a second
+      failure, and the run has already recorded its own outcome by this point.
+    #>
+    param(
+        [hashtable]$Settings,
+        [string]$ErrorMessage,
+        # Certificates the sweep got far enough to attempt and could not finish.
+        [string[]]$FailedNames = @()
+    )
+
+    try {
+        $alerts = $Settings.alerts
+        if (-not $alerts) { return }
+        if (-not ($alerts.ContainsKey('deploymentFailure') -and $alerts.deploymentFailure.enabled)) { return }
+
+        $state = @{}
+        if (Test-Path $script:AlertStateFile) {
+            try { $state = ConvertTo-HashtableDeep ((Get-Content $script:AlertStateFile -Raw -Encoding UTF8) | ConvertFrom-Json) }
+            catch { $state = @{} }
+        }
+        if ($null -eq $state) { $state = @{} }
+
+        # Same error on the same day is the same news.
+        $key   = 'sweep:fail'
+        $stamp = "$((Get-Date).ToString('yyyy-MM-dd'))|$ErrorMessage"
+        if ($state.ContainsKey($key) -and $state[$key].ContainsKey('stamp') -and
+            [string]$state[$key].stamp -eq $stamp) { return }
+
+        $when = Format-TrackerTime -Time (Get-Date) -Settings $Settings
+        $body = New-Object Text.StringBuilder
+        [void]$body.AppendLine("The unattended renewal run did not complete.")
+        [void]$body.AppendLine("")
+        [void]$body.AppendLine("When:  $when")
+        [void]$body.AppendLine("Error: $ErrorMessage")
+        if (@($FailedNames).Count) {
+            [void]$body.AppendLine("Affected: $(@($FailedNames) -join ', ')")
+        }
+        [void]$body.AppendLine("")
+        [void]$body.AppendLine("Nothing was renewed by this run. It will try again on the next scheduled run,")
+        [void]$body.AppendLine("and will keep failing the same way until the cause is fixed. The full run is on")
+        [void]$body.AppendLine("the Logs page of the tracker.")
+        [void]$body.AppendLine("")
+        [void]$body.AppendLine("This is sent at most once a day while the error stays the same.")
+
+        $subject = 'Cert Camel: unattended renewal FAILED'
+        $receipt = Send-AlertEmail -Settings $Settings -Subject $subject -Body $body.ToString()
+        Write-EmailAuditEvent -Receipt $receipt -Subject $subject
+
+        # Only after a send that did not throw, so a mail server that is down
+        # does not silence the next run as well.
+        $state[$key] = @{ stamp = $stamp; notifiedAt = (Get-Date).ToString('o') }
+        try { Write-TextFileAtomic -Path $script:AlertStateFile -Content ($state | ConvertTo-Json -Depth 5) }
+        catch { Write-RunLog "  ! could not save alert state: $(($_.Exception.Message -split "`n")[0].Trim())" }
+    }
+    catch {
+        $why = ($_.Exception.Message -split "`n")[0].Trim()
+        Write-Output "[$((Get-Date).ToString('HH:mm:ss'))] [warn] Failure alert could not be sent: $why"
+        Write-EmailAuditEvent -ErrorMessage $why -Subject 'Cert Camel: unattended renewal FAILED'
+    }
+}
+
 function Send-ScheduledRenewalAlerts {
     <#
       "This is going to renew tomorrow" - sent once, the run before it happens.

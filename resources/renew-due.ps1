@@ -246,6 +246,16 @@ try {
                   else { "$failed of $(@($due).Count) certificate(s) failed" })
 
     Save-Outcome
+
+    # renew.ps1 alerts per certificate, but only once it is running. A run that
+    # ends with failures still has to say so at the run level, because the
+    # failures that matter most are the ones that stop it getting that far.
+    if (-not $outcome.ok) {
+        Send-SweepFailureAlert -Settings $settings `
+            -ErrorMessage "$failed of $(@($due).Count) certificate(s) failed to renew." `
+            -FailedNames @($outcome.renewed | Where-Object { -not $_.ok } | ForEach-Object { $_.name })
+    }
+
     Invoke-LogRetention
     exit $(if ($outcome.ok) { 0 } else { 1 })
 }
@@ -255,5 +265,14 @@ catch {
     Write-Log $outcome.error 'error'
     Write-AuditEvent -Event 'sweep' -Outcome 'fail' -Source $Source -Detail $outcome.error
     Save-Outcome
+
+    # The path the wrong-parameter bug took: renew.ps1 wrote to stderr, which is
+    # terminating under $ErrorActionPreference = 'Stop', so the run died here
+    # having alerted nobody. $settings may be unset if the failure came before
+    # it was read, in which case there is nothing to send with.
+    if ($settings) {
+        Send-SweepFailureAlert -Settings $settings -ErrorMessage $outcome.error
+    }
+
     exit 1
 }
