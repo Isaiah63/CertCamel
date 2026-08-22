@@ -234,11 +234,13 @@ monthly trigger to reach for instead. `First Time Setup.bat` can register it.
 - Windows, with **Windows PowerShell 5.1** (ships with Windows) and .NET 4.7.1+
 - API access to your DNS provider — Cloudflare, DNS Made Easy and NS1 are wired
   up; adding another is a catalog entry, not new code
-- No admin rights to monitor or renew. Nothing is installed system-wide; renewal
-  fetches [Posh-ACME](https://poshac.me) into `resources\lib\` inside this folder.
-  Administrator is needed only for the two things that genuinely require it:
-  registering tasks that run while you are signed out, and starting the page at
-  boot on a server
+- **Administrator, to run setup.** It registers scheduled tasks that run while
+  you are signed out, writes the hosts file entry, and restricts permissions on
+  the folder holding the private keys — none of which an ordinary account can
+  do. Setup refuses to start without it rather than half-working
+- Nothing is installed system-wide even so. Renewal fetches
+  [Posh-ACME](https://poshac.me) into `resources\lib\` inside this folder, and
+  the scheduled tasks it registers run unelevated
 
 ## Quick start
 

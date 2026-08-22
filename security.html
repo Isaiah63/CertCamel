@@ -294,9 +294,14 @@ ten minutes.</p>
 
 <p><strong>Scope the token.</strong> Every provider here supports a token limited to specific zones
 and specific permissions. Cert Camel needs to read zones and edit records; it never needs account
-access, billing, or anything else the provider offers. On Cloudflare that is
-<em>Zone:Zone:Read</em> and <em>Zone:DNS:Edit</em>, on the zones you actually renew &mdash; not the
-Global API Key, which can do anything to the whole account.</p>
+access, billing, or anything else the provider offers. On Cloudflare that is three permissions
+&mdash; <em>Zone &rarr; Read</em>, <em>DNS &rarr; Read</em> and <em>DNS &rarr; Edit</em> &mdash;
+scoped to the zones you actually renew, and never the Global API Key, which can do anything to the
+whole account.</p>
+
+<p>DNS <em>Read</em> is not optional and is the one people leave off. Writing a challenge record
+looks for an existing one first, so a token with Edit alone fails on that lookup and never reaches
+the write &mdash; presenting as a write-permission problem, which is precisely what it is not.</p>
 
 <div class="callout">
   <div class="h">CNAME delegation: the biggest reduction available</div>

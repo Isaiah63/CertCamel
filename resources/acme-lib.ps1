@@ -159,8 +159,20 @@ $script:PluginCatalog = @{
             # A scoped API token, not the old Global API Key: the global key can
             # do anything to the whole account, a token can be limited to DNS
             # edit on specific zones.
+            #
+            # THREE permissions, and the third is the one everybody misses.
+            # Adding a challenge record does a GET on dns_records first to see
+            # whether one is already there, so DNS needs Read as well as Edit -
+            # a token with only Edit dies on that lookup and never reaches the
+            # write. It then looks like a write-permission problem, which is the
+            # one thing it is not.
+            #
+            # Named the way the current dashboard names them. The old
+            # Zone:Zone:Read / Zone:DNS:Edit spelling matches nothing on the
+            # screen any more: it is a policy builder now, with a scope and
+            # Read/Edit pairs per row.
             @{ Name = 'CFToken'; Label = 'API Token'; Secret = $true; Type = 'text'
-               Hint  = 'Cloudflare dashboard: My Profile > API Tokens > Create Token. Permissions needed are Zone:Zone:Read and Zone:DNS:Edit. Do not use the Global API Key.' }
+               Hint  = 'Cloudflare dashboard: My Profile > API Tokens > Create Token > Create Custom Token. Add three permissions: Zone-Read, DNS-Read and DNS-Edit (that is 3 of 12 under DNS & Zones). DNS-Read matters as much as DNS-Edit - adding a record looks for an existing one first, so Edit alone fails before it writes. Scope it to the zones you renew rather than All Domains. Do not use the Global API Key.' }
         )
     }
 }
@@ -2615,7 +2627,7 @@ function Get-CloudflareZones {
             if ($status -in @(400, 401, 403)) {
                 $msg = "Cloudflare rejected the API token"
                 if ($detail) { $msg += ": $detail" }
-                throw "$msg. It must be a scoped API token (not the Global API Key) with Zone:Read and DNS:Edit permissions."
+                throw "$msg. It must be a scoped API token (not the Global API Key) with three permissions: Zone-Read, DNS-Read and DNS-Edit. DNS-Read is the one usually missing - adding a record looks for an existing one first, so Edit alone fails before it writes."
             }
             if ($detail) { throw "Cloudflare request failed: $detail" }
             throw "Cloudflare request failed: $($_.Exception.Message)"

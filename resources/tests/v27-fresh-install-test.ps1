@@ -101,9 +101,11 @@ Check 'and does not flip the authority behind your back' `
 Write-Host "`nthe credential is proved before anything is ordered"
 Check 'setup tests write access' ($setupSrc -match 'Test-ProviderWriteAccess') `
       'listing zones proves read only, and a read-only token dies partway through an order'
-Check 'it names the read-versus-write distinction' `
-      ($setupSrc -match 'list zones but NOT write') `
-      'the failure has to say which permission is missing or it reads as a bad token'
+Check 'a failure shows the provider''s own error' `
+      ($setupSrc -match '\$wr\.error\) -ForegroundColor White') `
+      'without it the operator sees a verdict and no reason, and guesses at the permission'
+# Which permission to name is provider-specific and lives in v28; what matters
+# here is that the failure is diagnosed rather than merely reported.
 Check 'a stray probe record is reported rather than left silently' `
       ($setupSrc -match 'stray _acme-challenge') `
       'cleanup is best-effort, so a failure to remove it must be said'

@@ -401,8 +401,9 @@ can see what the live certificate has that yours would not, and add the line if 
 <div class="tablewrap"><table>
   <thead><tr><th>Provider</th><th>What you need</th><th>Where</th></tr></thead>
   <tbody>
-    <tr><td>Cloudflare</td><td>API Token with <code>Zone:Read</code> + <code>DNS:Edit</code></td>
-        <td>My Profile &rarr; API Tokens &rarr; <em>Edit zone DNS</em> template</td></tr>
+    <tr><td>Cloudflare</td><td>API Token with <strong>three</strong> permissions:
+        <code>Zone&nbsp;Read</code>, <code>DNS&nbsp;Read</code> and <code>DNS&nbsp;Edit</code></td>
+        <td>My Profile &rarr; API Tokens &rarr; Create Token</td></tr>
     <tr><td>DNS Made Easy</td><td>API Key + Secret Key</td><td>Console &rarr; Account Information</td></tr>
     <tr><td>NS1</td><td>API Key with DNS read + record write</td><td>Account Settings &rarr; API Keys</td></tr>
   </tbody>
@@ -908,9 +909,12 @@ just having them.</p>
     <tr>
       <td>Renewal fails with <code>403 Forbidden</code> right after &ldquo;Adding
       _acme-challenge&hellip;&rdquo;</td>
-      <td>The DNS credential can read zones but not write records. On Cloudflare, tick <strong>Edit</strong>
-      on the DNS permission, not just Read. <strong>Test connection</strong> now catches this before
-      a renewal does.</td>
+      <td>The DNS credential cannot write the record. On Cloudflare the usual cause is a missing
+      <strong>DNS&nbsp;Read</strong> &mdash; adding a record looks for an existing one first, so a token
+      with only <strong>DNS&nbsp;Edit</strong> fails on that lookup and never reaches the write. Three
+      permissions are needed: <code>Zone&nbsp;Read</code>, <code>DNS&nbsp;Read</code>,
+      <code>DNS&nbsp;Edit</code>. Setup and <strong>Test connection</strong> both catch this before a
+      renewal does.</td>
     </tr>
     <tr>
       <td>DNS Made Easy returns a bare <code>403</code></td>
