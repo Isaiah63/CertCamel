@@ -1157,6 +1157,72 @@ function Invoke-LogRetention {
     return @{ removed = $removed; freedMb = [math]::Round($freed / 1mb, 2) }
 }
 
+function Get-TaskScriptPath {
+    <#
+      The script a scheduled task runs, pulled out of its argument string.
+
+      One implementation, because there were two and they disagreed. The status
+      reader anchored -File to the end of the line, which matched three of the
+      four tasks and silently failed on the server one - it carries
+      "-Port 8787 -ServiceMode" afterwards - leaving its path unknown and its
+      "does this point at my folder" answer stuck on the optimistic default.
+      The repair path had its own looser pattern that got that case right.
+
+      Both then got a path with SPACES in it wrong, which is not exotic:
+      C:\Program Files\Cert Camel\resources\serve.ps1 came back as
+      "C:\Program". Quoted and unquoted are genuinely different shapes and are
+      matched separately rather than with one pattern that tries to serve both.
+
+      Returns $null when there is no -File argument to read.
+    #>
+    param([string]$Arguments)
+
+    if (-not $Arguments) { return $null }
+
+    # Quoted first. A quoted path ends at its closing quote and may contain
+    # anything, spaces included; an unquoted one ends at the first whitespace
+    # because that is the only thing that could have terminated it.
+    $m = [regex]::Match($Arguments, '-File\s+(?:"([^"]+)"|(\S+))')
+    if (-not $m.Success) { return $null }
+
+    $path = $(if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value })
+    $path = $path.Trim()
+    if (-not $path) { return $null }
+    return $path
+}
+
+function Get-ForeignCamelTasks {
+    <#
+      Scheduled tasks that belong to a DIFFERENT copy of Cert Camel.
+
+      The task names are fixed - "Cert Camel Renew", "SSL Cert Check" and the
+      rest - so there is exactly one of each on a machine no matter how many
+      copies of the folder exist. Registering them from a second copy does not
+      add anything; it silently repoints the existing ones, and the first copy
+      keeps looking healthy while nothing it owns ever runs again.
+
+      Reads the path out of each registered task and compares it to this folder.
+      A task naming a script somewhere else is either another install or the
+      remains of a folder that has since moved.
+
+      Returns an empty list when the scheduler cannot be read at all, because
+      "I could not look" must not be reported as "there is nothing there".
+    #>
+    $status = Get-AutomationStatus
+    if (-not $status.available) { return @() }
+
+    return @(@($status.tasks) | Where-Object {
+        $_.registered -and -not $_.pathMatches -and $_.commandPath
+    } | ForEach-Object {
+        $owner = ''
+        # The install root, not the script's own folder: the scripts live in
+        # resources\, and naming that would show a path a person does not
+        # recognise as "the other copy".
+        try { $owner = Split-Path (Split-Path $_.commandPath -Parent) -Parent } catch { $owner = '' }
+        @{ name = $_.name; label = $_.label; path = $_.commandPath; folder = $owner }
+    })
+}
+
 function Get-AutomationStatus {
     <#
       What the Windows scheduler actually has registered for this folder.
@@ -1272,11 +1338,17 @@ function Get-AutomationStatus {
                 # into resources\ once, so a task registered before that move
                 # names a path that no longer exists. Same silent failure, and
                 # the same fix - re-run setup.
+                # False until proved otherwise, for a task that IS registered.
+                # It defaults true at the top so an unregistered task does not
+                # report a path mismatch it cannot have - but once a task exists
+                # and its path cannot be read, "matches" is the wrong answer and
+                # the catch below already said so in words.
+                $entry.pathMatches = $false
+
                 foreach ($a in $d.Actions) {
-                    if (-not $a.Arguments) { continue }
-                    $m = [regex]::Match([string]$a.Arguments, '-File\s+"?([^"]+)"?\s*$')
-                    if ($m.Success) {
-                        $entry.commandPath = $m.Groups[1].Value.Trim()
+                    $found = Get-TaskScriptPath -Arguments ([string]$a.Arguments)
+                    if ($found) {
+                        $entry.commandPath = $found
                         $expected = Join-Path $script:AppDir $def.script
                         try {
                             $entry.pathMatches = ([IO.Path]::GetFullPath($entry.commandPath) -eq [IO.Path]::GetFullPath($expected))

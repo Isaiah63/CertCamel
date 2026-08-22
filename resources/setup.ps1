@@ -167,10 +167,13 @@ if ($RepairTasks) {
         $actions  = @($t.Actions)
         $pathOk   = $true
         foreach ($a in $actions) {
-            if (-not $a.Arguments) { continue }
-            $m = [regex]::Match([string]$a.Arguments, '-File\s+"?([^"]+?)"?(\s|$)')
-            if (-not $m.Success) { continue }
-            $current = $m.Groups[1].Value.Trim()
+            # Shared with Get-AutomationStatus rather than matched again here.
+            # There used to be two patterns, they disagreed about the server
+            # task, and both got a path with spaces in it wrong - so a repair
+            # run against C:\Program Files\Cert Camel\... rewrote the wrong
+            # substring of its own argument string.
+            $current = Get-TaskScriptPath -Arguments ([string]$a.Arguments)
+            if (-not $current) { continue }
             $same = $false
         try { $same = ([IO.Path]::GetFullPath($current) -eq [IO.Path]::GetFullPath($expected)) } catch { $null = $_ }   # unparseable: treated as different, so the task is re-pointed
             if ($same) { continue }
@@ -311,6 +314,58 @@ catch {
 
 Write-Host "  Running as $whoAmI (administrator)." -ForegroundColor DarkGray
 Write-Host ""
+
+# --------------------------------------------------------------------------- #
+# 0a. Is another copy of Cert Camel already running this machine?
+# --------------------------------------------------------------------------- #
+# The task names are fixed, so there is one "Cert Camel Renew" on a machine no
+# matter how many copies of the folder exist. Setting up a second copy does not
+# add a second set - it repoints the existing ones at the new folder, and the
+# first copy carries on looking perfectly healthy while nothing it owns ever
+# runs again. Nothing on either page says so.
+#
+# Asked before anything is written, and answerable: a task records the absolute
+# path of the script it runs.
+
+$foreign = @(Get-ForeignCamelTasks)
+if ($foreign.Count) {
+    $folders = @($foreign | ForEach-Object { $_.folder } | Where-Object { $_ } | Sort-Object -Unique)
+
+    Write-Host "  Another copy of Cert Camel is already set up on this machine." -ForegroundColor Yellow
+    Write-Host ""
+    foreach ($f in $foreign) {
+        Write-Host ("    {0,-28} runs from {1}" -f $f.name, $f.path) -ForegroundColor Gray
+    }
+    Write-Host ""
+    Write-Host "  Those task names are fixed, so continuing here does not add a second set" -ForegroundColor DarkGray
+    Write-Host "  - it points the existing ones at this folder. The other copy would keep" -ForegroundColor DarkGray
+    Write-Host "  looking healthy on its own page while nothing it owns ever ran again," -ForegroundColor DarkGray
+    Write-Host "  including renewal." -ForegroundColor DarkGray
+    Write-Host ""
+
+    if ($folders.Count -eq 1 -and (Test-Path -LiteralPath $folders[0])) {
+        Write-Host "  If that folder is the one you actually use, stop and run setup there" -ForegroundColor Yellow
+        Write-Host "  instead:" -ForegroundColor Yellow
+        Write-Host ("    {0}" -f $folders[0]) -ForegroundColor White
+    }
+    else {
+        # A path that no longer exists is the other common shape of this: the
+        # folder was moved or renamed, and the tasks are pointing at nothing.
+        # Taking them over is then exactly the right thing to do.
+        Write-Host "  That folder no longer exists, so those tasks currently run nothing." -ForegroundColor DarkGray
+        Write-Host "  Taking them over here is the repair." -ForegroundColor DarkGray
+    }
+    Write-Host ""
+
+    $takeOver = Read-Host "  Take the tasks over for this folder? (y/N)"
+    if ($takeOver -notmatch '^[Yy]') {
+        Write-Host ""
+        Write-Host "  Stopped. Nothing was changed." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+    Write-Host ""
+}
 
 # --------------------------------------------------------------------------- #
 # 0b. Lock the folder down before anything sensitive goes into it
