@@ -1,0 +1,18 @@
+# Every text file in this repository is stored and checked out with LF endings,
+# including the .bat launchers, which cmd.exe runs perfectly well that way.
+#
+# This exists because a batch of edits made through a tool that rewrote whole
+# files converted three of them from LF to CRLF. Nothing broke - PowerShell,
+# the browser and cmd.exe all accept either - but every line of those files
+# showed as changed, which turned a 117-line diff into an 1867-line one and
+# pointed git blame at the wrong commit for the entire file.
+#
+# eol=lf rather than just text=auto: normalising on commit alone would still let
+# a working copy fill with CRLF and produce the same noise on the next edit.
+* text=auto eol=lf
+
+# Detected as binary anyway; named so nothing can decide otherwise.
+*.png binary
+*.ico binary
+*.pfx binary
+*.cer binary
