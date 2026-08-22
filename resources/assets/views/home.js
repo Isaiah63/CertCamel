@@ -886,16 +886,26 @@
     var watching = !!(data && data.results && data.results.length);
     var haveCert = !!((s.certs || []).length);
 
-    var smtp = (s.settings && s.settings.alerts && s.settings.alerts.smtp) || {};
-    var alerting = !!(smtp.host && (smtp.to || []).length);
+    var alerts = (s.settings && s.settings.alerts) || {};
+    var smtp = alerts.smtp || {};
+
+    /* Configured, or explicitly declined. Both are decisions; only the absence
+       of one is unfinished business.
+       Without the second half this row could never be satisfied by somebody who
+       does not want email, and a card headed "Finish setting up" would sit on
+       their Home page for the life of the install - which is the exact failure
+       this panel is supposed to avoid, since a card that is always there is one
+       nobody reads on the day it has something new to say. */
+    var alerting = !!(smtp.host && (smtp.to || []).length) || !!alerts.none;
 
     var rows = [
       {done: watching, label: 'Watch some certificates',
        note: 'Add the names you want tracked.', href: '#/certificates'},
       {done: haveCert, label: 'Issue a certificate',
        note: 'Cert Camel renews what it has issued, and what it has been told to watch.', href: '#/certificates'},
-      {done: alerting, label: 'Set an address for alerts',
-       note: 'Expiry and failure warnings go nowhere until this is set.', href: '#/settings/alerts'}
+      {done: alerting, label: 'Decide about alerts',
+       note: 'Expiry and failure warnings go nowhere until an address is set — or tick "this install does not send email".',
+       href: '#/settings/alerts'}
     ];
 
     // Everything essential is done - say nothing at all.

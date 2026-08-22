@@ -31,6 +31,7 @@ const scripts = ['assets/app.js', 'assets/views/home.js', 'assets/views/certific
 const day = n => new Date(Date.now() + n * 864e5).toISOString();
 
 let CERTS = [];
+let NONE  = false;
 let SMTP  = { host: '', port: 587, encryption: 'starttls', from: '', to: [],
               authRequired: false, username: '', passwordSet: false };
 let CHECKER = { generated: day(0), results: [] };
@@ -41,7 +42,7 @@ const STATE = () => ({
   zones: { refreshed: day(-0.1), count: 1, errors: [] }, deployment: {},
   settings: { contact: 'x@y.z', defaultCaId: 'le', cas: [], providers: [], targets: [],
               logs: { retentionDays: 90, maxSizeMb: 200 },
-              alerts: { smtp: SMTP,
+              alerts: { smtp: SMTP, none: NONE,
                         expiry: { enabled: false, thresholds: [30] }, renewalSuccess: { enabled: false },
                         deploymentFailure: { enabled: false }, monthlySummary: { enabled: false } } },
   catalog: {}, targetCatalog: {}, acmeReady: true
@@ -129,6 +130,25 @@ SMTP = Object.assign({}, SMTP, { host: '', to: ['ops@example.com'] });
 boot();
 check('a recipient with no server is not done', todoCount() === 1,
       'alerts would be addressed and never sent');
+
+console.log('\ndeclining email is a decision, not an omission');
+/* The row used to be satisfiable only by configuring SMTP, so somebody who
+   would rather check the page themselves had a card headed "Finish setting up"
+   on their Home page for the life of the install. A panel that is always there
+   is one nobody reads on the day it finally has something new to say - which is
+   the whole reason this one removes itself. */
+SMTP = Object.assign({}, SMTP, { host: '', to: [] });
+NONE = true;
+boot();
+check('the alerts row is satisfied by declining', todoCount() === 0,
+      'got ' + todoCount() + ' to-do rows with alerts explicitly declined');
+check('and the panel is gone', !panel(),
+      'declining email still leaves a permanent getting-started card');
+
+NONE = false;
+boot();
+check('un-declining brings the row back', todoCount() === 1,
+      'got ' + todoCount() + ' to-do rows after clearing the flag');
 
 console.log('\nand the panel removes itself when there is nothing left');
 SMTP = Object.assign({}, SMTP, { host: 'smtp.example.com', to: ['ops@example.com'] });

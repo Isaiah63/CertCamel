@@ -980,6 +980,35 @@
       'Send email when a certificate needs attention. The password, if you use one, is stored the ' +
       'same encrypted way as every other credential here.'));
 
+    /* "This install does not send email" records a DECISION, which is the one
+       thing the five toggles below cannot express.
+
+       Each of them already gates its own send, so turning all five off is
+       already a complete off-switch. What it is not is distinguishable from
+       never having configured alerts at all - both look like five falses on a
+       fresh install. So anything that wants to know whether somebody has
+       thought about alerts yet, like the setup checklist on Home, had no way
+       to tell "no thanks" from "not yet" and would go on asking forever.
+
+       It suppresses nothing on its own. Saving with it ticked turns the five
+       toggles off, so the stored state says exactly what the tick-box claims
+       rather than the two disagreeing. */
+    var noneCard = el('div', 'card');
+    var noneOn = el('label', 'check');
+    var noneBox = document.createElement('input');
+    noneBox.type = 'checkbox'; noneBox.className = 'al-none';
+    noneOn.appendChild(noneBox);
+    noneOn.appendChild(el('span', null, 'This install does not send email'));
+    noneCard.appendChild(noneOn);
+    noneCard.appendChild(el('p', 'hint',
+      'Tick this if you would rather check the page yourself. It turns every alert below off and ' +
+      'stops Cert Camel asking you to set email up. Nothing else changes — expiry is still tracked ' +
+      'and certificates still renew.'));
+    noneCard.appendChild(el('p', 'hint bad',
+      'Worth being deliberate about: with no email, a renewal that starts failing is only visible ' +
+      'to somebody who opens this page. That is a real way to reach an expiry unaware.'));
+    p.appendChild(noneCard);
+
     var card = el('div', 'card');
     card.appendChild(el('h4', null, 'Outgoing mail server'));
 
@@ -1120,6 +1149,19 @@
     // this app follows. Only send a password when something was actually typed.
     var pw = root.querySelector('.al-smtp-pass').value;
     if (pw) { alerts.smtp.password = pw; }
+
+    /* Ticking "does not send email" turns the five off here rather than leaving
+       them set and merely ignored. A stored state that disagrees with the
+       tick-box is the same two-sources-of-truth problem the HTTPS switch had:
+       something would eventually read the toggles, not the flag, and send. */
+    alerts.none = root.querySelector('.al-none').checked;
+    if (alerts.none) {
+      alerts.expiry.enabled = false;
+      alerts.scheduledRenewal.enabled = false;
+      alerts.renewalSuccess.enabled = false;
+      alerts.deploymentFailure.enabled = false;
+      alerts.monthlySummary.enabled = false;
+    }
 
     var anyEnabled = alerts.expiry.enabled || alerts.scheduledRenewal.enabled ||
       alerts.renewalSuccess.enabled ||
@@ -1403,6 +1445,7 @@
     root.querySelector('.al-smtp-user').value = smtp.username || '';
     root.querySelector('.al-smtp-pass').placeholder = smtp.passwordSet ? 'Saved — leave blank to keep' : '';
 
+    root.querySelector('.al-none').checked = !!a.none;
     root.querySelector('.al-expiry-enabled').checked = !!(a.expiry && a.expiry.enabled);
     root.querySelector('.al-expiry-thresholds').value = ((a.expiry && a.expiry.thresholds) || [30, 14, 7]).join(', ');
     root.querySelector('.al-scheduled-renewal').checked = !!(a.scheduledRenewal && a.scheduledRenewal.enabled);

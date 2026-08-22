@@ -657,6 +657,8 @@ function Get-StateResponse {
                 renewalSuccess     = @{ enabled = [bool]$settings.alerts.renewalSuccess.enabled }
                 deploymentFailure  = @{ enabled = [bool]$settings.alerts.deploymentFailure.enabled }
                 monthlySummary     = @{ enabled = [bool]$settings.alerts.monthlySummary.enabled }
+                # Read by the Home checklist to tell "no thanks" from "not yet".
+                none               = [bool]($settings.alerts.ContainsKey('none') -and $settings.alerts.none)
             }
             logs = (Get-LogSettings -Settings $settings)
             web  = (Get-WebSettings -Settings $settings)
@@ -964,6 +966,23 @@ function Invoke-SaveSettings {
         $renewOn   = [bool]($al.PSObject.Properties['renewalSuccess']    -and $al.renewalSuccess.enabled)
         $failOn    = [bool]($al.PSObject.Properties['deploymentFailure'] -and $al.deploymentFailure.enabled)
         $monthlyOn = [bool]($al.PSObject.Properties['monthlySummary']    -and $al.monthlySummary.enabled)
+
+        # "This install does not send email" is an explicit decision, and it is
+        # the one thing the five toggles above cannot express: each already gates
+        # its own send, so all-off is a complete off-switch - it is just
+        # indistinguishable from never having been configured, which is what a
+        # fresh install looks like too.
+        #
+        # Enforced here as well as in the page. The toggles are forced off rather
+        # than left set and ignored, so the stored state cannot disagree with the
+        # flag - a disagreement of that shape is what let the old HTTPS tick-box
+        # and the hostname drift apart.
+        $noneOn = [bool]($al.PSObject.Properties['none'] -and $al.none)
+        if ($noneOn) {
+            $expiryOn = $false; $schedOn = $false; $renewOn = $false
+            $failOn   = $false; $monthlyOn = $false
+        }
+
         $anyOn     = $expiryOn -or $schedOn -or $renewOn -or $failOn -or $monthlyOn
 
         if ($anyOn -and (-not $smtp -or -not $smtp.host)) { throw "An SMTP host is required to send any alert." }
@@ -994,6 +1013,7 @@ function Invoke-SaveSettings {
         if ($enc -ne 'none') { $enc = 'starttls' }
 
         $settings.alerts = @{
+            none = $noneOn
             smtp = @{
                 host         = $(if ($smtp) { [string]$smtp.host } else { '' })
                 port         = $(if ($smtp -and $smtp.port) { [int]$smtp.port } else { 587 })
