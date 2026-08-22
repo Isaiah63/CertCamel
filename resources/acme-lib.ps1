@@ -5635,17 +5635,51 @@ function Get-TrackerAddressStatus {
         $out.portCheck.detail = "$Port - already in use by this server"
     }
     else {
-        $holder = $null
+        # Ask by BINDING, not by asking the OS who is listening.
+        #
+        # Get-NetTCPConnection is CIM-backed and measured at 1651 ms on its first
+        # call in a process and ~140 ms after - and the first call is the one a
+        # person waits for, because a freshly started server is on a random port,
+        # so the first preflight after typing a real port always took the slow
+        # path. On a single-threaded server that stall is paid by every other
+        # request too.
+        #
+        # A bind attempt answers the question actually being asked - can this
+        # server use this port - in about 0 ms once warm. It is also more
+        # accurate: the cmdlet matches a listener on ANY interface, so a port
+        # held only on an external address was reported as taken when it would
+        # not have blocked a loopback bind at all.
+        $free = $false
+        $probe = $null
         try {
-            $conn = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)[0]
-            if ($conn) { $holder = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue }
-        } catch { $null = $_ }   # cannot name the listening process; the caller still knows the port is taken
-        if ($holder) {
-            $out.portCheck.detail = "$Port is held by $($holder.ProcessName) (pid $($holder.Id))."
+            $probe = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, $Port)
+            $probe.Start()
+            $free = $true
         }
-        else {
+        catch { $free = $false }   # in use, or refused - either way this server cannot have it
+        finally { if ($probe) { try { $probe.Stop() } catch { $null = $_ } } }
+
+        if ($free) {
             $out.portCheck.ok = $true
             $out.portCheck.detail = "$Port is free"
+        }
+        else {
+            # Only now is it worth naming the holder, and only as decoration.
+            # The old code decided free-versus-held FROM this lookup, so a port
+            # held by a process it could not open - anything running as SYSTEM -
+            # came back with no holder and was reported as "free". Whether the
+            # port can be bound is settled above; this can only add a name.
+            $holder = $null
+            try {
+                $conn = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)[0]
+                if ($conn) { $holder = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue }
+            } catch { $null = $_ }   # cannot name it; it is still held, which is the part that matters
+
+            $out.portCheck.detail = $(if ($holder) {
+                "$Port is held by $($holder.ProcessName) (pid $($holder.Id))."
+            } else {
+                "$Port is already in use by another program."
+            })
         }
     }
 
