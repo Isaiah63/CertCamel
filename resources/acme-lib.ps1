@@ -169,6 +169,223 @@ function New-TrackerDirectories {
     }
 }
 
+# --------------------------------------------------------------------------- #
+# Permissions
+# --------------------------------------------------------------------------- #
+
+function Set-CamelAcl {
+    <#
+      Break inheritance on one path and grant it to exactly three principals:
+      SYSTEM, Administrators, and the account this is running as.
+
+      THE THIRD ONE IS NOT REDUNDANT, and it is the reason this is a function
+      rather than a Set-Acl at each call site. The scheduled tasks run
+      -RunLevel Limited, which hands the process a FILTERED token, and in a
+      filtered token the Administrators SID grants nothing. A path given only to
+      SYSTEM and Administrators is a path the running server cannot read - while
+      every interactive test of it passes, because those are all elevated.
+      Deleting the third rule as "covered by Administrators anyway" breaks
+      renewal in a way that only shows up unattended.
+
+      Identities are SIDs, not names. "BUILTIN\Administrators" is localised, so
+      a name would silently fail to resolve on a non-English Windows and the
+      rule would simply not be added - which is the same lockout, arrived at
+      differently.
+
+      Verified after writing, and rolled back if the verification fails. Getting
+      this wrong produces an install nobody can run, so "Set-Acl did not throw"
+      is not good enough - the same reasoning that made the TLS key store prove
+      itself with a real handshake.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+
+        # Let children inherit. Wanted on the install root - inheritance is what
+        # makes this one ACL write instead of a walk over several thousand files,
+        # most of which are .git and node_modules - and on the data folders.
+        # Ignored for a file, where the flags are invalid rather than merely
+        # pointless.
+        [switch]$Inheritable
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { throw "$Path does not exist." }
+
+    $isDir = (Get-Item -LiteralPath $Path -Force).PSIsContainer
+
+    # Everything below writes a FRESHLY CONSTRUCTED security object rather than
+    # the one Get-Acl returns, and only ever touches the DACL.
+    #
+    # Handing Set-Acl an object that came from Get-Acl asks it to write every
+    # section that object carries - owner, group, and the audit SACL - and the
+    # SACL needs SeSecurityPrivilege, which nothing here holds. Measured: the
+    # rollback below failed with "The process does not possess the
+    # 'SeSecurityPrivilege' privilege" when written the obvious way, which would
+    # have made the safety net the one part guaranteed not to work.
+    $before        = Get-Acl -Path $Path
+    $wasProtected  = $before.AreAccessRulesProtected
+    $wasRules      = @($before.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
+
+    function New-DaclOnly {
+        param([bool]$Protected, $Rules)
+        $sd = if ($isDir) { New-Object Security.AccessControl.DirectorySecurity }
+              else        { New-Object Security.AccessControl.FileSecurity }
+        $sd.SetAccessRuleProtection($Protected, $false)
+        foreach ($r in @($Rules)) { $sd.AddAccessRule($r) }
+        return $sd
+    }
+
+    $me   = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $sids = @(
+        (New-Object Security.Principal.SecurityIdentifier(
+            [Security.Principal.WellKnownSidType]::LocalSystemSid, $null)),
+        (New-Object Security.Principal.SecurityIdentifier(
+            [Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)),
+        $me.User
+    )
+
+    # Checked BEFORE anything is written, because the rollback below is a
+    # backstop rather than a guarantee - see the note on it. Three distinct,
+    # non-null SIDs is the whole precondition; if the token or the well-known
+    # lookups ever hand back something unexpected, this is the moment to find
+    # out, while the path still has its original permissions.
+    if (@($sids | Where-Object { $_ }).Count -ne 3) {
+        throw "could not resolve the three principals to grant on $Path."
+    }
+    if (@($sids | ForEach-Object { $_.Value } | Select-Object -Unique).Count -ne 3) {
+        throw "the three principals to grant on $Path are not distinct."
+    }
+
+    $inherit = [Security.AccessControl.InheritanceFlags]::None
+    if ($Inheritable -and $isDir) {
+        $inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                   [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+
+    $wanted = @($sids | ForEach-Object {
+        New-Object Security.AccessControl.FileSystemAccessRule(
+            $_, 'FullControl', $inherit, [Security.AccessControl.PropagationFlags]::None, 'Allow')
+    })
+
+    # Nothing to do if it is already exactly right, and this is not just an
+    # optimisation - it is what makes setup safe to run twice.
+    #
+    # Measured: re-applying an identical DACL to a path whose DACL is ALREADY
+    # protected fails with "The process does not possess the
+    # 'SeSecurityPrivilege' privilege". So a second setup run would throw on
+    # every path it had already protected on the first. Comparing first turns
+    # the repeat run into a no-op, which is both correct and faster.
+    $current = Get-Acl -Path $Path
+    if ($current.AreAccessRulesProtected) {
+        $now = @($current.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
+        $sameShape = ($now.Count -eq $wanted.Count)
+        if ($sameShape) {
+            foreach ($w in $wanted) {
+                $match = @($now | Where-Object {
+                    $_.IdentityReference.Value -eq $w.IdentityReference.Value -and
+                    $_.AccessControlType     -eq $w.AccessControlType -and
+                    $_.FileSystemRights      -eq $w.FileSystemRights -and
+                    $_.InheritanceFlags      -eq $w.InheritanceFlags -and
+                    $_.PropagationFlags      -eq $w.PropagationFlags
+                })
+                if (-not $match.Count) { $sameShape = $false; break }
+            }
+        }
+        if ($sameShape) { return }
+    }
+
+    Set-Acl -Path $Path -AclObject (New-DaclOnly -Protected $true -Rules $wanted)
+
+    # Read back as SIDs rather than names: an unresolvable name would compare
+    # unequal and report a false failure on the very systems the SIDs are here
+    # to protect.
+    $granted = @((Get-Acl -Path $Path).GetAccessRules(
+                    $true, $false, [Security.Principal.SecurityIdentifier]) |
+                 Where-Object { $_.AccessControlType -eq 'Allow' } |
+                 ForEach-Object { $_.IdentityReference.Value })
+
+    # Rollback is a backstop, not a guarantee, and the difference is measured:
+    # putting inheritance BACK on a path whose inheritance has just been broken
+    # needs SeSecurityPrivilege, which an unelevated caller does not hold, and
+    # fails with PrivilegeNotHeldException. Setup is elevated, so it works
+    # there - but nothing above depends on it, which is why the preconditions
+    # are checked before the first write rather than repaired after it.
+    $missing = @($sids | Where-Object { $granted -notcontains $_.Value })
+    if ($missing.Count) {
+        $restored = $false
+        try {
+            Set-Acl -Path $Path -AclObject (New-DaclOnly -Protected $wasProtected -Rules $wasRules)
+            $restored = $true
+        }
+        catch { $null = $_ }   # reported below; the throw is what must not be missed
+        throw ("permissions on $Path did not take: no rule for " +
+               (($missing | ForEach-Object { $_.Value }) -join ', ') + '. ' +
+               $(if ($restored) { 'The previous permissions have been put back.' }
+                 else { 'The previous permissions could NOT be put back - check this path by hand.' }))
+    }
+}
+
+function Get-CamelProtectedPaths {
+    <#
+      What Protect-CamelInstall will act on, without acting on it.
+
+      Separate from the function that applies them so the list can be asserted
+      by a test, and shown by setup, without a single ACL being written. The
+      alternative - a test that calls Protect-CamelInstall to see what it covers
+      - would harden the real install as a side effect of being run, on a
+      machine where putting the permissions back needs a privilege the test may
+      not hold.
+    #>
+    return @(
+        @{ path = $script:Root;        label = 'install folder'; inheritable = $true  },
+        @{ path = $script:CertsDir;    label = 'certificates';   inheritable = $true  },
+        @{ path = $script:AcmeState;   label = 'ACME state';     inheritable = $true  },
+        @{ path = $script:JobsDir;     label = 'job files';      inheritable = $true  },
+        @{ path = $script:SecretsFile; label = 'secrets.xml';    inheritable = $false },
+        @{ path = $script:AuditFile;   label = 'audit.log';      inheritable = $false }
+    )
+}
+
+function Protect-CamelInstall {
+    <#
+      Apply the two layers this install needs, and say what happened to each.
+
+      Layer one is the install root, which stops an ordinary user reaching the
+      launchers at all, and reaches every child by inheritance.
+
+      Layer two re-applies the same three principals directly to the paths
+      holding key material. On a fresh install that is redundant - and it is the
+      point. If the root is ever relaxed, moved, or restored from a backup that
+      carried different permissions with it, the private keys do not quietly
+      become readable along with everything else.
+
+      Never throws. Each path is reported so a partial result is visible rather
+      than stopping at the first problem, because the paths that failed are
+      exactly what somebody needs to know.
+    #>
+    $targets = @(Get-CamelProtectedPaths)
+
+    $results = @()
+    foreach ($t in $targets) {
+        if (-not (Test-Path -LiteralPath $t.path)) {
+            # A file that does not exist yet is not a failure. secrets.xml and
+            # audit.log both appear on first use, and both are created inside a
+            # folder this function has already protected, so they inherit.
+            $results += @{ label = $t.label; ok = $true; skipped = $true; error = '' }
+            continue
+        }
+        try {
+            if ($t.inheritable) { Set-CamelAcl -Path $t.path -Inheritable }
+            else                { Set-CamelAcl -Path $t.path }
+            $results += @{ label = $t.label; ok = $true; skipped = $false; error = '' }
+        }
+        catch {
+            $results += @{ label = $t.label; ok = $false; skipped = $false
+                           error = ($_.Exception.Message -split "`n")[0].Trim() }
+        }
+    }
+    return $results
+}
+
 function Expand-ListArgument {
     <#
       Rebuild a list that had to cross a `powershell.exe -File` boundary.

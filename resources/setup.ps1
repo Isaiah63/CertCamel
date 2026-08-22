@@ -313,6 +313,40 @@ Write-Host "  Running as $whoAmI (administrator)." -ForegroundColor DarkGray
 Write-Host ""
 
 # --------------------------------------------------------------------------- #
+# 0b. Lock the folder down before anything sensitive goes into it
+# --------------------------------------------------------------------------- #
+# Deliberately here, ahead of every other step: this is the run that creates
+# secrets.xml and the first certificate, and permissions applied afterwards
+# would leave a window where both sat under whatever the parent folder happened
+# to allow. The directories are created first for the same reason - an
+# unprotected folder that appears later inherits from a root that is already
+# correct.
+#
+# Not a prompt. There is no sensible answer other than yes, and the one thing
+# the security review was most right about was that this had been left manual.
+
+New-TrackerDirectories
+
+Write-Host "  Permissions" -ForegroundColor Cyan
+$aclResults = Protect-CamelInstall
+foreach ($r in $aclResults) {
+    if ($r.skipped)  { Write-Host ("        {0,-16} not created yet - will inherit" -f $r.label) -ForegroundColor DarkGray }
+    elseif ($r.ok)   { Write-Host ("        {0,-16} restricted to you, SYSTEM and Administrators" -f $r.label) -ForegroundColor Green }
+    else             { Write-Host ("        {0,-16} FAILED: {1}" -f $r.label, $r.error) -ForegroundColor Red }
+}
+
+if (@($aclResults | Where-Object { -not $_.ok }).Count) {
+    Write-Host ""
+    Write-Host "  Some permissions could not be applied. Private keys written here would be" -ForegroundColor Yellow
+    Write-Host "  readable by anyone who can read the folder, so this is worth fixing before" -ForegroundColor Yellow
+    Write-Host "  going further rather than after." -ForegroundColor Yellow
+    Write-Host ""
+    $carryOn = Read-Host "  Continue anyway? (Y/N)"
+    if ($carryOn -notmatch '^[Yy]') { Write-Host ""; exit 1 }
+}
+Write-Host ""
+
+# --------------------------------------------------------------------------- #
 # 1. Sanity check
 # --------------------------------------------------------------------------- #
 
