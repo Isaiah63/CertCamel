@@ -167,6 +167,7 @@ deliberate about rather than surprised by.</p>
     <li><a href="#keys">Private keys on disk</a></li>
     <li><a href="#loopback">Loopback, the token, the Host check</a></li>
     <li><a href="#credentials">Credentials</a></li>
+    <li><a href="#delegation">Narrowing the DNS credential</a></li>
     <li><a href="#logs">What is recorded</a></li>
     <li><a href="#admin">What needs administrator</a></li>
     <li><a href="#not">What it does not do</a></li>
@@ -184,8 +185,25 @@ deliberate about rather than surprised by.</p>
   keys</strong>. That is how PEM works, and every ACME client on every platform is the same. Nothing
   in this tool can change it &mdash; a load balancer has to be handed a key it can actually use.</p>
   <p>Both folders are excluded from git. <strong>Gitignore does not stop file sync.</strong> If this
-  folder lives inside OneDrive, Dropbox, Google Drive or similar, exclude those two folders &mdash;
-  otherwise your private keys are being copied to somebody else's servers.</p>
+  folder lives inside OneDrive, Dropbox, Google Drive or similar, your private keys are being copied
+  to somebody else's servers &mdash; and the permissions below do not travel with the copy.</p>
+  <p>Setup refuses to continue when it finds the folder inside a sync client, and the server repeats
+  the warning on every start &mdash; because a folder that was local on the day it was set up can be
+  moved into OneDrive months later, or relocated there by Known Folder Move, and nothing would ask
+  again.</p>
+</div>
+
+<div class="callout">
+  <div class="h">What the installer does about it</div>
+  <p>Setup breaks inheritance on the install folder and grants it to three principals only: SYSTEM,
+  Administrators, and the account it was set up as. <code>certs\</code>, <code>secrets.xml</code>,
+  <code>acme-state\</code>, <code>jobs\</code> and <code>audit.log</code> each get the same
+  restriction applied directly as well, so relaxing or moving the parent does not quietly widen
+  access to the keys.</p>
+  <p>That third principal is not redundant. The scheduled tasks run with a <em>filtered</em> token,
+  in which the Administrators SID grants nothing &mdash; so a folder given only to SYSTEM and
+  Administrators is one the running server cannot read, while every interactive test of it passes
+  because those are all elevated.</p>
 </div>
 
 <p>Worth separating from the other thing people mean by &ldquo;keys&rdquo;: your <em>API
@@ -262,7 +280,41 @@ the normal bar for a local tool; it is not a vault.</p>
   hardware; credentials do not.</p>
 </div>
 
-<h2 id="logs">4. What is recorded, and what never is</h2>
+<h2 id="delegation">4. Narrowing the DNS credential</h2>
+
+<p>The DNS API token is the widest thing Cert Camel holds. Everything else it stores affects
+certificates; this one can edit DNS, and DNS is how mail is routed and how names are proved. It is
+worth reducing on purpose, and there are two steps &mdash; one that costs nothing and one that costs
+ten minutes.</p>
+
+<p><strong>Scope the token.</strong> Every provider here supports a token limited to specific zones
+and specific permissions. Cert Camel needs to read zones and edit records; it never needs account
+access, billing, or anything else the provider offers. On Cloudflare that is
+<em>Zone:Zone:Read</em> and <em>Zone:DNS:Edit</em>, on the zones you actually renew &mdash; not the
+Global API Key, which can do anything to the whole account.</p>
+
+<div class="callout">
+  <div class="h">CNAME delegation: the biggest reduction available</div>
+  <p>A scoped token can still edit every record in the zones it covers, including the ones that
+  matter. Delegation removes that: the ACME challenge is answered in a <em>different</em> zone, and
+  the credential only ever has rights there.</p>
+  <p>Create a throwaway zone &mdash; <code>acme.example.net</code>, or a subdomain nothing else
+  uses &mdash; and in your real zone point the challenge name at it, once, permanently:</p>
+  <pre><code>_acme-challenge.tracker.example.com.  CNAME  tracker.acme.example.net.</code></pre>
+  <p>Then issue Cert Camel a credential for the throwaway zone only. Validation follows the CNAME,
+  the TXT record is written where the credential has rights, and the certificate is issued exactly as
+  before. A stolen token can now write challenge records in a zone that serves nothing.</p>
+  <p>This applies whatever ACME client you use, and it is the single largest reduction in blast
+  radius available to any of them.</p>
+</div>
+
+<p>Both steps are worth doing before production, and neither is something Cert Camel can do for you
+&mdash; they happen at your DNS provider. What Cert Camel does is refuse to pretend the credential is
+narrower than it is: <em>Settings &rarr; DNS Automation</em> shows exactly which zones the token can
+see, because a token that turns out to cover more than expected is worth knowing about on the day it
+is added rather than the day it leaks.</p>
+
+<h2 id="logs">5. What is recorded, and what never is</h2>
 
 <p><code>audit.log</code> records one line per state change &mdash; when, who, whether a person or
 the scheduler did it, what changed, and whether it worked. It is append-only and deliberately exempt
@@ -279,7 +331,7 @@ Credential changes are recorded too, by key <em>name</em> only.</p>
   the log is read, and the file itself is swept once the run finishes.</p>
 </div>
 
-<h2 id="admin">5. What needs administrator, and why</h2>
+<h2 id="admin">6. What needs administrator, and why</h2>
 
 <div class="tablewrap"><table>
   <thead><tr><th>Task</th><th>Admin?</th><th>Why</th></tr></thead>
@@ -297,7 +349,7 @@ Credential changes are recorded too, by key <em>name</em> only.</p>
 silently fatal: the renewal never fires, Task Scheduler still reports the task as healthy, and the
 first symptom is an expired certificate.</p>
 
-<h2 id="not">6. What it does not do</h2>
+<h2 id="not">7. What it does not do</h2>
 
 <ul>
   <li>No telemetry, no analytics, no phoning home. Nothing here runs on a timer and reports back,
@@ -334,7 +386,7 @@ button; nothing else in the tool makes it, and no scheduled task ever will.</p>
 and a stall timeout, and the release lookup times out in ten seconds &mdash; the page is served by a
 single-threaded loop, so anything that blocked there would take the whole console with it.</p>
 
-<h2 id="report">7. Reporting something</h2>
+<h2 id="report">8. Reporting something</h2>
 
 <p><strong>Please do not open a public issue for a security problem.</strong> Use GitHub's private
 vulnerability reporting &mdash; the <em>Report a vulnerability</em> button on the repository's

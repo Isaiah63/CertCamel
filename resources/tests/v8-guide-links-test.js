@@ -23,7 +23,13 @@ const scripts = ['assets\\app.js', 'assets\\views\\home.js', 'assets\\views\\cer
 // root of the URL space either way.
 const GUIDE_DIR = path.join(ROOT, '..') + path.sep;
 const guides = {};
-['readme.html', 'haproxy-setup.html', 'security.html', 'windows-server-setup.html'].forEach(function(f){
+// Read from the folder rather than from a list written here. Both this map and
+// the link selector below used to name the four guides that existed at the
+// time, so adding a fifth changed nothing: its links were not collected, its
+// anchors were never resolved, and the suite went on passing while the page it
+// was supposed to check walked past it.
+const GUIDE_FILES = fs.readdirSync(GUIDE_DIR).filter(function(f){ return /\.html$/.test(f); });
+GUIDE_FILES.forEach(function(f){
   const src = fs.readFileSync(GUIDE_DIR + f, 'utf8');
   const ids = {};
   (src.match(/id="[^"]+"/g) || []).forEach(function(m){ ids[m.slice(4, -1)] = true; });
@@ -84,8 +90,22 @@ w.CertCamel.loadState(function(){
     w.dispatchEvent(new w.Event('hashchange'));
   });
 
-  const links = Array.from(d.querySelectorAll(
-    'a[href*="readme.html"], a[href*="haproxy-setup.html"], a[href*="security.html"], a[href*="windows-server-setup.html"]'));
+  /* Any link to a .html file, rather than a list of the ones that existed when
+     this was written.
+
+     The selector used to name the four guides explicitly. Adding a fifth page
+     and wiring it into the Docs view therefore changed nothing here: the link
+     was not collected, so its anchors were never resolved and it was never
+     compared against the server's allow-list. A link-checker that silently
+     skips new links is worse than none, because the suite goes on passing
+     while the thing it exists to catch walks straight past it.
+
+     Guarded below by requiring at least as many links as there are guides on
+     disk, so a selector that stops matching cannot pass by finding nothing. */
+  const links = Array.from(d.querySelectorAll('a[href]')).filter(function(a){
+    const href = a.getAttribute('href') || '';
+    return /\.html(#|$)/.test(href);
+  });
 
   console.log('\n=== every guide link resolves ===');
   check('the views rendered some guide links', links.length > 0, 'found none');
@@ -134,6 +154,23 @@ w.CertCamel.loadState(function(){
     check('the server serves ' + f, served.indexOf(f) !== -1,
           'linked by the Docs view but missing from $docPages in serve.ps1, so it 404s');
   });
+
+  /* And the other direction: a guide the server will serve that nothing links
+     to is a page nobody will find. Not a hard failure - a page can be
+     deliberately reachable only by URL - but it has to be deliberate, and this
+     is where that gets noticed. */
+  served.forEach(function(f){
+    check(f + ' is linked from somewhere in the app', wanted.indexOf(f) !== -1,
+          'in $docPages but no view links to it, so the only way to reach it is to know the URL');
+  });
+
+  // A selector that matches nothing would sail through every check above by
+  // having no links to test. Pinned against what is actually on disk.
+  const onDisk = GUIDE_FILES;
+  check('collected at least as many distinct guides as exist on disk',
+        wanted.length >= onDisk.length,
+        'found ' + wanted.length + ' linked of ' + onDisk.length + ' on disk (' + onDisk.join(', ') +
+        ') - the selector is matching less than it should');
 
   // An exception during render means a panel never built, and its links were
   // never checked - which would let this suite pass by not looking.

@@ -1328,7 +1328,7 @@ function Invoke-Route {
     # added to that list and not to this one, so the app linked to a guide the
     # server refused to serve - a 404 from a link the page itself drew.
     $docPages = @('readme.html', 'haproxy-setup.html', 'security.html',
-                  'windows-server-setup.html')
+                  'windows-server-setup.html', 'console-certificate.html')
     if ($docPages -contains $path.TrimStart('/')) {
         $name = $path.TrimStart('/')
         $file = Join-Path $script:Root $name
