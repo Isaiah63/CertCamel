@@ -65,6 +65,33 @@
   function renderAudit(host, res){
     var a = (res && res.audit) || {};
 
+    /* What the "who" column can and cannot tell you.
+
+       It records the Windows account the action RAN AS, which is exactly right
+       for anything the scheduler did and easy to misread for anything done
+       here. The console runs as one account, so every console-driven entry
+       carries that account's name whoever was sitting in front of it — and on a
+       server where several administrators use the same install, that is every
+       one of them.
+
+       Said out loud rather than left to be discovered, because an audit trail
+       that looks like it names people and does not is worse than one that
+       plainly does not: it would be quoted in an incident review as evidence of
+       something it never recorded.
+
+       Attributing a request to the person who made it was measured rather than
+       assumed: resolving the loopback connection back to a Windows account took
+       about 1.2 seconds. On a server that answers requests one at a time, that
+       is a cost paid by everyone, for a distinction between administrators who
+       can all read the private keys off disk anyway. Not built, deliberately. */
+    var who = el('p', 'mini');
+    who.textContent =
+      'The "who" column is the Windows account each action ran as. Scheduled work names the ' +
+      'account the task runs as; anything done from this console names the account the console ' +
+      'runs as, whoever was using it. There is no per-person sign-in, so entries made here are ' +
+      'attributable to the install rather than to an individual.';
+    host.appendChild(who);
+
     var bar = el('div', 'toolbar');
     var lab = el('label', 'mini');
     lab.textContent = 'Show ';
