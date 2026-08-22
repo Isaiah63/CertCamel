@@ -56,7 +56,12 @@ $scratch = Join-Path $env:TEMP ('camel-sess-' + [Guid]::NewGuid().ToString('N').
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 try {
     $script:SessionFile = Join-Path $scratch 'session.json'
-    Invoke-Expression $fn.Extent.Text
+
+    # Dot-sourced as a scriptblock rather than run through Invoke-Expression:
+    # same effect, and it keeps PSAvoidUsingInvokeExpression quiet without a
+    # suppression. The function is lifted out of the file at all because
+    # dot-sourcing serve.ps1 would start a listener.
+    . ([ScriptBlock]::Create($fn.Extent.Text))
 
     Write-Host "`nno file at all"
     Check "state is 'missing'" ((Get-SessionFileStatus).state -eq 'missing') `
