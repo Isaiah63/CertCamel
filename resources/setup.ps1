@@ -766,6 +766,63 @@ if ($zoneCache) {
         Write-Host "        That usually means the token is scoped to zones it cannot list." -ForegroundColor DarkGray
         Write-Host "        Widen it and run setup again, or fix it later under Settings." -ForegroundColor DarkGray
     }
+
+    # --- prove it can WRITE, not just read ---------------------------------- #
+    # Listing zones proves read access and nothing else. A token with Zone:Read
+    # but not DNS:Edit lists everything perfectly and then dies partway through
+    # an order, after an account has been registered and a certificate ordered -
+    # which is the `403 Forbidden right after "Adding _acme-challenge..."` case
+    # in the troubleshooting table.
+    #
+    # This is also what makes it safe to issue from production rather than
+    # staging. Staging used to be the guard against spending rate limit on an
+    # unproven configuration; proving the configuration directly is a better
+    # guard, and it does not leave somebody with a certificate no browser
+    # trusts.
+    #
+    # Test-ProviderWriteAccess writes a real challenge record through the
+    # plugin's own Add-DnsTxt and removes it again, so it exercises the exact
+    # code path a renewal takes.
+    if ($zoneNames.Count) {
+        Write-Host ""
+        Write-Host "        Checking it can write records too..." -ForegroundColor DarkGray
+
+        $writeProv = @(@(Get-TrackerSettings).providers)[0]
+        $writeZone = @(@($zoneCache.zones) |
+                       Where-Object { $_.providerId -eq $writeProv.id } |
+                       ForEach-Object { $_.zone })[0]
+        if (-not $writeZone) { $writeZone = $zoneNames[0] }
+
+        $wr = $null
+        try { $wr = Test-ProviderWriteAccess -Provider $writeProv -Zone $writeZone }
+        catch { $wr = @{ wrote = $false; cleaned = $false; error = ($_.Exception.Message -split "`n")[0].Trim() } }
+
+        if ($wr.wrote) {
+            Write-Host ("        Wrote and removed a test record in {0}." -f $writeZone) -ForegroundColor Green
+            if (-not $wr.cleaned) {
+                # Harmless - a CA looks for a matching value among the TXT
+                # records, so a spare one is ignored - but never left unsaid.
+                Write-Host ("        Could not remove it again. A stray _acme-challenge.{0} TXT" -f $writeZone) -ForegroundColor Yellow
+                Write-Host "        record is harmless, but worth deleting when convenient." -ForegroundColor DarkGray
+            }
+        }
+        else {
+            Write-Host "        The token can list zones but NOT write records." -ForegroundColor Red
+            if ($wr.error) { Write-Host ("        {0}" -f $wr.error) -ForegroundColor DarkGray }
+            Write-Host ""
+            Write-Host "        Renewal writes a _acme-challenge TXT record to prove you control" -ForegroundColor DarkGray
+            Write-Host "        the domain, so nothing can be issued until this works. On" -ForegroundColor DarkGray
+            Write-Host "        Cloudflare it means the DNS permission is set to Read rather than" -ForegroundColor DarkGray
+            Write-Host "        Edit." -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "        Fix the token and run setup again. Continuing now would order a" -ForegroundColor Yellow
+            Write-Host "        certificate that cannot complete." -ForegroundColor Yellow
+            Write-Host ""
+
+            $carryOn = Read-Host "        Continue anyway? (y/N)"
+            if ($carryOn -notmatch '^[Yy]') { Write-Host ""; exit 1 }
+        }
+    }
 }
 
 # --------------------------------------------------------------------------- #
@@ -929,76 +986,6 @@ if ($wantHttps -notmatch '^[Nn]') {
         Show-Check $st.portCheck.ok   'Port'        $st.portCheck.detail
         Show-Check $st.hosts.ok       'Hosts file'  $st.hosts.detail
         Write-Host ""
-
-        # --------------------------------------------------------------------- #
-        # Staging would hand back a certificate the browser rejects
-        # --------------------------------------------------------------------- #
-        # The certificate authority ships with staging ON, and the reason is good
-        # - a first run against production burns real rate limit on a
-        # configuration nobody has proven yet, and Let's Encrypt allows only five
-        # identical certificates a week.
-        #
-        # It is the wrong answer for THIS certificate. A staging certificate is
-        # not publicly trusted, so setup would finish by announcing HTTPS and
-        # handing over a console the browser warns about - which reads as setup
-        # having gone wrong rather than as a deliberate default.
-        #
-        # Asked here, before either issuing branch below, because this is the
-        # last point where it costs nothing. By now the DNS credential has proved
-        # itself against the provider by listing real zones in step 3, which is
-        # exactly the unproven configuration the staging default guards against.
-        # Get-CaProfile throws when nothing is configured. That cannot happen on
-        # a fresh install - the built-in authority is seeded by
-        # New-DefaultSettings - but this is a question about a certificate, not
-        # the step that issues one, and it must not be what ends setup.
-        $askCa = $null
-        try { $askCa = Get-CaProfile -Settings (Get-TrackerSettings) } catch { $askCa = $null }
-
-        if ($askCa -and $askCa.useStaging -and -not $st.certificate.ok) {
-            Write-Host ("        {0} is set to STAGING." -f $askCa.label) -ForegroundColor Yellow
-            Write-Host ""
-            Write-Host "        A staging certificate is real, but no browser trusts it. This page" -ForegroundColor DarkGray
-            Write-Host "        would open with a certificate warning, which looks like setup went" -ForegroundColor DarkGray
-            Write-Host "        wrong rather than like a setting you chose." -ForegroundColor DarkGray
-            Write-Host ""
-            Write-Host "        Staging is on by default so a first run cannot burn production rate" -ForegroundColor DarkGray
-            Write-Host "        limit on a configuration nobody has tested. Yours has just been" -ForegroundColor DarkGray
-            Write-Host "        tested - step 3 listed your zones through the credential you gave." -ForegroundColor DarkGray
-            Write-Host ""
-            Write-Host "        This switches the authority itself, so it applies to every" -ForegroundColor Yellow
-            Write-Host "        certificate from here on, not only this one." -ForegroundColor Yellow
-            Write-Host ""
-
-            $goLive = Read-Host "        Switch to production? (Y/n)"
-            if ($goLive -notmatch '^[Nn]') {
-                try {
-                    $sCa = Get-TrackerSettings
-                    foreach ($c in @($sCa.cas)) {
-                        if ($c.id -eq $askCa.id) { $c.useStaging = $false }
-                    }
-                    Save-TrackerSettings -Settings $sCa
-                    Write-Host ("        {0} is now production. Certificates will be publicly trusted." -f $askCa.label) -ForegroundColor Green
-
-                    # The account is per-CA and staging counts as a different CA,
-                    # so the order below registers a new one against production.
-                    # Said out loud because it is the difference between a pause
-                    # and something looking stuck.
-                    Write-Host "        The first order will register an account there, which adds a" -ForegroundColor DarkGray
-                    Write-Host "        few seconds." -ForegroundColor DarkGray
-                }
-                catch {
-                    Write-Host ("        Could not switch: {0}" -f ($_.Exception.Message -split "`n")[0].Trim()) -ForegroundColor Red
-                    Write-Host "        Change it under Settings > Certificate Authorities instead." -ForegroundColor DarkGray
-                }
-            }
-            else {
-                Write-Host "        Staying on staging. The console will show a certificate warning," -ForegroundColor Yellow
-                Write-Host "        which is expected and not a fault." -ForegroundColor DarkGray
-                Write-Host "        To fix it later: untick staging under Settings > Certificate" -ForegroundColor DarkGray
-                Write-Host "        Authorities, then renew this certificate from the Certificates page." -ForegroundColor DarkGray
-            }
-            Write-Host ""
-        }
 
         if (-not $st.zone.ok) {
             # Stopped here on purpose. Without a DNS credential that covers the

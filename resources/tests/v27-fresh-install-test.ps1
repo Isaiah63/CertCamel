@@ -11,13 +11,21 @@
   reported that step finished on the strength of placeholder data. Measured on
   the live install - ssl-data.js held real expiry dates for example.com.
 
-  THE CONSOLE CERTIFICATE CAME FROM STAGING. The built-in authority ships with
-  staging on, for a good reason: a first run against production burns real rate
-  limit on a configuration nobody has proven, and Let's Encrypt allows five
-  identical certificates a week. But setup now issues the console's own
-  certificate and turns HTTPS on, and a staging certificate is not publicly
-  trusted - so setup finished by announcing HTTPS and handing over a console
-  the browser warns about. Two sound decisions that are wrong together.
+  THE CONSOLE CERTIFICATE CAME FROM STAGING. The built-in authority shipped with
+  staging on, guarding against a first run burning real rate limit on a
+  configuration nobody had proven - Let's Encrypt allows five identical
+  certificates a week. But setup now issues the console's own certificate and
+  turns HTTPS on, and a staging certificate is real yet publicly untrusted, so
+  setup finished by announcing HTTPS and handing over a page the browser warns
+  about. The worst possible first impression, and one that reads as a fault
+  rather than as a setting somebody chose.
+
+  Asking which to use was the first attempt and was worse: every prompt is a
+  chance to answer wrong, and only one answer is right for this certificate.
+  The guard moved instead. Setup proves the credential directly before anything
+  is ordered - it lists the zones, then writes a real challenge record and
+  removes it again - which catches the read-but-not-write token that listing
+  alone sails past, and is a better guard than staging ever was.
 
   Reads only, and runs nothing that touches the network or the live install.
 
@@ -82,57 +90,52 @@ foreach ($rule in @('StartsWith(''#'')', '^\[')) {
 }
 
 # --------------------------------------------------------------------------- #
-Write-Host "`nstaging is caught before a certificate is ordered"
-Check 'setup checks the authority' ($setupSrc -match 'askCa') `
-      'nothing notices that the console certificate would come from staging'
-Check 'it says the browser will not trust it' `
-      ($setupSrc -match 'no browser trusts it') `
-      'the consequence is the whole point and has to be stated'
-Check 'it says the switch is not just for this certificate' `
-      ($setupSrc -match 'applies to every') `
-      'useStaging is a property of the authority, so flipping it affects everything'
-Check 'declining still explains how to fix it later' `
-      ($setupSrc -match 'untick staging under Settings') `
-      'somebody who says no is left with a warning and no route out of it'
+Write-Host "`nthere is no staging question, because there is no staging certificate"
+Check 'setup does not ask about staging' `
+      ($setupSrc -notmatch 'Switch to production') `
+      'a prompt is a chance to answer wrong, and only one answer is right for this certificate'
+Check 'and does not flip the authority behind your back' `
+      ($setupSrc -notmatch '\$c\.useStaging = \$false') `
+      'setup is silently rewriting a certificate authority setting'
 
-# Before both issuing branches, or it is asked too late to matter.
-$askAt   = $setupSrc.IndexOf('$askCa = $null')
+Write-Host "`nthe credential is proved before anything is ordered"
+Check 'setup tests write access' ($setupSrc -match 'Test-ProviderWriteAccess') `
+      'listing zones proves read only, and a read-only token dies partway through an order'
+Check 'it names the read-versus-write distinction' `
+      ($setupSrc -match 'list zones but NOT write') `
+      'the failure has to say which permission is missing or it reads as a bad token'
+Check 'a stray probe record is reported rather than left silently' `
+      ($setupSrc -match 'stray _acme-challenge') `
+      'cleanup is best-effort, so a failure to remove it must be said'
+Check 'and it refuses to carry on by default' `
+      ($setupSrc -match 'Continue anyway\? \(y/N\)') `
+      'continuing would order a certificate that cannot complete'
+
+# Proving write access is only useful before the order.
+$writeAt = $setupSrc.IndexOf('Test-ProviderWriteAccess')
 $manual  = $setupSrc.IndexOf('issue-tracker-cert.ps1')
 $auto    = $setupSrc.IndexOf("-File (Join-Path `$appDir 'renew.ps1')")
-Check 'the question comes before the manual issuing path' `
-      ($askAt -ge 0 -and $manual -ge 0 -and $askAt -lt $manual) "ask at $askAt, manual issue at $manual"
+Check 'the write test runs before the manual issuing path' `
+      ($writeAt -ge 0 -and $manual -ge 0 -and $writeAt -lt $manual) "test at $writeAt, manual issue at $manual"
 Check 'and before the automatic one' `
-      ($askAt -ge 0 -and $auto -ge 0 -and $askAt -lt $auto) "ask at $askAt, auto issue at $auto"
+      ($writeAt -ge 0 -and $auto -ge 0 -and $writeAt -lt $auto) "test at $writeAt, auto issue at $auto"
 
 # --------------------------------------------------------------------------- #
-Write-Host "`nthe flip actually reaches the certificate authority"
-# A settings object in the exact state a fresh install is in.
+Write-Host "`na fresh install orders from production"
 $fresh = New-DefaultSettings
 $ca = Get-CaProfile -Settings $fresh
-Check 'a fresh install really does default to staging' ([bool]$ca.useStaging) `
-      'the premise changed - this whole prompt may no longer be needed'
-Check 'and would order from the staging directory' `
-      ((Get-ActiveDirectoryUrl -Ca $ca) -match 'staging') `
+Check 'staging is off by default' (-not $ca.useStaging) `
+      'a fresh install would issue the console a certificate no browser trusts'
+Check 'and the order goes to the production directory' `
+      ((Get-ActiveDirectoryUrl -Ca $ca) -notmatch 'staging') `
       ("got {0}" -f (Get-ActiveDirectoryUrl -Ca $ca))
 
-# The loop setup runs when the answer is yes.
-foreach ($c in @($fresh.cas)) { if ($c.id -eq $ca.id) { $c.useStaging = $false } }
-$after = Get-CaProfile -Settings $fresh
-Check 'answering yes clears the flag' (-not $after.useStaging) 'the profile was not updated'
-Check 'and the order would go to production' `
-      ((Get-ActiveDirectoryUrl -Ca $after) -notmatch 'staging') `
-      ("still {0}" -f (Get-ActiveDirectoryUrl -Ca $after))
-
-# It has to survive being written and read back, or the next run reverts to
-# staging and nobody knows why.
-$tmp = Join-Path $env:TEMP ('camel-ca-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
-try {
-    $fresh | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $tmp -Encoding UTF8
-    $back = ConvertTo-HashtableDeep ((Get-Content $tmp -Raw -Encoding UTF8) | ConvertFrom-Json)
-    Check 'and survives a save and reload' (-not (Get-CaProfile -Settings $back).useStaging) `
-          'the setting reverts on the next run'
-}
-finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+# Still available to anybody who wants to rehearse - the default moved, the
+# capability did not.
+$ca.useStaging = $true
+Check 'staging still works when explicitly asked for' `
+      ((Get-ActiveDirectoryUrl -Ca $ca) -match 'staging') `
+      'the staging directory is unreachable, so testing against it is impossible'
 
 Write-Host ""
 if ($script:Failed) { Write-Host "$script:Failed CHECK(S) FAILED" -ForegroundColor Red; exit 1 }

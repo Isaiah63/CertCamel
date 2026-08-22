@@ -106,9 +106,27 @@ $script:BuiltInCAs = @(
         label        = "Let's Encrypt"
         directoryUrl = 'https://acme-v02.api.letsencrypt.org/directory'
         stagingUrl   = 'https://acme-staging-v02.api.letsencrypt.org/directory'
-        # Staging defaults ON. A first run against production burns real rate
-        # limit on a configuration nobody has proven yet.
-        useStaging   = $true
+        # Production by default. Staging used to be the default, guarding
+        # against a first run burning real rate limit on a configuration nobody
+        # had proven yet - Let's Encrypt allows five identical certificates a
+        # week, and a misconfigured install can spend them in an afternoon.
+        #
+        # That guard moved somewhere better. Setup now proves the DNS credential
+        # directly before anything is ordered: it lists the zones, then writes a
+        # real challenge record and removes it again
+        # (Test-ProviderWriteAccess), which is the exact code path a renewal
+        # takes and catches the read-but-not-write token that listing alone
+        # sails past.
+        #
+        # Staging was also the wrong answer for the first certificate setup
+        # issues, which is the console's own. A staging certificate is real but
+        # publicly untrusted, so setup finished by announcing HTTPS and handing
+        # over a page the browser warns about - the worst possible first
+        # impression, and one that reads as a fault rather than a setting.
+        #
+        # Still one tick away under Settings > Certificate Authorities for
+        # anyone who wants to rehearse against it.
+        useStaging   = $false
         eabKid       = ''
     }
 )
