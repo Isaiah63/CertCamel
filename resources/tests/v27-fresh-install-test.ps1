@@ -80,6 +80,22 @@ Check 'and it says why rather than printing nothing' `
       ($setupSrc -match 'Nothing to check yet') `
       'a silent skip is indistinguishable from a step that did not run'
 
+# The step counter has to be truthful, or it says [6/6] with a step still to go.
+$steps = @([regex]::Matches($setupSrc, '\[(?<n>\d+)/(?<t>\d+)\] ') |
+           ForEach-Object { @{ n = [int]$_.Groups['n'].Value; t = [int]$_.Groups['t'].Value } })
+Check 'every step agrees on how many there are' `
+      ((@($steps | ForEach-Object { $_.t } | Sort-Object -Unique)).Count -eq 1) `
+      ("totals seen: {0}" -f ((@($steps | ForEach-Object { $_.t } | Sort-Object -Unique)) -join ', '))
+$seen = @($steps | ForEach-Object { $_.n } | Sort-Object -Unique)
+$total = @($steps)[0].t
+Check 'and every number from 1 to the total appears' `
+      (@(Compare-Object $seen (1..$total)).Count -eq 0) `
+      ("numbered steps seen: {0}, expected 1..{1}" -f ($seen -join ', '), $total)
+
+Check 'the pre-renewal check warns that it will report unreachable' `
+      ($setupSrc -match 'It will report the name as unreachable, and that is correct') `
+      'a correct failure printed mid-setup reads as the tool breaking'
+
 # The skip test has to agree with the checker, or one of them is wrong about
 # what counts as a hostname.
 $checkSrc = Get-Content (Join-Path $appDir 'check-ssl.ps1') -Raw -Encoding UTF8

@@ -470,7 +470,7 @@ if (-not (Test-Path $checker)) {
 # --------------------------------------------------------------------------- #
 
 if (Test-Path $domainList) {
-    Write-Host "  [1/6] domains.txt already exists - leaving it alone." -ForegroundColor Green
+    Write-Host "  [1/7] domains.txt already exists - leaving it alone." -ForegroundColor Green
 } else {
     # Created with its explanation and NO hostnames.
     #
@@ -500,7 +500,7 @@ if (Test-Path $domainList) {
         "# back here by hand." + "`r`n"
 
     [IO.File]::WriteAllText($domainList, $seedText, (New-Object Text.UTF8Encoding $false))
-    Write-Host "  [1/6] Created domains.txt, with nothing in it yet." -ForegroundColor Green
+    Write-Host "  [1/7] Created domains.txt, with nothing in it yet." -ForegroundColor Green
     Write-Host "        Names get added on the Certificates page once this finishes." -ForegroundColor DarkGray
 }
 
@@ -520,7 +520,7 @@ if (Test-Path $domainList) {
 # never asked for one, which is why the HTTPS step's very first check could
 # never pass on a first run.
 
-Write-Host "  [2/6] Renewal support" -ForegroundColor Cyan
+Write-Host "  [2/7] Renewal support" -ForegroundColor Cyan
 
 if (Get-VendoredPoshAcme) {
     Write-Host "        Posh-ACME is already in this folder." -ForegroundColor Green
@@ -575,7 +575,7 @@ if (Get-VendoredPoshAcme) {
 # can read secrets.xml directly.
 
 Write-Host ""
-Write-Host "  [3/6] Certificate authority and DNS automation" -ForegroundColor Cyan
+Write-Host "  [3/7] Certificate authority and DNS automation" -ForegroundColor Cyan
 
 $trackerSettings = Get-TrackerSettings
 
@@ -928,11 +928,11 @@ if (Test-Path $domainList) {
 }
 
 if ($hasNames) {
-    Write-Host "  [4/6] Running the first check..." -ForegroundColor Cyan
+    Write-Host "  [4/7] Running the first check..." -ForegroundColor Cyan
     & $checker
 }
 else {
-    Write-Host "  [4/6] Nothing to check yet" -ForegroundColor Cyan
+    Write-Host "  [4/7] Nothing to check yet" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "        domains.txt has no hostnames in it, so there is nothing to measure." -ForegroundColor DarkGray
     Write-Host "        Add the names you want watched on the Certificates page once this" -ForegroundColor DarkGray
@@ -950,7 +950,8 @@ else {
 # first run. Whatever is chosen can be changed per task in taskschd.msc
 # afterwards; this only sets where they start.
 
-Write-Host "  Scheduled times" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  [5/7] Scheduled times" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "        The checks, renewals and the monthly summary all run on a schedule."
 Write-Host "        Pick the time of day they should start."
@@ -993,7 +994,7 @@ Write-Host ("        Scheduled work will run at {0}." -f $taskTimeText) -Foregro
 Write-Host "        Change any of it later in taskschd.msc." -ForegroundColor DarkGray
 Write-Host ""
 
-Write-Host "  [5/6] Daily automatic check" -ForegroundColor Cyan
+Write-Host "  [6/7] Daily automatic check" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "        This registers a Windows scheduled task named '$taskName' that"
 Write-Host "        re-checks your domains at $taskTimeText, so the page is always"
@@ -1054,7 +1055,7 @@ if ($answer -match '^[Yy]') {
 # renew.ps1 throws "The DNS profile for this zone is no longer configured".
 
 Write-Host ""
-Write-Host "  [6/6] Serve this page over HTTPS" -ForegroundColor Cyan
+Write-Host "  [7/7] Serve this page over HTTPS" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "        Give this page a name and it gets a real certificate, issued and"
 Write-Host "        renewed like every other one Cert Camel manages. 127.0.0.1 keeps"
@@ -1209,7 +1210,20 @@ if ($wantHttps -notmatch '^[Nn]') {
                         Write-Host "        Checking $webName first - renewal needs to know what is" -ForegroundColor DarkGray
                         Write-Host "        being served before it can decide what to issue." -ForegroundColor DarkGray
                         Write-Host ""
+                        # The check is about to fail, and saying so first is the
+                        # whole point of these two lines. Nothing is listening on
+                        # that port yet - the certificate that lets it listen is
+                        # what we are here to issue - so the checker reports the
+                        # name as unreachable and prints "1 domain could not be
+                        # reached". Read cold, in the middle of a first setup,
+                        # that looks like the thing has broken. It has not.
+                        Write-Host "        It will report the name as unreachable, and that is correct:" -ForegroundColor Yellow
+                        Write-Host "        nothing is serving it yet. Issuing the certificate below is" -ForegroundColor DarkGray
+                        Write-Host "        what changes that." -ForegroundColor DarkGray
+                        Write-Host ""
                         & $checker
+                        Write-Host ""
+                        Write-Host "        That is the expected result. Issuing now." -ForegroundColor DarkGray
                     }
 
                     Write-Host ""
