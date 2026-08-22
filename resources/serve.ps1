@@ -213,27 +213,64 @@ function Write-SessionFile {
     }
 }
 
+function Get-SessionFileStatus {
+    <#
+      What the session file is, told apart properly.
+
+      The single answer "$null - nothing is running" used to cover five
+      different situations, and two of them need opposite handling:
+
+        missing    - no file. Nothing running, nothing to clean up.
+        unreadable - the file is there and this account cannot open it. That is
+                     somebody ELSE'S running server, and the correct response is
+                     to say so and stop.
+        malformed  - readable, but not a session file. Safe to remove.
+        stale      - names a process that is gone, or a port nothing is
+                     listening on. Safe to remove.
+        live       - a server is running. Attach to it.
+
+      Conflating `unreadable` with `stale` is how a launcher run by the wrong
+      account came to try to delete the running server's session file and then
+      start a second server on a port already held. It only ever failed safely
+      because the ACL denied the delete - the attempt was made every time.
+
+      Returns @{ state = <one of the above>; session = <object or $null> }.
+    #>
+    if (-not (Test-Path $script:SessionFile)) { return @{ state = 'missing'; session = $null } }
+
+    # Read and parse are separated deliberately. One try/catch around both
+    # cannot tell "I am not allowed to open this" from "this is not JSON", and
+    # those lead to opposite decisions about deleting it.
+    $raw = $null
+    try { $raw = [IO.File]::ReadAllText($script:SessionFile) }
+    catch { return @{ state = 'unreadable'; session = $null } }
+
+    $s = $null
+    try { $s = $raw | ConvertFrom-Json } catch { $s = $null }
+    if (-not $s -or -not $s.pid -or -not $s.port) { return @{ state = 'malformed'; session = $null } }
+
+    # Both halves matter: a stale file left by a crash names a pid that is gone,
+    # and a pid recycled onto some unrelated program would answer nothing on the
+    # port. Requiring both keeps a leftover file from blocking a legitimate
+    # start.
+    try { $null = Get-Process -Id ([int]$s.pid) -ErrorAction Stop }
+    catch { return @{ state = 'stale'; session = $s } }
+
+    $listening = @(Get-NetTCPConnection -State Listen -LocalPort ([int]$s.port) -ErrorAction SilentlyContinue)
+    if (-not $listening.Count) { return @{ state = 'stale'; session = $s } }
+
+    return @{ state = 'live'; session = $s }
+}
+
 function Get-RunningInstance {
     <#
       Returns the live instance described by the session file, or $null.
-
-      Both parts matter: a stale file left by a crash names a pid that is gone,
-      and a pid that has been recycled onto some unrelated program would answer
-      nothing on the port. Requiring both keeps a leftover file from blocking a
-      legitimate start.
+      Get-SessionFileStatus does the work; this is the shape callers that only
+      care about "is one running" already expect.
     #>
-    if (-not (Test-Path $script:SessionFile)) { return $null }
-
-    $s = $null
-    try { $s = [IO.File]::ReadAllText($script:SessionFile) | ConvertFrom-Json } catch { return $null }
-    if (-not $s -or -not $s.pid -or -not $s.port) { return $null }
-
-    try { $null = Get-Process -Id ([int]$s.pid) -ErrorAction Stop } catch { return $null }
-
-    $listening = @(Get-NetTCPConnection -State Listen -LocalPort ([int]$s.port) -ErrorAction SilentlyContinue)
-    if (-not $listening.Count) { return $null }
-
-    return $s
+    $st = Get-SessionFileStatus
+    if ($st.state -eq 'live') { return $st.session }
+    return $null
 }
 
 # --------------------------------------------------------------------------- #
@@ -2244,13 +2281,39 @@ function Invoke-Route {
 # $Port = 0 handed each launch a different random port, so two instances simply
 # coexisted unnoticed; once the startup task pins a port they collide. Point at
 # the one already running instead of failing to bind.
-$existing = Get-RunningInstance
+$sessionStatus = Get-SessionFileStatus
+$existing      = $(if ($sessionStatus.state -eq 'live') { $sessionStatus.session } else { $null })
+
+# A session file this account cannot read is not a stale file - it is somebody
+# else's running server, and the right answer is to explain that rather than to
+# start a second one that will collide on the port and could not decrypt the
+# credentials anyway.
+#
+# The install folder is restricted to administrators, so reaching this normally
+# means the permissions have been loosened or the folder was moved. Either way
+# the person in front of it needs a sentence, not a bind error.
+if ($sessionStatus.state -eq 'unreadable') {
+    Write-Diag ""
+    Write-Diag "  A Cert Camel session file is here, and this account cannot read it." 'Yellow'
+    Write-Diag "  $script:SessionFile" 'DarkGray'
+    Write-Diag ""
+    Write-Diag "  That means Cert Camel is set up under a different Windows account." 'DarkGray'
+    Write-Diag "  Sign in as that account to use it - it is an administrator tool, and" 'DarkGray'
+    Write-Diag "  its saved credentials are encrypted for whoever set it up." 'DarkGray'
+    Write-Diag ""
+    exit 1
+}
 
 # A hard kill - or a console window closed with the X - never runs a finally
 # block, so a session file naming a dead process is the normal case rather than
-# the exception. Clear it here so the folder does not accumulate stale tokens
-# for servers that stopped weeks ago.
-if (-not $existing -and (Test-Path $script:SessionFile)) {
+# the exception. Cleared here so the folder does not accumulate stale tokens for
+# servers that stopped weeks ago.
+#
+# Only for files this process actually read and found dead. Deleting on any
+# "not live" answer meant a file that merely could not be opened was a deletion
+# target, and the running server it described would have been orphaned - a
+# restrictive ACL was the only thing preventing it.
+if ($sessionStatus.state -in @('stale', 'malformed')) {
     try { Remove-Item -LiteralPath $script:SessionFile -Force -ErrorAction SilentlyContinue } catch { $null = $_ }
 }
 if ($existing) {
