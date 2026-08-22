@@ -982,7 +982,14 @@ function Invoke-SaveSettings {
         }
         $port = 0
         if ($w.PSObject.Properties['port'] -and $w.port) { $port = [int]$w.port }
-        $https = [bool]($w.PSObject.Properties['https'] -and $w.https)
+
+        # Derived from the hostname, never read from the payload. HTTPS is not a
+        # separate thing to switch on: a name means HTTPS on that name, no name
+        # means loopback HTTP. The settings page derives it the same way, and
+        # this does not trust it to - a payload asking for https with no
+        # hostname would otherwise produce a server that announces HTTPS and
+        # falls back to plain HTTP with the reason in a log nobody reads.
+        $https = [bool]$name
 
         if ($https) {
             if (-not $name) { throw "HTTPS needs a hostname for the tracker." }

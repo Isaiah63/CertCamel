@@ -674,45 +674,63 @@ if ($answer -match '^[Yy]') {
 }
 
 # --------------------------------------------------------------------------- #
-# 5b. Serve this page over HTTPS (optional)
+# 5b. Serve this page over HTTPS
 # --------------------------------------------------------------------------- #
 # Walked through here rather than left to Settings because the four
 # preconditions fail in four different places, and someone meeting the tool for
 # the first time has no way to know which one bit them. Every check reuses
 # Get-TrackerAddressStatus, so this says exactly what the Settings page says.
 #
-# A DNS provider is required here, and the reason is NOT that a hand-issued
-# certificate could never be renewed - it could. renew-due.ps1 has an explicit
-# "never issued here" branch that picks up any watched certificate once the live
-# one is close enough to expiry, whoever issued it.
+# This step used to be a dead end on a first run. Its opening question is
+# whether a configured DNS credential covers the name, and until step 3 existed
+# there was never one, so the answer was always no and the manual-DNS-record
+# branch was the only path anyone reached. That branch is still here, and it is
+# still legitimate, but it is now the exception it was always written to be.
 #
-# The reason is narrower: renewal itself validates through the DNS API, so a
-# provider has to cover the zone by the time renewal comes due. Without one the
-# name never even reaches the renewable set - Get-CertificateGroups files it
-# under `unmapped` and skips it - and renew.ps1 throws "The DNS profile for this
-# zone is no longer configured".
-#
-# So issuing by hand first and adding the provider afterwards is a legitimate
-# bootstrap, and Cert Camel takes over at renewal. It is just not something this
-# step can drive, because everything below depends on the provider existing.
+# The manual branch matters for one case: a name whose zone the collected
+# credential cannot see. Issuing by hand works and Cert Camel takes over at
+# renewal - renew-due.ps1 has an explicit "never issued here" branch - but only
+# once some provider covers the zone, because renewal validates through the DNS
+# API. Until then Get-CertificateGroups files the name under `unmapped` and
+# renew.ps1 throws "The DNS profile for this zone is no longer configured".
 
 Write-Host ""
 Write-Host "  [6/6] Serve this page over HTTPS" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "        Optional. By default the page is served over plain HTTP at"
-Write-Host "        127.0.0.1 on a free port - nothing to set up, and it never leaves"
-Write-Host "        this PC. Giving it a name means a real certificate, issued and"
-Write-Host "        renewed by this tool like any other."
+Write-Host "        Give this page a name and it gets a real certificate, issued and"
+Write-Host "        renewed like every other one Cert Camel manages. 127.0.0.1 keeps"
+Write-Host "        working either way, which is the way back in if the name ever stops"
+Write-Host "        resolving or the certificate lapses."
 Write-Host ""
-Write-Host "        You can do this later under Settings > General instead." -ForegroundColor DarkGray
+Write-Host "        Skipping leaves the console on plain HTTP on this machine only." -ForegroundColor DarkGray
 Write-Host ""
 
-$wantHttps = Read-Host "        Set up HTTPS for this page now? (Y/N)"
+$wantHttps = Read-Host "        Set this up now? (Y/n)"
 
-if ($wantHttps -match '^[Yy]') {
+# Empty means yes. This is the expected outcome of a setup run, not a side
+# feature, and the person who genuinely wants to defer can still type n.
+if ($wantHttps -notmatch '^[Nn]') {
     . (Join-Path $appDir 'acme-lib.ps1')
 
-    $webName = (Read-Host "        Hostname for this page (e.g. tracker.example.com)").Trim()
+    # Offer a name built from a zone the credential can actually see. Asking
+    # cold invites a name in a zone this install cannot issue for, which fails
+    # four checks later with a message about DNS credentials that reads as a
+    # credential problem rather than a typo.
+    $suggested = ''
+    $knownZones = @(@((Get-ZoneCache).zones) | ForEach-Object { $_.zone } | Sort-Object -Unique)
+    if ($knownZones.Count) {
+        $suggested = "tracker.$($knownZones[0])"
+        Write-Host ""
+        if ($knownZones.Count -gt 1) {
+            Write-Host ("        Zones this install can issue for: {0}" -f ($knownZones -join ', ')) -ForegroundColor DarkGray
+        }
+    }
+
+    $prompt = $(if ($suggested) { "        Hostname for this page [$suggested]" }
+                else            { "        Hostname for this page (e.g. tracker.example.com)" })
+    $webName = (Read-Host $prompt).Trim()
+    if (-not $webName -and $suggested) { $webName = $suggested }
+
     $webPort = 0
     $portIn  = (Read-Host "        Fixed port [8787]").Trim()
     if (-not $portIn) { $webPort = 8787 } else { [void][int]::TryParse($portIn, [ref]$webPort) }
@@ -740,15 +758,25 @@ if ($wantHttps -match '^[Yy]') {
             # Stopped here on purpose. Without a DNS credential that covers the
             # zone, nothing below can succeed, and adding the name to
             # domains.txt would leave an entry that can never renew.
-            Write-Host "        No configured DNS credential covers that name, so this step" -ForegroundColor Yellow
-            Write-Host "        cannot issue and renew it for you automatically." -ForegroundColor Yellow
+            # The credential collected in step 3 exists but cannot see this
+            # zone. Said that way round on purpose: "no DNS credential covers
+            # that name" reads as "you never gave me one", which was true before
+            # step 3 existed and is now misleading - it sends somebody off to
+            # re-enter a credential that is already correct, when the likely
+            # causes are a typo in the name or a token scoped to another zone.
+            Write-Host "        The DNS credential you gave does not cover that name, so this" -ForegroundColor Yellow
+            Write-Host "        step cannot issue and renew it for you automatically." -ForegroundColor Yellow
             Write-Host ""
-            Write-Host "        You can still get HTTPS working now by creating one DNS record" -ForegroundColor Gray
+            Write-Host "        Usually that means a typo in the hostname, or an API token scoped" -ForegroundColor Gray
+            Write-Host "        to zones that do not include this one. Both are worth checking" -ForegroundColor Gray
+            Write-Host "        before going further - re-running setup is cheap." -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "        Otherwise you can get HTTPS working now by creating one DNS record" -ForegroundColor Gray
             Write-Host "        by hand. The certificate is real and lasts about 90 days." -ForegroundColor Gray
             Write-Host ""
-            Write-Host "        It will NOT renew itself until a DNS provider covers this zone," -ForegroundColor DarkGray
-            Write-Host "        because renewal validates through the API. Add one under Settings" -ForegroundColor DarkGray
-            Write-Host "        > DNS Automation whenever you have the credential and this" -ForegroundColor DarkGray
+            Write-Host "        It will NOT renew itself until some provider covers this zone," -ForegroundColor DarkGray
+            Write-Host "        because renewal validates through the API. Widen the token or add" -ForegroundColor DarkGray
+            Write-Host "        another profile under Settings > DNS Automation and this" -ForegroundColor DarkGray
             Write-Host "        certificate gets picked up automatically - renewal handles" -ForegroundColor DarkGray
             Write-Host "        certificates it did not issue." -ForegroundColor DarkGray
             Write-Host ""
@@ -762,16 +790,14 @@ if ($wantHttps -match '^[Yy]') {
                 $st = Get-TrackerAddressStatus -HostName $webName -Port $webPort `
                         -Settings (Get-TrackerSettings) -ZoneCache (Get-ZoneCache)
 
+                # No elevation branch: setup refuses to start without it, so the
+                # "add this line yourself" fallback that used to live here was
+                # unreachable by the time this ran.
                 if (-not $st.hosts.ok) {
-                    if (Test-Elevated) {
-                        $addHost2 = Read-Host "        Add $webName to the hosts file? (Y/N)"
-                        if ($addHost2 -match '^[Yy]') {
-                            try { [void](Add-HostsEntry -HostName $webName); Write-Host "        Added." -ForegroundColor Green }
-                            catch { Write-Host "        Could not: $($_.Exception.Message)" -ForegroundColor Yellow }
-                        }
-                    } else {
-                        Write-Host "        The hosts file needs administrator. Add this line yourself:" -ForegroundColor Yellow
-                        Write-Host ("            127.0.0.1  {0}" -f $webName) -ForegroundColor White
+                    $addHost2 = Read-Host "        Add $webName to the hosts file? (Y/N)"
+                    if ($addHost2 -match '^[Yy]') {
+                        try { [void](Add-HostsEntry -HostName $webName); Write-Host "        Added." -ForegroundColor Green }
+                        catch { Write-Host "        Could not: $($_.Exception.Message)" -ForegroundColor Yellow }
                     }
                 }
 
@@ -817,15 +843,10 @@ if ($wantHttps -match '^[Yy]') {
             }
 
             if (-not $st.hosts.ok) {
-                if (Test-Elevated) {
-                    $addHost = Read-Host "        Add $webName to the hosts file? (Y/N)"
-                    if ($addHost -match '^[Yy]') {
-                        try { [void](Add-HostsEntry -HostName $webName); Write-Host "        Added." -ForegroundColor Green }
-                        catch { Write-Host "        Could not: $($_.Exception.Message)" -ForegroundColor Yellow }
-                    }
-                } else {
-                    Write-Host "        The hosts file needs administrator. Add this line yourself:" -ForegroundColor Yellow
-                    Write-Host ("            127.0.0.1  {0}" -f $webName) -ForegroundColor White
+                $addHost = Read-Host "        Add $webName to the hosts file? (Y/N)"
+                if ($addHost -match '^[Yy]') {
+                    try { [void](Add-HostsEntry -HostName $webName); Write-Host "        Added." -ForegroundColor Green }
+                    catch { Write-Host "        Could not: $($_.Exception.Message)" -ForegroundColor Yellow }
                 }
             }
 

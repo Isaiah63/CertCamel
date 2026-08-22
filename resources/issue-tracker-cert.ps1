@@ -176,5 +176,9 @@ if ($zoneOk) {
     Say "  then, Settings > Tracker address shows Renewal in red, which is correct." 'DarkGray'
 }
 Say ""
-Say "  Turn HTTPS on under Settings > General, then restart the console." 'Cyan'
+# There is no HTTPS switch to turn on any more - the hostname under Settings >
+# Tracker address IS the switch, and the server picks the certificate up from
+# there. Saying "turn HTTPS on" would send somebody hunting for a tick-box that
+# no longer exists.
+Say "  Set this name under Settings > Tracker address, then restart the console." 'Cyan'
 Say ""

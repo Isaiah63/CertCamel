@@ -302,32 +302,36 @@
   }
 
   // --- Tracker address ---------------------------------------------------------- //
-  /* Serving this page over HTTPS. Off unless asked for, because someone looking
-     at Cert Camel for the first time has no DNS credential and no wish to change
-     their network — they should be able to open it and look.
+  /* Serving this page over HTTPS.
 
-     Four preconditions, each reported on its own row rather than collapsed into
-     one "ready" flag. They fail in four different places — a DNS credential, a
-     certificate, another program holding a port, and a file only administrators
-     can write — and a single red cross would send someone hunting through all
-     four. */
+     There is no on/off switch here any more, and its absence is the design.
+     HTTPS is not a feature of Cert Camel to be opted into — it is how the
+     console is served, decided by whether it has a name: set a hostname and it
+     serves HTTPS on it, clear the hostname and it falls back to loopback HTTP.
+     One field, one meaning, nothing that can be half-configured.
+
+     A switch could also be left in a state the tool cannot honour — on, with no
+     certificate — and the server would come up on plain HTTP saying so in a log
+     nobody reads. Deriving it removes that state rather than validating it.
+
+     What remains is the four preconditions, each reported on its own row rather
+     than collapsed into one "ready" flag. They fail in four different places —
+     a DNS credential, a certificate, another program holding a port, and a file
+     only administrators can write — and a single red cross would send someone
+     hunting through all four. */
 
   function buildAddressSection(){
     var wrap = el('div', 'card');
     wrap.appendChild(el('h4', null, 'Tracker address'));
     wrap.appendChild(el('p', 'hint',
-      'By default this page is served over plain HTTP at 127.0.0.1 on whichever port is free — ' +
-      'nothing to set up, and it never leaves this PC. Give it a name Cert Camel already holds a ' +
-      'certificate for and it will serve itself over HTTPS instead, using a certificate it issued.'));
+      'Give this page a name and it serves itself over HTTPS, using a certificate it issued and ' +
+      'renews like any other. Leave the name empty and it stays on plain HTTP at 127.0.0.1 on ' +
+      'whichever port is free, reachable from this machine only.'));
+    wrap.appendChild(el('p', 'hint',
+      '127.0.0.1 keeps working either way. That is the way back in if the name ever stops ' +
+      'resolving or the certificate lapses.'));
 
-    var on = el('label', 'check');
-    var box = document.createElement('input');
-    box.type = 'checkbox'; box.id = 'set-web-https';
-    on.appendChild(box);
-    on.appendChild(el('span', null, 'Serve this page over HTTPS'));
-    wrap.appendChild(on);
-
-    var fields = el('div', 'hidden');
+    var fields = el('div', null);
     fields.id = 'set-web-fields';
 
     var grid = el('div', 'fields');
@@ -390,9 +394,13 @@
 
     wrap.appendChild(fields);
 
-    box.addEventListener('change', function(){
-      fields.classList.toggle('hidden', !box.checked);
-      if (box.checked) { runPreflight(false); }
+    /* The preflight used to run when the HTTPS box was ticked. With the box
+       gone, the hostname is what decides everything, so it is what the checks
+       hang off — on 'change' rather than 'input', so they fire once when the
+       field is left rather than on every keystroke of a name being typed. */
+    hi.addEventListener('change', function(){
+      document.getElementById('set-web-check').textContent = '';
+      if (hi.value.trim()) { runPreflight(false); }
     });
     return wrap;
   }
@@ -1249,8 +1257,11 @@
     if (isNaN(logDays) || logDays < 1) { return {error: 'Log retention needs a number of days, at least 1.'}; }
     if (isNaN(logMb)   || logMb   < 1) { return {error: 'The maximum log folder size needs to be at least 1 MB.'}; }
 
-    var webOn   = document.getElementById('set-web-https').checked;
+    /* Derived, not read from a control. A hostname is what HTTPS means here, so
+       there is no way to ask for one without the other. The server derives it
+       the same way and does not trust this value — see Save-SettingsPayload. */
     var webHost = document.getElementById('set-web-host').value.trim().toLowerCase().replace(/\.$/, '');
+    var webOn   = !!webHost;
     var webPort = parseInt(document.getElementById('set-web-port').value, 10);
     if (isNaN(webPort)) { webPort = 0; }
     if (webOn) {
@@ -1353,14 +1364,15 @@
     document.getElementById('set-log-mb').value   = (s.logs && s.logs.maxSizeMb) || 200;
 
     var w = s.web || {};
-    var webBox = document.getElementById('set-web-https');
-    webBox.checked = !!w.https;
     document.getElementById('set-web-host').value = w.hostname || '';
     document.getElementById('set-web-port').value = w.port || '';
     document.getElementById('set-web-hsts').checked = !!w.hsts;
-    document.getElementById('set-web-fields').classList.toggle('hidden', !webBox.checked);
     document.getElementById('set-web-check').textContent = '';
-    if (webBox.checked) { runPreflight(false); }
+    /* Keyed on the hostname rather than on w.https, which is now derived from
+       it. Checking the flag would skip the preflight for a settings.json
+       written before the flag was derived, leaving the four rows blank on a
+       console that is serving HTTPS perfectly well. */
+    if (w.hostname) { runPreflight(false); }
 
     var caHost = document.getElementById('cas');
     caHost.textContent = '';
