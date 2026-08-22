@@ -4066,6 +4066,127 @@ function Get-HAProxyNodeStatus {
     return $out
 }
 
+function Get-RateLimitUsage {
+    <#
+      How much of the certificate authority's weekly allowance this install has
+      spent, counted from the audit trail.
+
+      COUNTED LOCALLY, AND THAT IS A REAL LIMITATION. Let's Encrypt publishes no
+      endpoint to ask, so this can only see issuance THIS install recorded. A
+      second tool, another machine, or a colleague issuing for the same domain
+      all spend the same allowance and are invisible here. The number is a floor,
+      never a ceiling, and the page has to say so - a limit display that reads as
+      authoritative and is not would be worse than none, because it would be
+      trusted at exactly the wrong moment.
+
+      Two limits are worth showing, and they are the two people actually hit:
+
+        Certificates per registered domain, 50 a week. Generous, and reached by
+        scripting something in a loop.
+
+        Duplicate certificates - the same exact set of names - 5 a week. Small,
+        and the one that bites while testing, because every retry of the same
+        certificate spends one.
+
+      The window is a rolling 7 days, matching how the authority measures it,
+      not a calendar week.
+    #>
+    param([int]$Days = 7)
+
+    $out = @{
+        countedFrom = (Get-Date).ToUniversalTime().AddDays(-$Days).ToString('yyyy-MM-ddTHH:mm:ssZ')
+        days        = $Days
+        perDomain   = @()
+        duplicates  = @()
+        # Named here rather than in the page, so the page cannot drift from the
+        # number the calculation actually used.
+        limits      = @{ perDomain = 50; duplicate = 5 }
+        total       = 0
+    }
+
+    $cutoff = (Get-Date).ToUniversalTime().AddDays(-$Days)
+
+    $archives = @(Get-ChildItem -LiteralPath $script:Root -Filter 'audit-*.log' -File -ErrorAction SilentlyContinue)
+    $files = @($script:AuditFile) + @($archives | ForEach-Object { $_.FullName })
+
+    # Same cache shape as Get-RenewalTally, and for the same reason: /api/state
+    # runs on every page load and this walks the whole audit trail. The window
+    # is part of the key because it moves - a cached answer from an hour ago
+    # counts an hour that has since fallen out of the seven days.
+    $sig = ''
+    try {
+        $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH')
+        if (Test-Path $script:AuditFile) {
+            $a = Get-Item $script:AuditFile
+            $sig = "$Days|$stamp|$($a.Length)|$($a.LastWriteTimeUtc.Ticks)|$($archives.Count)"
+        } else { $sig = "$Days|$stamp|none|$($archives.Count)" }
+    } catch { $null = $_ }   # no signature: recomputed rather than served stale
+
+    if ($sig -and $script:RateLimitCache -and $script:RateLimitCache.sig -eq $sig) {
+        return $script:RateLimitCache.value
+    }
+
+    $byCert   = @{}
+    $byDomain = @{}
+
+    foreach ($f in $files) {
+        if (-not (Test-Path $f)) { continue }
+        try {
+            # Shared read, like Get-RenewalTally: a renewal may be appending
+            # while this runs.
+            $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite')
+            try {
+                $sr = New-Object IO.StreamReader($fs)
+                while ($null -ne ($line = $sr.ReadLine())) {
+                    $c = $line -split '\s{2,}'
+                    if ($c.Count -lt 6) { continue }
+                    if ($c[3].Trim() -ne 'renew') { continue }
+                    if ($c[5].Trim() -ne 'ok')    { continue }
+
+                    $when = $null
+                    try { $when = [DateTime]::Parse($c[0].Trim(), $null, 'AdjustToUniversal,AssumeUniversal') }
+                    catch { continue }   # an unparseable timestamp cannot be placed in the window
+                    if ($when -lt $cutoff) { continue }
+
+                    $certId = $c[4].Trim()
+                    if (-not $certId) { continue }
+
+                    $out.total++
+                    if (-not $byCert.ContainsKey($certId)) { $byCert[$certId] = 0 }
+                    $byCert[$certId]++
+
+                    # The registered domain is what the authority counts against,
+                    # not the full hostname: tracker.example.com and
+                    # www.example.com both spend example.com's allowance. This
+                    # uses the same fallback the rest of the tool does rather
+                    # than a public-suffix list, so a name under something like
+                    # .co.uk is grouped one level too narrow - which undercounts
+                    # rather than overcounts, and is the safer direction to be
+                    # wrong in for a number people read as "how much is left".
+                    $registered = $certId
+                    try { $registered = Get-FallbackZone -HostName $certId } catch { $registered = $certId }
+                    if (-not $byDomain.ContainsKey($registered)) { $byDomain[$registered] = 0 }
+                    $byDomain[$registered]++
+                }
+                $sr.Dispose()
+            }
+            finally { $fs.Dispose() }
+        }
+        catch { $null = $_ }   # an unreadable archive is skipped; a partial count is still useful and the page says it is a floor
+    }
+
+    $out.perDomain = @($byDomain.Keys | Sort-Object | ForEach-Object {
+        @{ name = $_; used = $byDomain[$_]; limit = $out.limits.perDomain }
+    } | Sort-Object { -$_.used })
+
+    $out.duplicates = @($byCert.Keys | Sort-Object | ForEach-Object {
+        @{ name = $_; used = $byCert[$_]; limit = $out.limits.duplicate }
+    } | Sort-Object { -$_.used })
+
+    if ($sig) { $script:RateLimitCache = @{ sig = $sig; value = $out } }
+    return $out
+}
+
 function Get-RenewalTally {
     <#
       How many certificates this install has successfully renewed, counted from

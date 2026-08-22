@@ -695,6 +695,10 @@ function Get-StateResponse {
             version = (Get-CamelVersion)
             folder  = $script:Root
         }
+        # Counted from this install's own audit trail, because the authority
+        # publishes nothing to ask. See Get-RateLimitUsage: it is a floor, not a
+        # ceiling, and the page has to say so.
+        rateLimits    = (Get-RateLimitUsage)
     }
 }
 

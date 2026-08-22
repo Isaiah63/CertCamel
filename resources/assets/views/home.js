@@ -72,6 +72,7 @@
     }
 
     renderActivity(cardRow);
+    renderRateLimits(cardRow);
 
     if (!hasData) {
       // Still worth answering "is anything automated?" when there is no checker
@@ -856,6 +857,57 @@
       list.appendChild(line);
     });
     wrap.appendChild(list);
+    box.appendChild(wrap);
+  }
+
+  /* How much of the authority's weekly allowance has been spent.
+
+     Shown only once something is close to a limit. A row of "2 of 50" on a
+     healthy install is noise, and a panel that is almost always green teaches
+     people not to look at it — so it appears when it has something to say and
+     is otherwise absent.
+
+     The duplicate limit is the one that matters. Five identical certificates a
+     week sounds like plenty until a retry loop spends them in an afternoon, and
+     the failure at the far end is a certificate authority refusing to issue
+     while the console reports nothing wrong.
+
+     The caveat is not a footnote here. This counts what THIS install recorded;
+     another machine, another tool or a colleague issuing for the same domain
+     spends the same allowance invisibly. A number that reads as authoritative
+     and is not would be trusted at exactly the wrong moment. */
+  function renderRateLimits(box){
+    var rl = CC.state && CC.state.rateLimits;
+    if (!rl) { return; }
+
+    var rows = [];
+    (rl.duplicates || []).forEach(function(d){
+      if (d.used >= Math.ceil(d.limit * 0.6)) {
+        rows.push({name: d.name, used: d.used, limit: d.limit, kind: 'identical certificates'});
+      }
+    });
+    (rl.perDomain || []).forEach(function(d){
+      if (d.used >= Math.ceil(d.limit * 0.6)) {
+        rows.push({name: d.name, used: d.used, limit: d.limit, kind: 'certificates for this domain'});
+      }
+    });
+    if (!rows.length) { return; }
+
+    var wrap = el('div', 'card');
+    wrap.appendChild(el('h4', null, 'Approaching a rate limit'));
+
+    rows.forEach(function(r){
+      var line = el('div', 'mini' + (r.used >= r.limit ? ' bad' : ''));
+      line.textContent = r.name + ' — ' + r.used + ' of ' + r.limit + ' ' + r.kind +
+                         ' in the last ' + rl.days + ' days';
+      wrap.appendChild(line);
+    });
+
+    wrap.appendChild(el('p', 'hint',
+      'Counted from this install’s own audit trail. The certificate authority publishes no way to ' +
+      'ask, so anything issued for these names elsewhere — another machine, another tool, a ' +
+      'colleague — spends the same allowance and is not counted here. Treat these as a minimum.'));
+
     box.appendChild(wrap);
   }
 
