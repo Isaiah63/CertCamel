@@ -365,9 +365,11 @@
     rows.id = 'set-web-check';
     fields.appendChild(rows);
 
-    /* Its own tick-box, never folded into the HTTPS one. This is the single
-       setting on this page that can lock somebody out of their own console, so
-       it should never arrive as a side effect of enabling something else. */
+    /* Its own tick-box, and it stayed one when the HTTPS tick-box went away.
+       This is the single setting on this page that can lock somebody out of
+       their own console, so it must never arrive as a side effect of doing
+       something else - least of all as a side effect of typing a hostname,
+       which is now all it takes to turn HTTPS on. */
     var hstsOn = el('label', 'check');
     var hstsBox = document.createElement('input');
     hstsBox.type = 'checkbox'; hstsBox.id = 'set-web-hsts';

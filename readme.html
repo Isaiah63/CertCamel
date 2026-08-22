@@ -220,10 +220,13 @@ random token generated fresh each launch. Loopback alone is not access control &
 else running on the machine can reach it, which is why the token exists.</p>
 
 <h3>Serving this page over HTTPS</h3>
-<p>Optional and off by default. It needs a DNS provider already set up, so nothing about a first
-look at Cert Camel changes &mdash; you can open it and explore with no credentials at all.
-<strong>Settings &rarr; General &rarr; Tracker address</strong> turns it on: give the page a
-hostname and a fixed port, and it serves itself over TLS using a certificate it issued.</p>
+<p>Set up during first-time setup, and normally already done by the time you read this. The
+hostname <em>is</em> the switch: <strong>Settings &rarr; General &rarr; Tracker address</strong>
+holds a name and a fixed port, and the console serves itself over TLS on that name using a
+certificate it issued. Clear the name and it goes back to plain HTTP on <code>127.0.0.1</code>.
+There is no separate on/off control, because two controls for one meaning could disagree &mdash;
+and the way that disagreement got resolved was the server coming up on plain HTTP and saying so in
+a log nobody had open.</p>
 <p>It stays on loopback. The name resolves to <code>127.0.0.1</code> through this machine&rsquo;s
 hosts file and <strong>no public DNS record is needed</strong> &mdash; DNS-01 validation reads a
 TXT record and never connects to the host. The panel checks four things separately, because they

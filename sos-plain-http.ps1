@@ -3,10 +3,15 @@
 
       powershell -ExecutionPolicy Bypass -File .\sos-plain-http.ps1
 
-  Turns HTTPS and HSTS off in settings.json and stops the running server, so the
-  next start serves plain HTTP. Touches nothing else - no certificate is deleted,
-  no domain is unwatched, and the settings it changes are the two you can turn
-  straight back on.
+  Clears the tracker hostname and turns HSTS off in settings.json, then stops the
+  running server, so the next start serves plain HTTP on 127.0.0.1. Touches
+  nothing else - no certificate is deleted and no domain is unwatched.
+
+  The hostname is what gets cleared because the hostname IS the HTTPS switch:
+  set a name and the console serves HTTPS on it, clear it and it serves plain
+  HTTP. There is no separate flag to turn off. The name is printed before it
+  goes, and recorded in the audit trail, because putting it back is how you
+  restore HTTPS afterwards.
 
   THE THING TO UNDERSTAND FIRST
 
@@ -62,21 +67,38 @@ if (-not $web.https -and -not $web.hsts) {
     Say "  HTTPS is already off. Nothing to change." 'Yellow'
 }
 else {
-    Say ("  was: https={0}  hsts={1}  name={2}  port={3}" -f $web.https, $web.hsts, $web.hostname, $web.port)
+    $wasName = $web.hostname
+    Say ("  was: https={0}  hsts={1}  name={2}  port={3}" -f $web.https, $web.hsts, $wasName, $web.port)
 
-    # The hostname and port are LEFT ALONE. They are what you turn back on with,
-    # and someone running this at 2am should not also have to remember them.
+    # The HOSTNAME is what gets cleared, not an https flag.
+    #
+    # This used to write https=false and deliberately keep the name. That worked
+    # until the settings page started deriving https from the hostname: the name
+    # survived, so the next time anything was saved in Settings - anything at all
+    # - https was recomputed as true and quietly re-armed. Somebody who ran this
+    # to escape a broken certificate would find it broken again after changing an
+    # unrelated setting.
+    #
+    # The name is the switch now, so turning it off means clearing the name. The
+    # port is kept, because that is the address you come back on.
     if (-not $settings.ContainsKey('web') -or -not $settings.web) { $settings.web = @{} }
-    $settings.web.https = $false
-    $settings.web.hsts  = $false
+    $settings.web.hostname = ''
+    $settings.web.https    = $false   # kept in the file for older readers; nothing derives from it
+    $settings.web.hsts     = $false
     Save-TrackerSettings -Settings $settings
 
     try {
         Write-AuditEvent -Event 'settings' -Object 'web' -Outcome 'ok' `
-            -Detail 'sos-plain-http.ps1: HTTPS and HSTS turned off'
+            -Detail ("sos-plain-http.ps1: cleared the tracker hostname '$wasName' and turned HSTS off")
         } catch { $null = $_ }   # the emergency switch already worked; auditing it is secondary
 
-    Say "  now: https=False  hsts=False   (hostname and port kept)" 'Green'
+    Say "  now: serving plain HTTP on 127.0.0.1 (hostname cleared, port kept)" 'Green'
+    if ($wasName) {
+        Say ""
+        Say "  WRITE THIS DOWN - it is what you put back to restore HTTPS:" 'Yellow'
+        Say ("      {0}" -f $wasName) 'White'
+        Say "  It is also in audit.log, and certs\$wasName\ is still on disk." 'DarkGray'
+    }
 }
 
 # --------------------------------------------------------------------------- #
@@ -106,7 +128,7 @@ Say "  To clear the name in the browser before the policy expires:" 'DarkGray'
 Say "      Chrome / Edge   chrome://net-internals/#hsts -> Delete domain security policies"
 Say "      Firefox         Forget About This Site, from the history entry"
 Say ""
-Say "  Then fix whatever the certificate problem was - Settings > Tracker address" 'DarkGray'
-Say "  shows what is serving the console and whether it is still being renewed -" 'DarkGray'
-Say "  and turn HTTPS back on. The hostname and port are still saved." 'DarkGray'
+Say "  Then fix whatever the certificate problem was. To restore HTTPS, put the" 'DarkGray'
+Say "  name back under Settings > Tracker address - there is no separate switch," 'DarkGray'
+Say "  the name IS the switch - and restart the console." 'DarkGray'
 Say ""

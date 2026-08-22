@@ -1078,16 +1078,25 @@ function Get-WebSettings {
             $out.hostname = ([string]$w.hostname).Trim().TrimEnd('.').ToLowerInvariant()
         }
         if ($w.ContainsKey('port') -and $w.port) { $out.port = [int]$w.port }
-        if ($w.ContainsKey('https'))             { $out.https = [bool]$w.https }
         if ($w.ContainsKey('hsts'))              { $out.hsts  = [bool]$w.hsts }
     }
 
     if ($out.port -lt 0 -or $out.port -gt 65535) { $out.port = 0 }
 
-    # HTTPS with no name or no fixed port is not a state worth honouring: it
-    # would pin nothing and then fail the handshake on every request. Fall back
-    # to plain HTTP rather than serving something broken.
-    if ($out.https -and (-not $out.hostname -or -not $out.port)) { $out.https = $false }
+    # DERIVED from the hostname, and the stored `https` field is deliberately not
+    # read at all.
+    #
+    # The settings page derives it the same way when saving, so trusting the
+    # stored value here left two sources of truth for one fact - exactly what
+    # removing the tick-box was meant to end. It had a consequence rather than
+    # being merely untidy: sos-plain-http.ps1 wrote https=false while keeping the
+    # hostname, so the recovery worked until the next settings save re-derived
+    # https=true from the surviving name and silently re-armed it.
+    #
+    # A name with no fixed port is not a state worth honouring either. It would
+    # pin nothing and fail the handshake on every request, so it reads as plain
+    # HTTP rather than as something broken.
+    $out.https = [bool]($out.hostname -and $out.port)
 
     # HSTS without HTTPS is not a half-state either - the header is ignored on a
     # plain response, so honouring it would only mean it silently re-arms the

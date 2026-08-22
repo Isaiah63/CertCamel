@@ -362,9 +362,11 @@ still watching.</p>
 
 <h2 id="https">8. A name and HTTPS</h2>
 
-<p>Optional, and worth doing on a shared server. By default the console is served over plain HTTP on
-<code>127.0.0.1</code>. Settings &rarr; General &rarr; <strong>Tracker address</strong> will issue a
-certificate for a name of your choosing and serve itself over HTTPS instead.</p>
+<p>Set up while running setup, which walks through it as its last step. The console serves itself
+over HTTPS on the name you give it, using a certificate it issued; <code>127.0.0.1</code> keeps
+working alongside, which is the way back in if the name stops resolving or the certificate lapses.
+Settings &rarr; General &rarr; <strong>Tracker address</strong> is where the name lives afterwards,
+and clearing it is what returns the console to plain HTTP &mdash; there is no separate switch.</p>
 
 <p>The name resolves to <code>127.0.0.1</code> through the machine's hosts file &mdash; no public DNS
 record is needed or wanted. Read the warnings on that panel before ticking HSTS; they describe how to

@@ -341,6 +341,7 @@ Credential changes are recorded too, by key <em>name</em> only.</p>
 <div class="tablewrap"><table>
   <thead><tr><th>Task</th><th>Admin?</th><th>Why</th></tr></thead>
   <tbody>
+    <tr><td>Running setup</td><td><strong>Yes</strong></td><td>Registers tasks, writes the hosts file, and sets the folder permissions</td></tr>
     <tr><td>Watching certificates</td><td>No</td><td>Nothing is installed</td></tr>
     <tr><td>Renewing and deploying</td><td>No</td><td>Posh-ACME is fetched into the folder, not the system</td></tr>
     <tr><td>Tasks that run while you are signed out</td><td><strong>Yes</strong></td><td>Needs the <em>Log on as a batch job</em> right</td></tr>
@@ -349,10 +350,17 @@ Credential changes are recorded too, by key <em>name</em> only.</p>
   </tbody>
 </table></div>
 
-<p>If setup is run without elevation it still works, but the scheduled tasks fall back to running
-<strong>only while you are signed in</strong> &mdash; and it says so at the time. On a server that is
-silently fatal: the renewal never fires, Task Scheduler still reports the task as healthy, and the
-first symptom is an expired certificate.</p>
+<p><strong>Setup requires administrator and will not start without it.</strong> It used to run
+unelevated and let the scheduled tasks fall back to running only while you were signed in. On a
+server that is silently fatal &mdash; the renewal never fires, Task Scheduler still reports the task
+as healthy, and the first symptom is an expired certificate &mdash; so that fallback was removed.
+Registration either succeeds properly or fails and says why; a missing task is at least visible on
+the Home page.</p>
+
+<p>Which administrator matters as well as whether one is used. The saved credentials are encrypted
+for the account that writes them, so elevating with a <em>different</em> administrator's credentials
+would quietly make that account the owner of the install. Setup compares the two and refuses rather
+than letting it happen.</p>
 
 <h2 id="not">7. What it does not do</h2>
 

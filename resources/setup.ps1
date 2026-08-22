@@ -570,8 +570,16 @@ else {
     Write-Host "        their own expiry warnings and account recovery, and it is sent to"
     Write-Host "        them - not stored only here."
     Write-Host ""
+    # Every required prompt in this step takes 'q' as a way out. Setup is one of
+    # the few places somebody has to go and fetch something mid-task - open the
+    # Cloudflare dashboard, mint a token - and a required field with no escape
+    # leaves Ctrl+C as the only exit, halfway through a run that has already
+    # written settings and permissions.
+    Write-Host "        Enter q to stop setup here and come back to it." -ForegroundColor DarkGray
+    Write-Host ""
     do {
         $contact = (Read-Host "        Contact email").Trim()
+        if ($contact -eq 'q') { Write-Host ""; Write-Host "  Stopped. Run setup again when you are ready." -ForegroundColor Yellow; Write-Host ""; exit 1 }
         if ($contact -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') {
             Write-Host "        That does not look like an email address." -ForegroundColor Yellow
             $contact = ''
@@ -612,7 +620,8 @@ else {
 
     $choice = 0
     do {
-        $pick = (Read-Host ("        Which one? (1-{0})" -f $plugins.Count)).Trim()
+        $pick = (Read-Host ("        Which one? (1-{0}, or q to stop)" -f $plugins.Count)).Trim()
+        if ($pick -eq 'q') { Write-Host ""; Write-Host "  Stopped. Run setup again when you have the credential." -ForegroundColor Yellow; Write-Host ""; exit 1 }
         if ($pick -match '^\d+$' -and [int]$pick -ge 1 -and [int]$pick -le $plugins.Count) {
             $choice = [int]$pick
         }
@@ -666,8 +675,15 @@ else {
             # reaches disk. That matters more than it sounds: this console gets
             # demonstrated, and screen-shared.
             do {
-                $secure = Read-Host ("        {0}" -f $label) -AsSecureString
+                $secure = Read-Host ("        {0} (or q to stop)" -f $label) -AsSecureString
                 $plain  = ConvertFrom-SecureStringPlain $secure
+                if ($plain -eq 'q') {
+                    Write-Host ""
+                    Write-Host "  Stopped before the credential was saved. Nothing was written for" -ForegroundColor Yellow
+                    Write-Host "  this DNS profile - run setup again when you have it." -ForegroundColor Yellow
+                    Write-Host ""
+                    exit 1
+                }
                 if (-not $plain) { Write-Host "        Required." -ForegroundColor Yellow }
             } while (-not $plain)
 
@@ -677,7 +693,8 @@ else {
         }
 
         do {
-            $val = (Read-Host ("        {0}" -f $label)).Trim()
+            $val = (Read-Host ("        {0} (or q to stop)" -f $label)).Trim()
+            if ($val -eq 'q') { Write-Host ""; Write-Host "  Stopped. Run setup again when you have it." -ForegroundColor Yellow; Write-Host ""; exit 1 }
             if (-not $val) { Write-Host "        Required." -ForegroundColor Yellow }
         } while (-not $val)
         $plainArgs[$a.Name] = $val
