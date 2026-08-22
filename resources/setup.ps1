@@ -62,7 +62,6 @@ $ErrorActionPreference = 'Stop'
 $appDir      = $PSScriptRoot
 $root        = Split-Path $PSScriptRoot -Parent
 $domainList  = Join-Path $root 'domains.txt'
-$domainSeed  = Join-Path $root 'domains.example.txt'
 $checker     = Join-Path $appDir 'check-ssl.ps1'
 $tracker     = Join-Path $appDir 'ssl-tracker.html'
 $launcher    = Join-Path $root 'Open Tracker.bat'
@@ -472,16 +471,37 @@ if (-not (Test-Path $checker)) {
 
 if (Test-Path $domainList) {
     Write-Host "  [1/6] domains.txt already exists - leaving it alone." -ForegroundColor Green
-} elseif (Test-Path $domainSeed) {
-    # Copied rather than generated so the example list lives in one place, and
-    # so your domains.txt is yours - it is gitignored and never overwritten.
-    Copy-Item -Path $domainSeed -Destination $domainList
-    Write-Host "  [1/6] Created domains.txt from the example list." -ForegroundColor Green
-    Write-Host "        Edit it to add your own domains." -ForegroundColor DarkGray
 } else {
-    $utf8 = New-Object Text.UTF8Encoding $false
-    [IO.File]::WriteAllText($domainList, "# One domain per line.`r`nexample.com`r`n", $utf8)
-    Write-Host "  [1/6] Created an empty domains.txt." -ForegroundColor Yellow
+    # Created with its explanation and NO hostnames.
+    #
+    # This used to be a copy of domains.example.txt, which carries example.com
+    # and www.example.com. The first check three steps later then went out and
+    # measured somebody else's domain, and the page opened showing two
+    # certificates that had nothing to do with this install. Worse, the setup
+    # checklist on Home reads "watch some certificates" as DONE the moment any
+    # result exists - so a brand new install reported that step finished on the
+    # strength of placeholder data.
+    #
+    # Deriving names from the zones step 3 discovers was considered and
+    # rejected: a zone is not a hostname. Guessing www.<zone> produces a name
+    # that may not exist, which is then checked, fails, and greets somebody with
+    # a red row on a console they have just installed.
+    #
+    # domains.example.txt stays exactly where it is as the worked example. It
+    # simply stops being copied over a fresh install as though it were yours.
+    $seedText =
+        "# One hostname per line. Add the names you want watched." + "`r`n" +
+        "#" + "`r`n" +
+        "# Group them with [Category] headings, give a non-standard port as" + "`r`n" +
+        "# name:port, and see domains.example.txt beside this file for a worked" + "`r`n" +
+        "# example of both." + "`r`n" +
+        "#" + "`r`n" +
+        "# The Certificates page edits this file, so there is no need to come" + "`r`n" +
+        "# back here by hand." + "`r`n"
+
+    [IO.File]::WriteAllText($domainList, $seedText, (New-Object Text.UTF8Encoding $false))
+    Write-Host "  [1/6] Created domains.txt, with nothing in it yet." -ForegroundColor Green
+    Write-Host "        Names get added on the Certificates page once this finishes." -ForegroundColor DarkGray
 }
 
 # --------------------------------------------------------------------------- #
@@ -753,8 +773,38 @@ if ($zoneCache) {
 # --------------------------------------------------------------------------- #
 
 Write-Host ""
-Write-Host "  [4/6] Running the first check..." -ForegroundColor Cyan
-& $checker
+
+# Nothing to check is not the same as a check that found nothing.
+#
+# domains.txt starts empty now, so on a first run there is genuinely nothing to
+# measure - and running the checker anyway produces an empty ssl-data.js, prints
+# a summary of zero hosts, and reads as though something failed.
+#
+# The same line rules the checker itself uses: blanks and # comments skipped,
+# [Category] headers skipped. A file of nothing but the explanatory header
+# counts as empty, which is exactly what step 1 just wrote.
+$hasNames = $false
+if (Test-Path $domainList) {
+    foreach ($line in (Get-Content $domainList -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+        $entry = $line.Trim()
+        if (-not $entry -or $entry.StartsWith('#')) { continue }
+        if ($entry -match '^\[(.+)\]$')            { continue }
+        $hasNames = $true
+        break
+    }
+}
+
+if ($hasNames) {
+    Write-Host "  [4/6] Running the first check..." -ForegroundColor Cyan
+    & $checker
+}
+else {
+    Write-Host "  [4/6] Nothing to check yet" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "        domains.txt has no hostnames in it, so there is nothing to measure." -ForegroundColor DarkGray
+    Write-Host "        Add the names you want watched on the Certificates page once this" -ForegroundColor DarkGray
+    Write-Host "        finishes - the Home page lists it as the first thing to do." -ForegroundColor DarkGray
+}
 
 # --------------------------------------------------------------------------- #
 # 5. Daily scheduled task (optional)
@@ -879,6 +929,76 @@ if ($wantHttps -notmatch '^[Nn]') {
         Show-Check $st.portCheck.ok   'Port'        $st.portCheck.detail
         Show-Check $st.hosts.ok       'Hosts file'  $st.hosts.detail
         Write-Host ""
+
+        # --------------------------------------------------------------------- #
+        # Staging would hand back a certificate the browser rejects
+        # --------------------------------------------------------------------- #
+        # The certificate authority ships with staging ON, and the reason is good
+        # - a first run against production burns real rate limit on a
+        # configuration nobody has proven yet, and Let's Encrypt allows only five
+        # identical certificates a week.
+        #
+        # It is the wrong answer for THIS certificate. A staging certificate is
+        # not publicly trusted, so setup would finish by announcing HTTPS and
+        # handing over a console the browser warns about - which reads as setup
+        # having gone wrong rather than as a deliberate default.
+        #
+        # Asked here, before either issuing branch below, because this is the
+        # last point where it costs nothing. By now the DNS credential has proved
+        # itself against the provider by listing real zones in step 3, which is
+        # exactly the unproven configuration the staging default guards against.
+        # Get-CaProfile throws when nothing is configured. That cannot happen on
+        # a fresh install - the built-in authority is seeded by
+        # New-DefaultSettings - but this is a question about a certificate, not
+        # the step that issues one, and it must not be what ends setup.
+        $askCa = $null
+        try { $askCa = Get-CaProfile -Settings (Get-TrackerSettings) } catch { $askCa = $null }
+
+        if ($askCa -and $askCa.useStaging -and -not $st.certificate.ok) {
+            Write-Host ("        {0} is set to STAGING." -f $askCa.label) -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "        A staging certificate is real, but no browser trusts it. This page" -ForegroundColor DarkGray
+            Write-Host "        would open with a certificate warning, which looks like setup went" -ForegroundColor DarkGray
+            Write-Host "        wrong rather than like a setting you chose." -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "        Staging is on by default so a first run cannot burn production rate" -ForegroundColor DarkGray
+            Write-Host "        limit on a configuration nobody has tested. Yours has just been" -ForegroundColor DarkGray
+            Write-Host "        tested - step 3 listed your zones through the credential you gave." -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "        This switches the authority itself, so it applies to every" -ForegroundColor Yellow
+            Write-Host "        certificate from here on, not only this one." -ForegroundColor Yellow
+            Write-Host ""
+
+            $goLive = Read-Host "        Switch to production? (Y/n)"
+            if ($goLive -notmatch '^[Nn]') {
+                try {
+                    $sCa = Get-TrackerSettings
+                    foreach ($c in @($sCa.cas)) {
+                        if ($c.id -eq $askCa.id) { $c.useStaging = $false }
+                    }
+                    Save-TrackerSettings -Settings $sCa
+                    Write-Host ("        {0} is now production. Certificates will be publicly trusted." -f $askCa.label) -ForegroundColor Green
+
+                    # The account is per-CA and staging counts as a different CA,
+                    # so the order below registers a new one against production.
+                    # Said out loud because it is the difference between a pause
+                    # and something looking stuck.
+                    Write-Host "        The first order will register an account there, which adds a" -ForegroundColor DarkGray
+                    Write-Host "        few seconds." -ForegroundColor DarkGray
+                }
+                catch {
+                    Write-Host ("        Could not switch: {0}" -f ($_.Exception.Message -split "`n")[0].Trim()) -ForegroundColor Red
+                    Write-Host "        Change it under Settings > Certificate Authorities instead." -ForegroundColor DarkGray
+                }
+            }
+            else {
+                Write-Host "        Staying on staging. The console will show a certificate warning," -ForegroundColor Yellow
+                Write-Host "        which is expected and not a fault." -ForegroundColor DarkGray
+                Write-Host "        To fix it later: untick staging under Settings > Certificate" -ForegroundColor DarkGray
+                Write-Host "        Authorities, then renew this certificate from the Certificates page." -ForegroundColor DarkGray
+            }
+            Write-Host ""
+        }
 
         if (-not $st.zone.ok) {
             # Stopped here on purpose. Without a DNS credential that covers the
