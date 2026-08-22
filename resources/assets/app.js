@@ -267,6 +267,7 @@
       }
       CertCamel.state = s;
       setTally(s.tally);
+      setInstall(s.install);
       var staging = ((s.settings && s.settings.cas) || []).filter(function(ca){ return ca.useStaging; });
       setLiveHint(staging.length
         ? 'Staging: ' + staging.map(function(ca){ return ca.label; }).join(', ')
@@ -288,6 +289,28 @@
      The tooltip says WHAT it counts from, because the audit trail is younger
      than some installs and a total that quietly means something narrower than
      it says would be worse than none. */
+  /* Which copy of Cert Camel this is.
+
+     Shown because two installs on one machine are indistinguishable in the
+     browser once the page has rendered - same layout, same data shape, same
+     everything - and the way that ends is a long debugging session against a
+     bug that was fixed in the other folder.
+
+     The version is on screen and the folder is on hover: the path is far too
+     long for a sidebar this narrow, and it is only ever needed once, at the
+     moment somebody asks "which one am I looking at". */
+  function setInstall(i){
+    var box = document.getElementById('sidebar-install');
+    if (!box) { return; }
+    var v = (i && i.version) || '';
+    if (!v) { box.classList.add('hidden'); return; }
+
+    document.getElementById('install-version').textContent = 'v' + v;
+    box.title = (i.folder ? i.folder + '\n\n' : '') +
+                'The version and folder of the Cert Camel that served this page.';
+    box.classList.remove('hidden');
+  }
+
   function setTally(t){
     var box = document.getElementById('sidebar-tally');
     if (!box) { return; }

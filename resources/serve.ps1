@@ -646,6 +646,18 @@ function Get-StateResponse {
             $v = @(Get-PoshAcmeVersions)
             if ($v.Count) { $v[0].version.ToString() } else { $null }
         )
+        # Which copy of Cert Camel this is, and where it lives.
+        #
+        # Both were already known here and shown nowhere: Get-CamelVersion fed
+        # only the update check, and the folder appeared only in the startup
+        # banner, which nobody has open. Two installs on one machine - a working
+        # copy and an older one opened by mistake - look identical in the browser
+        # once the page has rendered, and the way that ends is twenty minutes of
+        # debugging a bug that was fixed in the other folder.
+        install       = @{
+            version = (Get-CamelVersion)
+            folder  = $script:Root
+        }
     }
 }
 

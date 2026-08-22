@@ -425,6 +425,14 @@ body.sidebar-collapsed .navitem .navbadge{position:absolute; top:.2rem; right:.2
    attribute still explains it on hover. */
 body.sidebar-collapsed .sidebar-tally{display:none;}
 
+/* The version, under the tally and above the footer buttons. Deliberately the
+   quietest thing in the sidebar: it is an identity label, not information
+   anybody needs while working, and it only earns its place on the day two
+   copies are open at once. Same reason it vanishes when collapsed. */
+.sidebar-install{padding:.1rem .75rem .5rem; font-size:.68rem; color:var(--faint);
+  line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+body.sidebar-collapsed .sidebar-install{display:none;}
+
 /* The current theme, on the right of the Theme button. The button is a plain
    .navitem now - same shape as Collapse below it - so this is the only piece
    that needed its own rule. */
