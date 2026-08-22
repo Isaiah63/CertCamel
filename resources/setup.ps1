@@ -17,7 +17,14 @@ param(
     # setup - domains, the Posh-ACME prompt, a full check run, then three Y/N
     # questions - which is a lot of ceremony for a ten-second fix, and is
     # exactly why it is easy to miss that setup needed administrator.
-    [switch]$RepairTasks
+    [switch]$RepairTasks,
+
+    # Set only by the elevation relaunch below, never by hand: the account that
+    # started setup before Windows asked for approval. The elevated instance
+    # compares it against its own identity, which is the one reliable way to
+    # notice that UAC was satisfied with a DIFFERENT administrator's credentials
+    # - and that matters because it silently decides who owns the install.
+    [string]$ExpectedOwner
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,9 +68,19 @@ function Register-CamelTask {
       symptom is an expired certificate.
 
       S4U ("service for user") needs no stored password, but it does need the
-      "Log on as a batch job" right, which standard users do not hold. If
-      Windows refuses, fall back to the old behaviour rather than leaving
-      nothing registered at all - but say plainly what was given up.
+      "Log on as a batch job" right, which standard users do not hold.
+
+      This used to fall back to an Interactive registration when Windows refused
+      S4U, reasoning that some task beats none. It does not. The fallback
+      produces a task that reports Ready in Task Scheduler and never fires,
+      which is the one outcome nobody can see - and it announced itself in a
+      warning printed halfway down a wall of setup text, sixty days before the
+      expired certificate that is the real first symptom.
+
+      So: S4U or an error, matching Install-CamelServerTask, which has always
+      worked this way. Setup requires administrator now (see the gate below the
+      banner), which is what makes that a reasonable demand rather than a dead
+      end. A task that is missing is at least visible on the Home page.
     #>
     param(
         [string]$Name,
@@ -84,25 +101,15 @@ function Register-CamelTask {
         return 'S4U'
     }
     catch {
-        # "Access is denied" is what this looks like unelevated. Register it the
-        # old way rather than leaving the user with no task at all.
-        Register-ScheduledTask -TaskName $Name -Action $Action -Trigger $Trigger `
-            -Settings $Settings -Description $Description -Force -ErrorAction Stop | Out-Null
-
-        # Said once, not once per task - three identical paragraphs would train
-        # people to skip past it, which is the opposite of the point.
-        if (-not $script:WarnedAboutLogonType) {
-            $script:WarnedAboutLogonType = $true
-            Write-Host ""
-            Write-Host "        Note: these tasks will only run while you are signed in." -ForegroundColor Yellow
-            Write-Host "        Windows refused 'run whether logged on or not' (Access is denied)," -ForegroundColor DarkGray
-            Write-Host "        which needs the 'Log on as a batch job' right. That is fine on a" -ForegroundColor DarkGray
-            Write-Host "        PC you sign into daily." -ForegroundColor DarkGray
-            Write-Host ""
-            Write-Host "        On an always-on server it is not: nothing would renew while" -ForegroundColor DarkGray
-            Write-Host "        nobody is logged on. Re-run this as administrator there." -ForegroundColor DarkGray
-        }
-        return 'Interactive'
+        # Rethrown, never downgraded. Every caller wraps this in a try/catch that
+        # reports the step as failed, which is the outcome wanted: nothing
+        # registered, and a reason on screen.
+        $reason = ($_.Exception.Message -split "`n")[0].Trim()
+        throw ("could not register it to run whether or not $userId is signed in ($reason). " +
+               "That needs the 'Log on as a batch job' right for $userId - grant it under " +
+               "secpol.msc, Local Policies, User Rights Assignment, then run setup again. " +
+               "Nothing was registered: a task that runs only while you are signed in would " +
+               "report Ready in Task Scheduler and quietly renew nothing.")
     }
 }
 
@@ -200,6 +207,109 @@ if ($RepairTasks) {
 Write-Host ""
 Write-Host "  SSL Certificate Expiry Tracker - setup" -ForegroundColor Cyan
 Write-Host "  $root" -ForegroundColor DarkGray
+Write-Host ""
+
+# --------------------------------------------------------------------------- #
+# 0. Administrator, and the RIGHT administrator
+# --------------------------------------------------------------------------- #
+# Setup needs elevation for three separate things, and every one of them fails
+# quietly without it: S4U task registration, the hosts file entry, and the
+# permissions applied to the folder holding the private keys. Asking once, here,
+# beats three different failures spread across ten minutes of prompts.
+#
+# WHICH account elevates matters as much as whether one does. Secrets are
+# encrypted by Export-Clixml, which is DPAPI scoped to the USER. Normal UAC
+# elevation keeps the same identity and is fine. Elevating by typing a DIFFERENT
+# administrator's credentials does not: secrets.xml would be re-encrypted as
+# that account, the tasks registered for that account, and the console run as
+# the original one could no longer decrypt anything it had saved.
+#
+# So there are two checks below, and they cover different ways in: -ExpectedOwner
+# catches a relaunch that came back as somebody else, and Get-SecretStore catches
+# a window that was already elevated as somebody else before setup ever ran.
+
+$whoAmI = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+
+# Deliberately NOT gated on "is this user in the Administrators group", which
+# cannot be answered from the token that asks. Measured on a machine where the
+# signed-in account IS a local administrator: net localgroup lists it, and
+# WindowsIdentity.Groups does not contain S-1-5-32-544 at all - a filtered token
+# drops the SID rather than carrying it as deny-only. Gating on that check
+# refused setup to precisely the people meant to run it.
+#
+# So the relaunch is offered to anyone, and the identity question is answered
+# AFTER elevation, where it is a fact rather than an inference: the elevated
+# instance is told which account asked, and compares.
+if (-not (Test-Elevated)) {
+    Write-Host "  Setup needs to run as administrator." -ForegroundColor Yellow
+    Write-Host "  Windows will ask you to approve it." -ForegroundColor DarkGray
+    Write-Host ""
+    $goUp = Read-Host "  Relaunch elevated now? (Y/N)"
+    if ($goUp -match '^[Yy]') {
+        try {
+            Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                '-File', ('"{0}"' -f $PSCommandPath),
+                '-ExpectedOwner', ('"{0}"' -f $whoAmI)) -ErrorAction Stop
+            exit 0
+        }
+        catch {
+            Write-Host ""
+            Write-Host "  Elevation was declined or cancelled. Nothing has been changed." -ForegroundColor Yellow
+        }
+    }
+    Write-Host ""
+    Write-Host "  Right-click 'First Time Setup.bat' and choose Run as administrator." -ForegroundColor DarkGray
+    Write-Host "  Elevate as the account that will own this install - approving with a" -ForegroundColor DarkGray
+    Write-Host "  different administrator's credentials makes that account the owner instead." -ForegroundColor DarkGray
+    Write-Host ""
+    exit 1
+}
+
+# The relaunch above says who asked. If UAC was satisfied with somebody else's
+# credentials, this is where that shows up - before anything has been written.
+if ($ExpectedOwner -and $ExpectedOwner -ne $whoAmI) {
+    Write-Host "  Elevation changed which account is running setup." -ForegroundColor Red
+    Write-Host ""
+    Write-Host ("    setup was started by : {0}" -f $ExpectedOwner) -ForegroundColor Gray
+    Write-Host ("    but is now running as: {0}" -f $whoAmI)        -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  Carrying on would make $whoAmI the owner of this install: the tasks would" -ForegroundColor DarkGray
+    Write-Host "  be registered for that account and the DNS credentials encrypted for it, so" -ForegroundColor DarkGray
+    Write-Host "  nothing would work when you signed back in as $ExpectedOwner." -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  Sign in as an administrator account and run setup from there." -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
+
+# Already elevated, but possibly as somebody else - "Run as administrator" on a
+# machine where your daily account is not one lands here with a different
+# identity entirely.
+#
+# Asked by DECRYPTING rather than by inspecting the file's owner. Ownership is a
+# poor proxy: a file created by an administrator is often owned by
+# BUILTIN\Administrators, which says nothing about which user's DPAPI key
+# encrypted the contents. Get-SecretStore answers the question that actually
+# matters, because it is the same call everything else makes.
+try { [void](Get-SecretStore) }
+catch {
+    Write-Host "  This install already belongs to a different account." -ForegroundColor Red
+    Write-Host ""
+    Write-Host ("    setup is running as : {0}" -f $whoAmI) -ForegroundColor Gray
+    Write-Host ("    secrets.xml says    : {0}" -f (($_.Exception.Message -split "`n")[0].Trim())) -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  Carrying on would register the scheduled tasks for $whoAmI and encrypt" -ForegroundColor DarkGray
+    Write-Host "  anything saved from here for $whoAmI, while the existing credentials" -ForegroundColor DarkGray
+    Write-Host "  stayed unreadable - so renewal would keep failing with nothing obviously" -ForegroundColor DarkGray
+    Write-Host "  wrong on the page." -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  Sign in as the account that owns this install and run setup there." -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
+
+Write-Host "  Running as $whoAmI (administrator)." -ForegroundColor DarkGray
 Write-Host ""
 
 # --------------------------------------------------------------------------- #
