@@ -980,34 +980,6 @@
       'Send email when a certificate needs attention. The password, if you use one, is stored the ' +
       'same encrypted way as every other credential here.'));
 
-    /* "This install does not send email" records a DECISION, which is the one
-       thing the five toggles below cannot express.
-
-       Each of them already gates its own send, so turning all five off is
-       already a complete off-switch. What it is not is distinguishable from
-       never having configured alerts at all - both look like five falses on a
-       fresh install. So anything that wants to know whether somebody has
-       thought about alerts yet, like the setup checklist on Home, had no way
-       to tell "no thanks" from "not yet" and would go on asking forever.
-
-       It suppresses nothing on its own. Saving with it ticked turns the five
-       toggles off, so the stored state says exactly what the tick-box claims
-       rather than the two disagreeing. */
-    var noneCard = el('div', 'card');
-    var noneOn = el('label', 'check');
-    var noneBox = document.createElement('input');
-    noneBox.type = 'checkbox'; noneBox.className = 'al-none';
-    noneOn.appendChild(noneBox);
-    noneOn.appendChild(el('span', null, 'This install does not send email'));
-    noneCard.appendChild(noneOn);
-    noneCard.appendChild(el('p', 'hint',
-      'Tick this if you would rather check the page yourself. It turns every alert below off and ' +
-      'stops Cert Camel asking you to set email up. Nothing else changes — expiry is still tracked ' +
-      'and certificates still renew.'));
-    noneCard.appendChild(el('p', 'hint bad',
-      'Worth being deliberate about: with no email, a renewal that starts failing is only visible ' +
-      'to somebody who opens this page. That is a real way to reach an expiry unaware.'));
-    p.appendChild(noneCard);
 
     var card = el('div', 'card');
     card.appendChild(el('h4', null, 'Outgoing mail server'));
@@ -1033,6 +1005,35 @@
     var from = field(grid, 'al-smtp-from', 'From address', '', 'email', null, 'certcamel@example.com');
     var to = field(grid, 'al-smtp-to', 'Send to', '', 'text',
       'One or more addresses, comma-separated.', 'you@example.com, oncall@example.com');
+
+    /* Sits in the grid's empty third cell rather than in a card of its own.
+       It is one tick-box, and a full-width block above the mail server gave it
+       more weight than the settings it governs - the first thing you met on the
+       page was the option not to use it.
+
+       It records a DECISION, which is the one thing the toggles below cannot
+       express. Each of those already gates its own send, so all-off is a
+       complete off-switch - it is just indistinguishable from never having been
+       configured, which is what a fresh install looks like too. Anything asking
+       whether alerts have been thought about yet, like the setup checklist on
+       Home, had no way to tell "no thanks" from "not yet".
+
+       It suppresses nothing by itself. Saving with it ticked turns the toggles
+       off, in the page and again on the server, so the stored state cannot
+       disagree with what the tick-box claims. */
+    var noneField = el('div', 'field');
+    noneField.appendChild(el('label', null, 'Alerts'));
+    var noneOn = el('label', 'check');
+    var noneBox = document.createElement('input');
+    noneBox.type = 'checkbox'; noneBox.className = 'al-none';
+    noneOn.appendChild(noneBox);
+    noneOn.appendChild(el('span', null, 'Disable alerts'));
+    noneField.appendChild(noneOn);
+    noneField.appendChild(el('p', 'hint bad',
+      'Nothing will email you when a renewal starts failing — you would only find out by opening ' +
+      'this page.'));
+    grid.appendChild(noneField);
+
     card.appendChild(grid);
 
     var authField = el('div', 'field');
