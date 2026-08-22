@@ -241,7 +241,7 @@ machine, and two of these are easy to forget and painful to discover live on a s
     <tr>
       <td><strong>&ldquo;Log on as a batch job&rdquo;</strong></td>
       <td>Scheduled tasks need it. Usually granted implicitly &mdash; ask explicitly rather than find
-      out at 3:20 AM that it was not.</td>
+      out on the first unattended run that it was not.</td>
     </tr>
   </tbody>
 </table>
@@ -340,7 +340,7 @@ predictable enough to write down in a runbook.</p>
   <div class="h">Why S4U rather than a stored password</div>
   <p>S4U signs the account on without a password, so no password has to be stored anywhere to run
   the tasks. The obvious worry is that a passwordless logon cannot reach DPAPI, and would therefore
-  fail to decrypt the DNS token at 3:20 AM. It can, and it does &mdash; that was tested rather than
+  fail to decrypt the DNS token on an unattended run. It can, and it does &mdash; that was tested rather than
   assumed.</p>
 </div>
 

@@ -249,8 +249,11 @@ monthly trigger to reach for instead. `First Time Setup.bat` can register it.
 2. Double-click **`First Time Setup.bat`** (once).
 3. Double-click **`Open Tracker.bat`**.
 
-Setup creates your domain list, optionally fetches the ACME client, runs the
-first check, and offers to schedule a daily re-check at 9:00 AM.
+Setup needs **administrator** and says so if it does not have it. It restricts
+permissions on this folder, fetches the ACME client, asks for your certificate
+authority contact and a DNS API credential — proving that credential can write
+a record before going further — then asks what time scheduled work should run
+and offers to give this page its own name and certificate.
 
 `readme.html` in this folder is the same documentation as a browser page, with a
 table of contents — it is linked from **Read me** in the app.
@@ -337,7 +340,7 @@ If the certificate ever fails to *load* — missing file, unreadable key — the
 server says so and falls back to plain HTTP rather than refusing to start. An
 *expired* certificate is different and less serious: the browser still offers
 Advanced → Proceed, and because renewal runs from the scheduled task rather than
-from this page, the 03:20 run repairs it with nobody watching. `serve.ps1
+from this page, the next scheduled run repairs it with nobody watching. `serve.ps1
 -NoTls` forces plain HTTP for the cases neither of those covers.
 
 The page never sends `Strict-Transport-Security`. It is a good header on a
@@ -380,7 +383,7 @@ Setup rather than committed here. The Docs page shows which version you have.
 **A fresh install always gets the newest**, because setup asks for the latest.
 **An existing install stays where it is** and does not move on its own. That is
 deliberate: this is the component every renewal talks to your CA and your DNS
-provider through, so an update that breaks a DNS plugin breaks the 03:20
+provider through, so an update that breaks a DNS plugin breaks the scheduled
 unattended run with nobody watching. It should move when you decide it does.
 
 It is still worth moving occasionally — ACME keeps changing (renewal information,
@@ -862,7 +865,7 @@ are easy to confuse:
 **Run logs** (`jobs\`) are the narrative of one run: every ACME step, every push,
 every verification tier. Useful when something went wrong and you want to know
 where. Named for what they are and when they ran — `2026-08-05T032000Z-renew-due.log`.
-Scheduled runs write these too; before, the 03:20 renewal wrote nothing at all,
+Scheduled runs write these too; before, the unattended renewal wrote nothing at all,
 which meant the runs nobody watches were the ones with no record.
 
 **The audit trail** (`audit.log`) is one line per state change, append-only:
@@ -961,10 +964,12 @@ Copy the folder anywhere and it works, with two exceptions worth knowing:
 - **The scheduled task stores an absolute path.** After moving, run
   `First Time Setup.bat` again to re-point it.
 
-Requires Windows PowerShell 5.1, which ships with Windows. Monitoring needs
-nothing installed. Renewal adds [Posh-ACME](https://poshac.me), downloaded into
-`lib\` inside this folder rather than installed system-wide — no admin rights at
-any point.
+Requires Windows PowerShell 5.1, which ships with Windows. Nothing is
+installed system-wide: [Posh-ACME](https://poshac.me) is downloaded into
+`resources\lib\` inside this folder, pinned to one version and checked against a
+recorded hash. **Setup itself needs administrator** — for the scheduled tasks,
+the hosts file entry and the folder permissions — but the tasks it registers
+run unelevated.
 
 ## The scheduled tasks
 
@@ -972,11 +977,14 @@ Three, all optional, all registered by `First Time Setup.bat`, all running as
 the current user in a hidden window with `StartWhenAvailable` so they catch up
 after the PC has been off. Only **one of the three can change anything**:
 
+Setup asks once what time they should start and uses the answer for all three;
+the table shows the default.
+
 | Task | Runs | What that run does |
 |---|---|---|
-| `Cert Camel Renew` | every 6 hours, from 03:20 | Renews what the CA says is due, deploys each one, verifies every node is serving it |
-| `SSL Cert Check` | daily 09:00 | Re-reads expiry dates. Never issues or deploys |
-| `Cert Camel Monthly Report` | daily 08:00 | Emails a summary on the 1st; does nothing on other days |
+| `Cert Camel Renew` | every 6 hours, from the time you chose | Renews what the CA says is due, deploys each one, verifies every node is serving it |
+| `SSL Cert Check` | daily, same time | Re-reads expiry dates. Never issues or deploys |
+| `Cert Camel Monthly Report` | daily, same time | Emails a summary on the 1st; does nothing on other days |
 
 ### Seeing and changing them
 
@@ -987,8 +995,10 @@ not in a subfolder.
 
 From there, right-click any of them for **Run**, **End**, **Disable** and
 **Properties**, where the Triggers tab holds the time. **The times are yours to
-change** — 03:20 is only a default, chosen because it is quiet and after most
-backup windows. Nothing in Cert Camel depends on those exact times.
+change** — setup only sets where they start, and nothing in Cert Camel depends
+on those exact times. A few minutes past the hour is worth preferring: rate
+limits are per-CA and shared by everyone, and the top of the hour is where every
+naive scheduler piles up.
 
 **An existing install keeps the schedule it was registered with.** Updating
 Cert Camel does not touch a task that already exists — `setup.ps1 -RepairTasks`
@@ -999,7 +1009,7 @@ answer yes when it offers to register unattended renewal.
 Renewal repeats **every six hours** from that start, so it also runs at 09:20,
 15:20 and 21:20. That is not about renewing sooner — a renewal is refused
 until the authority's window opens — it is so a run that fails has another
-chance the same day. A DNS provider blip at 03:20 used to mean the next attempt
+chance the same day. A DNS provider blip used to mean the next attempt
 was twenty-four hours later. The repeat costs nothing at the authority: the
 check is an unauthenticated ARI request, which is not rate limited, and no
 order is placed until a certificate is genuinely due.
@@ -1100,7 +1110,7 @@ in** — setup says so at the time.
 
 On a PC you use daily that is fine; `StartWhenAvailable` catches up whenever you
 next log in. **On an always-on server it is not fine at all**: nobody stays
-logged in, so the 03:20 renewal never fires. Task Scheduler still shows the task
+logged in, so the renewal never fires. Task Scheduler still shows the task
 as "Ready" and its history stays empty, and the first thing you notice is an
 expired certificate. If you are installing on a server, elevate.
 
@@ -1113,9 +1123,10 @@ Get-ScheduledTask -TaskName "Cert Camel Renew" | Select-Object -Expand Principal
 `LogonType` of `S4U` runs unattended. `Interactive` does not — re-run setup as
 administrator to fix it.
 
-03:20 rather than the top of the hour because ACME rate limits are per-CA and
-shared by everyone, and every naive scheduler piles up on the hour. The
-six-hourly repeats inherit those twenty past.
+Setup suggests a few minutes past the hour rather than the hour itself, because
+ACME rate limits are per-CA and shared by everyone and every naive scheduler
+piles up on the hour. The six-hourly repeats inherit whichever minute is
+chosen.
 
 ```powershell
 # Run one right now
@@ -1141,8 +1152,8 @@ three run on three different schedules and any one-line summary of them is wrong
 
 ```
 AUTOMATION                        On
-Renew and deploy   every 6 hours, from 3:20 AM
-Expiry check                    daily 9:00 AM
+Renew and deploy   every 6 hours, from 12:20 AM
+Expiry check                   daily 12:20 AM
 Monthly summary email     not set up
 ```
 
@@ -1201,10 +1212,14 @@ readme.html           the documentation as a browser page
 haproxy-setup.html    step-by-step HAProxy Data Plane API guide
 windows-server-setup.html  installing where nobody is signed in
 security.html         what is protected, what is not, and what is on your disk
+console-certificate.html   the certificate this page is served with, and the ways back in
 LICENSE               MIT
 
 domains.txt           the list you edit                   (yours, gitignored)
 domains.example.txt   the shipped sample
+
+uninstall.ps1         undoes what setup did OUTSIDE this folder - run before deleting it
+sos-plain-http.ps1    the way back in when HTTPS itself is the problem
 
 resources\            everything the program needs to run - not yours to edit
   serve.ps1           the local server
@@ -1213,14 +1228,18 @@ resources\            everything the program needs to run - not yours to edit
   deploy.ps1          pushes to load balancers and verifies every node
   renew-due.ps1       renews whatever the CA says is due, sends expiry alerts (scheduled task)
   monthly-report.ps1  sends the monthly summary email, if turned on (scheduled task)
+  check-lb.ps1        reads what each load balancer node is actually serving
   acme-lib.ps1        shared settings, secrets, grouping and alert-sending logic
   setup.ps1           what setup runs
+  issue-tracker-cert.ps1   issues the console's certificate with a hand-made DNS record
+  import-console-cert.ps1  puts a certificate you already have where the console looks
+  new-lb-api-cert.ps1      issues a certificate for a load balancer's Data Plane API
   ssl-tracker.html    the app shell (sidebar + view containers; needs the server)
   assets\app.css      all styling
   assets\app.js       router, API client, shared state, the job runner
   assets\views\       one file per sidebar page (home, certificates, settings, docs)
-  lib\                Posh-ACME
-  tests\              the jsdom suites
+  lib\                Posh-ACME, pinned to one version and hash-checked on download
+  tests\              the jsdom and PowerShell suites
 
 generated, none committed - all of it at the top level, where you can see it:
   ssl-data.js         checker output
@@ -1241,6 +1260,43 @@ that moves a script, as the move into `resources\` did — leaves every task
 pointing at where the script used to be. The task still reports healthy and
 renewal silently stops. Home flags it on sight, and the repair is one command
 from an elevated PowerShell: `resources\setup.ps1 -RepairTasks`.
+
+## Removing it
+
+`uninstall.ps1` undoes what setup did **outside** this folder, and needs
+administrator. Run it *before* deleting the folder, not after - everything it
+needs to know is read from here, and once the folder is gone what it would have
+cleaned up stays behind:
+
+- four scheduled tasks, still registered, now pointing at nothing
+- a hosts file entry for a name that no longer resolves
+- a private certificate authority still **trusted** by your Windows account, if
+  you ever issued load balancer API certificates
+- a desktop shortcut to a folder that is not there
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -DryRun   # shows what it would remove
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1           # does it
+```
+
+`-DryRun` needs no elevation, because looking changes nothing.
+
+Only things Cert Camel created are touched, and each is identified rather than
+guessed: a scheduled task must run a script inside **this** folder, a hosts line
+must carry the comment Cert Camel wrote above it, and a certificate must be the
+private CA this tool generates or something it signed. Anything else sharing a
+name is left alone - including hosts entries you added by hand, which it lists
+rather than removes.
+
+**It does not delete the folder.** That is where the private keys are, and a
+script that erases key material while tidying up is one that will eventually
+erase the wrong folder. Delete it yourself once the run finishes.
+
+Two things it cannot reach. Certificates already issued stay valid and stay
+known to the authority - nothing here revokes them, and anything already
+deployed to a load balancer keeps serving until it expires. And if HSTS was ever
+enabled, your browser still refuses plain HTTP for that name until the policy
+expires; the run prints how to clear it.
 
 ## Status and licence
 

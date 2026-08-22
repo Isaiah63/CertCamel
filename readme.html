@@ -194,6 +194,7 @@ here is presumably something you intend to renew, so the two halves are one tool
     <li><a href="#clock">The 47-day future</a></li>
     <li><a href="#files">Files</a></li>
     <li><a href="#updating">Updating</a></li>
+    <li><a href="#removing">Removing it</a></li>
   </ol>
 </nav>
 
@@ -268,7 +269,7 @@ at.</p>
 <p>If the certificate cannot be <em>loaded</em> at all the server says so and falls back to plain
 HTTP rather than refusing to start. An <em>expired</em> one is less serious: the browser still
 offers Advanced &rarr; Proceed, and renewal runs from the scheduled task rather than from this
-page, so the 03:20 run repairs it unattended. <code>serve.ps1 -NoTls</code> forces plain HTTP for
+page, so the next scheduled run repairs it unattended. <code>serve.ps1 -NoTls</code> forces plain HTTP for
 anything neither of those covers. The page never sends <code>Strict-Transport-Security</code>
 &mdash; it would remove the click-through that is the way back in.</p>
 
@@ -411,6 +412,12 @@ can see what the live certificate has that yours would not, and add the line if 
 <p>Domains are many; DNS accounts are few. A handful of profiles usually covers everything you
 track. Adding another provider is a catalog entry in <code>acme-lib.ps1</code>, not new code
 &mdash; the underlying ACME client ships 88 DNS plugins.</p>
+<p><strong>Setup does the same check</strong> when it collects the credential, before anything is
+ordered. That is what makes it safe to issue from the production authority on a first run rather
+than from staging: proving the credential works is a better guard than avoiding production, and it
+does not leave you holding a certificate no browser trusts. A credential that fails can be retyped
+there and then &mdash; setup does not make you start again.</p>
+
 <p><strong>Test connection</strong> does two things: lists the zones it can see, and writes a real
 challenge record then deletes it. The second part matters, because listing zones only proves
 <em>read</em> access &mdash; and a read-only credential would otherwise pass the check and then
@@ -668,15 +675,15 @@ hidden window, with <code>StartWhenAvailable</code> so they catch up after the P
 <div class="tablewrap"><table>
   <thead><tr><th>Task</th><th>Runs</th><th>What that run does</th></tr></thead>
   <tbody>
-    <tr><td><code>Cert Camel Renew</code></td><td>every 6 hours, from 03:20</td><td>Renews what the CA says is due,
+    <tr><td><code>Cert Camel Renew</code></td><td>every 6 hours, from the time you chose</td><td>Renews what the CA says is due,
     deploys each one, verifies every node is serving it</td></tr>
-    <tr><td><code>SSL Cert Check</code></td><td>daily 09:00</td><td>Re-reads expiry dates. Never
+    <tr><td><code>SSL Cert Check</code></td><td>daily, same time</td><td>Re-reads expiry dates. Never
     issues or deploys anything</td></tr>
     <tr><td><code>Cert Camel Monthly Report</code></td><td>daily 08:00</td><td>Emails the summary on
     the 1st; does nothing on the other days</td></tr>
   </tbody>
 </table></div>
-<p>03:20 rather than the top of the hour because ACME rate limits are per-CA and shared by everyone,
+<p>Setup suggests a few minutes past the hour rather than the hour itself, because ACME rate limits are per-CA and shared by everyone,
 and the top of the hour is where every naive scheduler piles up. The six-hourly repeats inherit
 those twenty past.</p>
 
@@ -687,7 +694,7 @@ in Start), and click <strong>Task Scheduler Library</strong>. All of them are in
 not in a subfolder. Right-click any one for <strong>Run</strong>, <strong>End</strong>,
 <strong>Disable</strong> and <strong>Properties</strong>, where the Triggers tab holds the
 time.</p>
-<p><strong>The times are yours to change.</strong> 03:20 is only a default. Nothing in Cert Camel
+<p><strong>The times are yours to change.</strong> Setup only sets where they start. Nothing in Cert Camel
 depends on those exact times, and the Home page reads the schedule back out of Windows rather than
 assuming the defaults &mdash; so a time you change here shows up there, which is the quickest way
 to confirm the edit took.</p>
@@ -734,8 +741,8 @@ has registered. The <strong>Automation</strong> box lists each service and when 
 list rather than a sentence, because the three run at three different times and any one-line summary
 of them is wrong:</p>
 <pre><code>AUTOMATION                        On
-Renew and deploy   every 6 hours, from 3:20 AM
-Expiry check                    daily 9:00 AM
+Renew and deploy   every 6 hours, from 12:20 AM
+Expiry check                   daily 12:20 AM
 Monthly summary email     not set up</code></pre>
 <p><code>On</code> refers to unattended renewal specifically &mdash; the only one of the three that
 can change a certificate. It reads <code>Off</code> when the task is registered but disabled,
@@ -769,6 +776,18 @@ it reports on the tasks, it does not administer them.</p>
 </div>
 
 <h2 id="alerts">13. Email alerts</h2>
+
+<div class="callout note">
+  <div class="h">Or decide not to have any</div>
+  <p><strong>Disable alerts</strong>, beside <em>Send to</em>, records that as a decision. Each alert
+  below it already has its own switch, so turning them all off is a complete off-switch already
+  &mdash; what it is not is distinguishable from never having configured email, which is what a
+  fresh install looks like. Ticking it says which, and stops the setup checklist on the Home page
+  asking.</p>
+  <p>It suppresses nothing on its own: saving with it ticked simply turns the switches off, so what
+  is stored matches what the box claims. Worth being deliberate about &mdash; with no email, a
+  renewal that starts failing is only visible to somebody who opens this page.</p>
+</div>
 <p>Under Settings &gt; Alerts, five independently switchable alerts:</p>
 <div class="tablewrap"><table>
   <thead><tr><th>Alert</th><th>Fires when</th></tr></thead>
@@ -851,7 +870,7 @@ read when something went wrong and you want to know where. They live in <code>jo
 named for what they are and when they ran &mdash;
 <code>2026-08-05T032000Z-renew-due.log</code>.</p>
 <p>Scheduled runs write these too. They did not before: all three tasks launched hidden with no
-redirection, so the 03:20 renewal produced no narrative at all. The runs nobody watches were the ones
+redirection, so the unattended renewal produced no narrative at all. The runs nobody watches were the ones
 with no record, which is backwards.</p>
 
 <h3>The audit trail</h3>
@@ -967,11 +986,15 @@ readme.html           this page
 haproxy-setup.html    step-by-step HAProxy Data Plane API guide
 windows-server-setup.html  installing where nobody is signed in
 security.html         what is protected, what is not, and what is on your disk
+console-certificate.html   the certificate this page is served with, and the ways back in
 VERSION               what this copy calls itself
 LICENSE               MIT
 
 domains.txt           the list you edit                   (yours, gitignored)
 domains.example.txt   the shipped sample
+
+uninstall.ps1         undoes what setup did OUTSIDE this folder - run before deleting it
+sos-plain-http.ps1    the way back in when HTTPS itself is the problem
 
 resources\            everything the program needs to run - not yours to edit
   serve.ps1           the local server
@@ -980,14 +1003,18 @@ resources\            everything the program needs to run - not yours to edit
   deploy.ps1          pushes to load balancers and verifies every node
   renew-due.ps1       renews whatever the CA says is due, sends expiry alerts (scheduled task)
   monthly-report.ps1  sends the monthly summary email, if turned on (scheduled task)
+  check-lb.ps1        reads what each load balancer node is actually serving
   acme-lib.ps1        shared settings, secrets, grouping and alert-sending logic
   setup.ps1           what setup runs
+  issue-tracker-cert.ps1   issues the console's certificate with a hand-made DNS record
+  import-console-cert.ps1  puts a certificate you already have where the console looks
+  new-lb-api-cert.ps1      issues a certificate for a load balancer's Data Plane API
   ssl-tracker.html    the app shell (sidebar + view containers; needs the server)
   assets\app.css      all styling
   assets\app.js       router, API client, shared state, the job runner
   assets\views\       one file per sidebar page (home, certificates, settings, docs)
-  lib\                Posh-ACME
-  tests\              the jsdom suites
+  lib\                Posh-ACME, pinned to one version and hash-checked on download
+  tests\              the jsdom and PowerShell suites
 
 generated, none committed - all of it stays at the top level, where you can see it:
   ssl-data.js         checker output
@@ -1010,10 +1037,12 @@ generated, none committed - all of it stays at the top level, where you can see 
   PowerShell: <code>resources\setup.ps1 -RepairTasks</code>. It rewrites each registered task to the
   current location and changes nothing else about its schedule.</p>
 </div>
-<p>Requires Windows PowerShell 5.1, which ships with Windows. Monitoring needs nothing installed.
-Renewal adds <a href="https://poshac.me" target="_blank" rel="noopener">Posh-ACME</a>, downloaded
-into <code>resources\lib\</code> inside this folder rather than installed system-wide &mdash; no admin rights
-at any point.</p>
+<p>Requires Windows PowerShell 5.1, which ships with Windows. Nothing is installed system-wide:
+<a href="https://poshac.me" target="_blank" rel="noopener">Posh-ACME</a> is downloaded into
+<code>resources\lib\</code> inside this folder, pinned to one version and checked against a
+recorded hash before it is used. <strong>Setup itself needs administrator</strong> &mdash; for the
+scheduled tasks, the hosts file entry and the permissions it puts on this folder &mdash; but the
+tasks it registers run unelevated.</p>
 
 <h2 id="updating">19. Updating</h2>
 
@@ -1060,6 +1089,43 @@ tool you only look at twice a year has to be trusted the twice you do.</p>
 
 </article>
 </div>
+
+<h2 id="removing">20. Removing it</h2>
+
+<p><code>uninstall.ps1</code> undoes what setup did <strong>outside</strong> this folder, and needs
+administrator. Run it <em>before</em> deleting the folder, not after &mdash; everything it needs to
+know is read from here, and once the folder is gone what it would have cleaned up stays behind:</p>
+
+<ul>
+  <li>four scheduled tasks, still registered, now pointing at nothing</li>
+  <li>a hosts file entry for a name that no longer resolves</li>
+  <li>a private certificate authority still <strong>trusted</strong> by your Windows account, if you
+  ever issued load balancer API certificates</li>
+  <li>a desktop shortcut to a folder that is not there</li>
+</ul>
+
+<pre><code>powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -DryRun   # shows what it would remove
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1           # does it</code></pre>
+
+<p><code>-DryRun</code> needs no elevation, because looking changes nothing.</p>
+
+<p>Only things Cert Camel created are touched, and each is identified rather than guessed: a
+scheduled task must run a script inside <strong>this</strong> folder, a hosts line must carry the
+comment Cert Camel wrote above it, and a certificate must be the private CA this tool generates or
+something it signed. Anything else sharing a name is left alone &mdash; including hosts entries you
+added by hand, which it lists rather than removes.</p>
+
+<div class="callout warn">
+  <div class="h">It does not delete the folder</div>
+  <p>That is where the private keys are, and a script that erases key material while tidying up is
+  one that will eventually erase the wrong folder. Delete it yourself once the run finishes.</p>
+</div>
+
+<p>Two things it cannot reach. Certificates already issued stay valid and stay known to the
+authority &mdash; nothing here revokes them, and anything already deployed to a load balancer keeps
+serving until it expires. And if HSTS was ever enabled, your browser still refuses plain HTTP for
+that name until the policy expires; the run prints how to clear it.</p>
+
 
 <footer>
   Cert Camel &mdash; a local certificate watcher and ACME renewal console.
