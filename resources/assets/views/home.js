@@ -71,6 +71,7 @@
       renderAutomation(autoSlot, alertsBox, cardRow);
     }
 
+    renderFirstRun(cardRow);
     renderActivity(cardRow);
     renderRateLimits(cardRow);
 
@@ -858,6 +859,70 @@
     });
     wrap.appendChild(list);
     box.appendChild(wrap);
+  }
+
+  /* What is still missing on a new install.
+
+     Setup collects the things that must exist before a certificate can - an
+     administrator, a DNS credential, the console's own name. Everything after
+     that lives here, and until now nothing said so: a fresh install rendered a
+     working-looking console with no domains, no alert address, and no way to
+     know either was expected.
+
+     A checklist rather than a wizard, deliberately. A wizard owns the order and
+     has to be finished or abandoned; this is a list of what is not done yet
+     that disappears as it gets done, and never blocks anybody who wants to go
+     straight to the page they came for.
+
+     It removes itself when the essential rows are complete. Nothing to dismiss,
+     because a dismiss button is a way to hide an incomplete install from
+     yourself - and the next person to open it would see a console that looks
+     finished. */
+  function renderFirstRun(host){
+    var s = CC.state;
+    if (!s) { return; }
+
+    var data = CC.sslData;
+    var watching = !!(data && data.results && data.results.length);
+    var haveCert = !!((s.certs || []).length);
+
+    var smtp = (s.settings && s.settings.alerts && s.settings.alerts.smtp) || {};
+    var alerting = !!(smtp.host && (smtp.to || []).length);
+
+    var rows = [
+      {done: watching, label: 'Watch some certificates',
+       note: 'Add the names you want tracked.', href: '#/certificates'},
+      {done: haveCert, label: 'Issue a certificate',
+       note: 'Cert Camel renews what it has issued, and what it has been told to watch.', href: '#/certificates'},
+      {done: alerting, label: 'Set an address for alerts',
+       note: 'Expiry and failure warnings go nowhere until this is set.', href: '#/settings/alerts'}
+    ];
+
+    // Everything essential is done - say nothing at all.
+    if (rows.every(function(r){ return r.done; })) { return; }
+
+    var wrap = el('div', 'card');
+    wrap.appendChild(el('h4', null, 'Finish setting up'));
+    wrap.appendChild(el('p', 'hint',
+      'Setup handled the parts that need administrator. These are the rest, and they can be done ' +
+      'in any order.'));
+
+    rows.forEach(function(r){
+      var line = el('div', 'mini');
+      line.appendChild(el('span', 'st ' + (r.done ? 'ok' : 'unknown'), r.done ? 'done' : 'to do'));
+      line.appendChild(document.createTextNode(' '));
+      if (r.done) {
+        line.appendChild(document.createTextNode(r.label));
+      } else {
+        var a = el('a', null, r.label);
+        a.href = r.href;
+        line.appendChild(a);
+        line.appendChild(document.createTextNode(' — ' + r.note));
+      }
+      wrap.appendChild(line);
+    });
+
+    host.appendChild(wrap);
   }
 
   /* How much of the authority's weekly allowance has been spent.
