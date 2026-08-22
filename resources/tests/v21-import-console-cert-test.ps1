@@ -23,10 +23,29 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$repo    = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$appDir  = Join-Path $repo 'resources'
-$script:ImportScript = Join-Path $appDir 'import-console-cert.ps1'
-. (Join-Path $appDir 'acme-lib.ps1')
+$repo   = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$appDir = Join-Path $repo 'resources'
+
+# Run against a COPY of the two scripts, in a scratch folder.
+#
+# acme-lib derives every path from the folder above itself, so a copy in
+# scratch\resources\ puts certs\, audit.log and the rest under scratch\ - and
+# this suite stops touching the operator's install at all.
+#
+# It used to run the real script in place, which wrote a genuine audit entry per
+# import. Those are correct entries - the tool audits what it does - but
+# Get-RenewalTally counts every renew/ok line, so each run of this suite quietly
+# added to the lifetime "certificates renewed" figure in the sidebar. A test
+# that changes a number the operator reads is a test that lies to them.
+$sandbox    = Join-Path $env:TEMP ('camel-import-sandbox-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+$sandboxRes = Join-Path $sandbox 'resources'
+New-Item -ItemType Directory -Path $sandboxRes -Force | Out-Null
+foreach ($f in @('acme-lib.ps1', 'import-console-cert.ps1')) {
+    Copy-Item -LiteralPath (Join-Path $appDir $f) -Destination (Join-Path $sandboxRes $f) -Force
+}
+
+$script:ImportScript = Join-Path $sandboxRes 'import-console-cert.ps1'
+. (Join-Path $sandboxRes 'acme-lib.ps1')
 
 $script:Failed = 0
 function Check {
@@ -207,18 +226,25 @@ try {
     Check 'refuses cleanly' ($r.code -ne 0) 'claimed to restore something from an empty history'
 }
 finally {
-    Remove-Item -LiteralPath $scratch  -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $destDir  -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath (Join-Path $script:CertsDir "empty-$tag.invalid") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # Proved rather than assumed: this test writes into the real certs\ folder, and
 # a leftover .invalid certificate would show up on the operator's Certificates
 # page as a name they have never heard of.
-Write-Host "`nthe test cleaned up after itself"
-Check 'the test certificate folder is gone' (-not (Test-Path $destDir)) `
-      "$destDir is still there and will appear in the console"
+Write-Host "`nthe test left the real install alone"
+Check 'the sandbox is gone' (-not (Test-Path $sandbox)) "$sandbox is still there"
 Check 'the scratch folder is gone' (-not (Test-Path $scratch)) "$scratch is still there"
+# The point of the sandbox, asserted rather than assumed: nothing was written
+# into the operator's certs\ folder or their append-only audit trail.
+Check 'no test certificate reached the real certs folder' `
+      (-not (Test-Path (Join-Path (Join-Path $repo 'certs') $testHost))) `
+      'the sandbox is not isolating writes'
+Check 'no test entry reached the real audit trail' `
+      (-not ((Test-Path (Join-Path $repo 'audit.log')) -and
+             ((Get-Content -LiteralPath (Join-Path $repo 'audit.log') -Raw -ErrorAction SilentlyContinue) -match [regex]::Escape($testHost)))) `
+      'this run added lines to the operator audit log, inflating the renewal tally'
 
 Write-Host ""
 if ($script:Failed) { Write-Host "$script:Failed CHECK(S) FAILED" -ForegroundColor Red; exit 1 }
