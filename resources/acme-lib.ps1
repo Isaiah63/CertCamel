@@ -2174,12 +2174,76 @@ function Get-VendoredPoshAcme {
     return $null
 }
 
+# The version this install asks PSGallery for, and the content hash it must
+# arrive with.
+#
+# WHAT THIS DOES AND DOES NOT PROVE. It proves the module delivered today is
+# byte-for-byte the module reviewed when this line was written. It does not
+# prove that module was ever trustworthy - nothing here can, short of reading
+# 179 files of somebody else's code - and it is not a signature check, because
+# Posh-ACME does not ship Authenticode signatures to check.
+#
+# So it closes exactly one hole: a package silently changed at a version already
+# in use. That was the honest gap in the answer given to the security review,
+# which said Cert Camel performed no verification of its own beyond what
+# PowerShellGet does. Now it performs one.
+#
+# Recorded from the copy vendored and used in this repository. Updating the
+# version means recording a new hash, and the mismatch message prints the hash
+# it saw so that is a copy-and-paste rather than a puzzle.
+$script:PoshAcmeVersion = '4.33.1'
+$script:PoshAcmeHashes  = @{
+    '4.33.1' = 'db6a237061c090c88a6e6ba93709f69a6b9fe17c8d4714e5cefebb75a3a7234b'
+}
+
+function Get-ModuleContentHash {
+    <#
+      A hash over a module's contents that is the same on every machine.
+
+      Deterministic by construction: files are sorted by their path relative to
+      the module root using the invariant culture, and each contributes its
+      relative path as well as its bytes, so a renamed or moved file changes the
+      result even when the bytes do not.
+
+      PSGetModuleInfo.xml is excluded, and must be. PowerShellGet writes it at
+      install time and it carries InstalledDate, InstalledLocation and the
+      installing user's name - measured, not assumed. Hashing it would produce a
+      value unique to one machine and a verification step that could never pass
+      anywhere else, which is worse than no verification at all: it would fail
+      loudly and correctly for every honest install.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $root = [IO.Path]::GetFullPath($Path).TrimEnd('\') + '\'
+    $files = @(Get-ChildItem -LiteralPath $Path -Recurse -File -Force |
+               Where-Object { $_.Name -ne 'PSGetModuleInfo.xml' })
+
+    $entries = @($files | ForEach-Object {
+        @{ rel = $_.FullName.Substring($root.Length).Replace('\', '/'); path = $_.FullName }
+    } | Sort-Object { $_.rel } -CaseSensitive)
+
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $acc = New-Object Text.StringBuilder
+        foreach ($e in $entries) {
+            $fileHash = [BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($e.path))).Replace('-', '')
+            [void]$acc.Append($e.rel).Append(':').Append($fileHash).Append("`n")
+        }
+        $bytes = [Text.Encoding]::UTF8.GetBytes($acc.ToString())
+        return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+    }
+    finally { $sha.Dispose() }
+}
+
 function Install-PoshAcmeLocal {
     <#
       Vendors Posh-ACME into lib/ with Save-Module. Two things reliably go wrong
       on Windows PowerShell 5.1 and both produce unhelpful errors, so handle
       them up front: the default security protocol excludes TLS 1.2 (PSGallery
       requires it) and the NuGet provider may not be present yet.
+
+      The version is pinned and what arrives is hashed before it is used. See
+      the note on $script:PoshAcmeHashes for what that does and does not prove.
     #>
     param([switch]$Force)
 
@@ -2199,10 +2263,42 @@ function Install-PoshAcmeLocal {
         Install-PackageProvider -Name NuGet -Scope CurrentUser -Force -ErrorAction Stop | Out-Null
     }
 
-    Save-Module -Name 'Posh-ACME' -Path $script:LibDir -Force -ErrorAction Stop
+    # -RequiredVersion, not latest. Without it every install gets whatever
+    # PSGallery is serving that day, which cannot be verified against anything
+    # and means two machines set up a week apart are running different code.
+    Save-Module -Name 'Posh-ACME' -RequiredVersion $script:PoshAcmeVersion `
+                -Path $script:LibDir -Force -ErrorAction Stop
 
     $manifest = Get-VendoredPoshAcme
     if (-not $manifest) { throw "Save-Module reported success but no Posh-ACME.psd1 landed in $($script:LibDir)." }
+
+    $moduleDir = Split-Path $manifest -Parent
+    $actual    = Get-ModuleContentHash -Path $moduleDir
+    $expected  = $script:PoshAcmeHashes[$script:PoshAcmeVersion]
+
+    if (-not $expected) {
+        # An unpinned version is reported, never blocked. Failing here would make
+        # a version bump impossible without editing the source first, and the
+        # useful thing at that moment is the hash to paste in.
+        Write-Warning ("Posh-ACME $($script:PoshAcmeVersion) has no recorded hash, so it was not verified. " +
+                       "Content hash: $actual")
+        return $manifest
+    }
+
+    if ($actual -ne $expected) {
+        # The unverified copy does not stay on disk. Leaving it means the next
+        # run finds it already present, skips the download, and uses it without
+        # ever checking again.
+        try { Remove-Item -LiteralPath $moduleDir -Recurse -Force -ErrorAction Stop }
+        catch { $null = $_ }   # the throw below is what matters; a locked file must not hide it
+
+        throw ("Posh-ACME $($script:PoshAcmeVersion) did not match its recorded hash and has been removed.`n" +
+               "  expected: $expected`n" +
+               "  actual:   $actual`n" +
+               "The package on the gallery differs from the one this release was built against. " +
+               "That is worth understanding before installing it rather than working around.")
+    }
+
     return $manifest
 }
 
