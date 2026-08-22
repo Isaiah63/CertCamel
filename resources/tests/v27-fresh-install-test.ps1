@@ -155,6 +155,61 @@ if ($ret) {
 }
 
 # --------------------------------------------------------------------------- #
+Write-Host "`nthe scheduled time is asked for, and parsed the way it is typed"
+Check 'setup asks when the tasks should run' ($setupSrc -match 'Time, as HH:MM') `
+      'the times are hardcoded again, so nobody can choose them'
+Check 'it defaults to midnight' ($setupSrc -match "\[00:00\]") 'the default changed'
+Check 'and all three tasks use the answer' `
+      (([regex]::Matches($setupSrc, '-At \$taskAt')).Count -ge 3) `
+      ("only {0} trigger(s) use it - one of the tasks kept a hardcoded time" -f ([regex]::Matches($setupSrc, '-At \$taskAt')).Count)
+Check 'no hardcoded clock times remain' `
+      ($setupSrc -notmatch '-At \d+:\d+(am|pm)') `
+      'a trigger still has its old fixed time'
+
+# The parser, exercised rather than eyeballed. Without the [string[]] cast
+# PowerShell binds the single-format overload of TryParseExact, hands it the
+# array stringified, and rejects EVERY input - which would make the prompt an
+# infinite loop for anybody who ran it.
+Check 'the format list is cast to [string[]]' `
+      ($setupSrc -match '\[string\[\]\]@\(.HH:mm.') `
+      'uncast, the overload silently rejects every time typed and the loop never ends'
+
+$fmts = [string[]]@('HH:mm', 'H:mm', 'h:mm tt', 'hh:mm tt')
+$ci   = [Globalization.CultureInfo]::InvariantCulture
+$none = [Globalization.DateTimeStyles]::None
+foreach ($case in @(
+    @{ in = '00:00';    want = '00:00' },
+    @{ in = '00:20';    want = '00:20' },
+    @{ in = '3:20';     want = '03:20' },
+    @{ in = '22:45';    want = '22:45' },
+    @{ in = '9:00 AM';  want = '09:00' },
+    @{ in = '11:59 PM'; want = '23:59' }
+)) {
+    $d = [datetime]::MinValue
+    $ok = [datetime]::TryParseExact($case.in, $fmts, $ci, $none, [ref]$d)
+    $got = $(if ($ok) { (Get-Date).Date.AddHours($d.Hour).AddMinutes($d.Minute).ToString('HH:mm') } else { 'rejected' })
+    Check ("'{0}' parses to {1}" -f $case.in, $case.want) ($got -eq $case.want) "got $got"
+}
+foreach ($bad in @('5', '25:00', 'abc', '12:60', 'noon')) {
+    $d = [datetime]::MinValue
+    Check ("'{0}' is refused" -f $bad) `
+          (-not [datetime]::TryParseExact($bad, $fmts, $ci, $none, [ref]$d)) `
+          'a loose parse would register a task at a time nobody asked for'
+}
+
+# --------------------------------------------------------------------------- #
+Write-Host "`nthe first renewal has checker data to work from"
+# renew.ps1 refuses without it, and step 4 no longer runs the checker on a
+# fresh install - so issuing the console certificate died on "There is no
+# certificate data yet" for an install that had done nothing wrong.
+Check 'setup checks before the first renewal' `
+      ($setupSrc -match 'Checking \$webName first')   # single-quoted: double quotes would interpolate $webName away `
+      'renew.ps1 throws without checker output, which is the state a fresh install is in'
+Check 'and again at the end if a name was added but never checked' `
+      ($setupSrc -match 'Running a check, so the page has something to show') `
+      'a scheduled sweep would throw at its first run and email about it'
+
+# --------------------------------------------------------------------------- #
 Write-Host "`na fresh install orders from production"
 $fresh = New-DefaultSettings
 $ca = Get-CaProfile -Settings $fresh

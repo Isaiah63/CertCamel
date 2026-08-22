@@ -88,7 +88,7 @@ function Register-CamelTask {
       LogonType Interactive - the task runs only while this user has a session.
       On a workstation you log into daily that is invisible, and
       StartWhenAvailable quietly papers over it. On a server, where nobody stays
-      logged in, it is silently fatal: the 03:20 renewal never fires, Task
+      logged in, it is silently fatal: the renewal never fires, Task
       Scheduler still reports "Ready", the history stays empty, and the first
       symptom is an expired certificate.
 
@@ -943,11 +943,61 @@ else {
 # 5. Daily scheduled task (optional)
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# When the scheduled work runs
+# --------------------------------------------------------------------------- #
+# Asked once and used by all three tasks, rather than three prompts during a
+# first run. Whatever is chosen can be changed per task in taskschd.msc
+# afterwards; this only sets where they start.
+
+Write-Host "  Scheduled times" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "        The checks, renewals and the monthly summary all run on a schedule."
+Write-Host "        Pick the time of day they should start."
+Write-Host ""
+Write-Host "        A few minutes past the hour is kinder than the hour itself:" -ForegroundColor DarkGray
+Write-Host "        certificate authority rate limits are shared by everyone, and the" -ForegroundColor DarkGray
+Write-Host "        top of the hour is where every naive scheduler piles up. 00:20 is" -ForegroundColor DarkGray
+Write-Host "        as good as 00:00 and lands in a quieter queue." -ForegroundColor DarkGray
+Write-Host ""
+
+$taskTime = $null
+do {
+    $timeIn = (Read-Host "        Time, as HH:MM [00:00]").Trim()
+    if (-not $timeIn) { $timeIn = '00:00' }
+    if ($timeIn -eq 'q') { Write-Host ""; Write-Host "  Stopped." -ForegroundColor Yellow; Write-Host ""; exit 1 }
+
+    # ParseExact against a fixed set rather than Parse: the loose parser accepts
+    # things like "5" and quietly reads them as a date, which would register a
+    # task at a time nobody asked for and nobody would notice until it ran.
+    $parsed = [datetime]::MinValue
+    # [string[]] is not decoration. Without the cast PowerShell binds the
+    # single-format overload, hands it the array's default stringification, and
+    # nothing ever matches - every time typed here would be rejected and the
+    # loop would never end. Measured: '00:20' returns False uncast, True cast.
+    $ok = [datetime]::TryParseExact($timeIn, [string[]]@('HH:mm', 'H:mm', 'h:mm tt', 'hh:mm tt'),
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref]$parsed)
+    if ($ok) { $taskTime = $parsed }
+    else     { Write-Host "        Give it as HH:MM - 00:20, 03:20, 22:45." -ForegroundColor Yellow }
+} while (-not $taskTime)
+
+# A [datetime] is what New-ScheduledTaskTrigger -At wants; only the time part is
+# used for a daily trigger, but the date has to be today or the first run is
+# backdated to 1 January.
+$taskAt      = (Get-Date).Date.AddHours($taskTime.Hour).AddMinutes($taskTime.Minute)
+$taskTimeText = $taskAt.ToString('HH:mm')
+
+Write-Host ""
+Write-Host ("        Scheduled work will run at {0}." -f $taskTimeText) -ForegroundColor Green
+Write-Host "        Change any of it later in taskschd.msc." -ForegroundColor DarkGray
+Write-Host ""
+
 Write-Host "  [5/6] Daily automatic check" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "        This registers a Windows scheduled task named '$taskName' that"
-Write-Host "        re-checks your domains every morning at 9:00 AM, so the page is"
-Write-Host "        always current when you open it. Runs as you, no admin needed."
+Write-Host "        re-checks your domains at $taskTimeText, so the page is always"
+Write-Host "        current when you open it."
 Write-Host ""
 
 $answer = Read-Host "        Register the daily task? (Y/N)"
@@ -959,7 +1009,7 @@ if ($answer -match '^[Yy]') {
         $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
             -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$checker`""
 
-        $trigger  = New-ScheduledTaskTrigger -Daily -At 9:00am
+        $trigger  = New-ScheduledTaskTrigger -Daily -At $taskAt
 
         # StartWhenAvailable catches up after the PC was off, matching how the
         # existing "Organize Docs Hub" task behaves.
@@ -970,7 +1020,7 @@ if ($answer -match '^[Yy]') {
             -Settings $settings -Description 'Checks SSL certificate expiry for the domains in domains.txt.')
 
         Write-Host ""
-        Write-Host "        Registered. It will run daily at 9:00 AM." -ForegroundColor Green
+        Write-Host "        Registered. It will run daily at $taskTimeText." -ForegroundColor Green
     }
     catch {
         Write-Host ""
@@ -1142,6 +1192,26 @@ if ($wantHttps -notmatch '^[Nn]') {
                 $issue = Read-Host "        Issue it now? (Y/N)"
                 if ($issue -match '^[Yy]') {
                     $zoneForCert = $(if ($st.zone.zone) { $st.zone.zone } else { $webName })
+
+                    # renew.ps1 reads the checker's output to work out which names
+                    # belong to which certificate, and refuses outright when there
+                    # is none: "There is no certificate data yet."
+                    #
+                    # Step 4 skips the first check on a fresh install, because
+                    # domains.txt starts empty and running the checker against
+                    # nothing produces an empty result that reads like a failure.
+                    # The name being issued here was added to domains.txt seconds
+                    # ago, so this is the first moment there is anything to check
+                    # - and without checking, the very next line fails on an
+                    # install that has done nothing wrong.
+                    if (-not (Test-Path (Join-Path $root 'ssl-data.js'))) {
+                        Write-Host ""
+                        Write-Host "        Checking $webName first - renewal needs to know what is" -ForegroundColor DarkGray
+                        Write-Host "        being served before it can decide what to issue." -ForegroundColor DarkGray
+                        Write-Host ""
+                        & $checker
+                    }
+
                     Write-Host ""
                     & powershell.exe -NoProfile -ExecutionPolicy Bypass `
                         -File (Join-Path $appDir 'renew.ps1') -Zone $zoneForCert -Source 'cli'
@@ -1213,15 +1283,19 @@ if ($wantRenew -match '^[Yy]') {
         $rAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
             -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$renewScript`""
 
-        # 03:20 rather than on the hour: ACME rate limits are per-CA and shared
-        # by everyone, and the top of the hour is where every naive scheduler
-        # piles up. The repeats inherit those twenty past.
+        # Anchored at whatever time was chosen earlier, and the repeats inherit
+        # its minutes. The prompt explains why a few minutes past the hour is
+        # worth choosing: ACME rate limits are per-CA and shared by everyone,
+        # and the top of the hour is where every naive scheduler piles up. It is
+        # said there rather than enforced here - an operator who asks for 00:00
+        # gets 00:00, because a task that runs at a time nobody chose is worse
+        # than one that runs in a busy minute.
         #
         # Every six hours rather than once a day, for one reason above the
         # others: a run that fails has to be able to try again. A DNS provider
-        # blip or an unreachable load balancer at 03:20 used to mean the next
-        # attempt was twenty-four hours later; now it is six, and a certificate
-        # gets four chances a day instead of one.
+        # blip or an unreachable load balancer used to mean the next attempt was
+        # twenty-four hours later; now it is six, and a certificate gets four
+        # chances a day instead of one.
         #
         # It also renews closer to the moment the authority's window opens.
         # Renewal is refused before that moment, so a daily sweep waits an
@@ -1234,8 +1308,8 @@ if ($wantRenew -match '^[Yy]') {
         # PowerShell 5.1's New-ScheduledTaskTrigger has no -RepetitionInterval
         # on a -Daily trigger, so the repetition is lifted off a throwaway
         # -Once trigger. This is the documented way to do it, not a trick.
-        $rTrigger = New-ScheduledTaskTrigger -Daily -At 3:20am
-        $rTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At 3:20am `
+        $rTrigger = New-ScheduledTaskTrigger -Daily -At $taskAt
+        $rTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At $taskAt `
             -RepetitionInterval (New-TimeSpan -Hours 6) `
             -RepetitionDuration (New-TimeSpan -Hours 24)).Repetition
 
@@ -1247,7 +1321,7 @@ if ($wantRenew -match '^[Yy]') {
             -Settings $rSettings -Description 'Renews certificates the CA reports as due, deploys them, and verifies each load balancer is serving them.')
 
         Write-Host ""
-        Write-Host "      Registered. Runs every 6 hours, from 3:20 AM." -ForegroundColor Green
+        Write-Host "      Registered. Runs every 6 hours, from $taskTimeText." -ForegroundColor Green
         Write-Host "      Try it safely first:" -ForegroundColor DarkGray
         Write-Host "        powershell -ExecutionPolicy Bypass -File `"$renewScript`" -WhatIfOnly" -ForegroundColor DarkGray
     }
@@ -1286,7 +1360,7 @@ if ($wantReport -match '^[Yy]') {
     try {
         $mAction  = New-ScheduledTaskAction -Execute 'powershell.exe' `
             -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$reportScript`""
-        $mTrigger = New-ScheduledTaskTrigger -Daily -At 8:00am
+        $mTrigger = New-ScheduledTaskTrigger -Daily -At $taskAt
         $mSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
             -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
 
@@ -1294,7 +1368,7 @@ if ($wantReport -match '^[Yy]') {
             -Settings $mSettings -Description 'Sends the monthly certificate summary email, if enabled under Settings > Alerts.')
 
         Write-Host ""
-        Write-Host "      Registered. Checks daily at 8:00 AM; only sends on the 1st." -ForegroundColor Green
+        Write-Host "      Registered. Checks daily at $taskTimeText; only sends on the 1st." -ForegroundColor Green
         Write-Host "      Try it safely first:" -ForegroundColor DarkGray
         Write-Host "        powershell -ExecutionPolicy Bypass -File `"$reportScript`" -Force" -ForegroundColor DarkGray
     }
@@ -1431,6 +1505,31 @@ if ($folderLnk) {
 # --------------------------------------------------------------------------- #
 
 Write-Host ""
+# A name was added at some point but nothing has ever checked it - most likely
+# HTTPS was declined at step 6, or issuing failed, so the checker never ran.
+#
+# Left alone, the first scheduled renewal sweep throws "There is no certificate
+# data yet" and, with failure alerts on, emails about it at whatever hour it
+# runs. That is a bad first night for an install that has done nothing wrong,
+# and it is one check to avoid.
+$namesNow = $false
+if (Test-Path $domainList) {
+    foreach ($line in (Get-Content $domainList -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+        $entry = $line.Trim()
+        if (-not $entry -or $entry.StartsWith('#')) { continue }
+        if ($entry -match '^\[(.+)\]$')            { continue }
+        $namesNow = $true
+        break
+    }
+}
+if ($namesNow -and -not (Test-Path (Join-Path $root 'ssl-data.js'))) {
+    Write-Host ""
+    Write-Host "  Running a check, so the page has something to show." -ForegroundColor Cyan
+    Write-Host ""
+    & $checker
+    Write-Host ""
+}
+
 Write-Host "  Setup complete." -ForegroundColor Cyan
 Write-Host ""
 Write-Host "    Add/remove domains .... edit domains.txt"
