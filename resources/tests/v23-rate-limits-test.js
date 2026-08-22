@@ -108,7 +108,24 @@ RATE = { days: 7, limits: limits, total: 3,
 boot();
 check('appears at 3 of 5, before the limit', !!panel(),
       'silent until the limit is already spent is too late to be useful');
-check('names the certificate', panel() && panel().textContent.indexOf('example.com') >= 0,
+/* Look for the name at the start of a row, not anywhere in the card.
+
+   Scanning the whole panel would also pass on a name that appeared in the
+   explanatory footnote rather than in a warning row, which is not the same
+   claim. Matching a row start is what the panel actually promises.
+
+   It also keeps CodeQL quiet. `textContent.indexOf('example.com') >= 0` trips
+   js/incomplete-url-substring-sanitization: the rule cannot tell a certificate
+   name being looked for in rendered text from a hostname being checked inside
+   a URL, and its complaint - that arbitrary hosts may sit either side of the
+   match - is fair about the loose form even here. */
+function rowNamed(name) {
+  const p = panel();
+  if (!p) { return null; }
+  return Array.from(p.querySelectorAll('.mini'))
+    .filter(r => r.textContent.trim().indexOf(name + ' ') === 0)[0] || null;
+}
+check('names the certificate', !!rowNamed('example.com'),
       'a warning with no name cannot be acted on');
 check('shows the count against the limit', panel() && /3 of 5/.test(panel().textContent),
       'got: ' + (panel() && panel().textContent));
