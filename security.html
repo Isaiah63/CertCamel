@@ -254,6 +254,11 @@ cannot do:</p>
   one client that connects and sends nothing blocks it for that long. Fine on loopback, and not fine
   on a network anyone else can reach, where a vulnerability scanner alone would stall it
   repeatedly.</p>
+  <p>Loopback is not quite the same as one person. Several administrators signed in over RDP reach
+  the same console on the same machine, and requests are still answered one at a time &mdash; so a
+  long operation started by one of them is a pause for the others. That is a delay rather than a
+  vulnerability, but it is the other way to meet this limit, and it is worth knowing before three
+  people share an install.</p>
 </div>
 
 <h2 id="credentials">3. Credentials</h2>

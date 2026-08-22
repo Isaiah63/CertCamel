@@ -5,6 +5,32 @@
   and re-registering the scheduled task simply replaces the old definition.
 
   Run it by double-clicking "First Time Setup.bat".
+
+  WHAT IS HERE AND WHY IT IS NOT IN THE BROWSER
+
+  Worth writing down, because "move this into the app" is an obvious-looking
+  improvement that has already been half-attempted once, and everything left
+  here is here for a reason:
+
+    elevation, permissions, foreign tasks   only an elevated process can do it
+    Posh-ACME                               writes into a folder the step above
+                                            has just restricted
+    contact address, DNS credential         must exist before a certificate can
+                                            be issued, and the browser cannot be
+                                            served over HTTPS until one is
+    scheduled tasks                         S4U registration needs the
+                                            "Log on as a batch job" right
+    hosts file entry                        administrator, always
+
+  Two steps could move and deliberately do not. Seeding domains.txt and running
+  the first check are both things the app can do - the domains editor and the
+  Check button already exist - but moving them means setup finishes and hands
+  over a console with nothing in it. They stay so that the first thing anybody
+  sees is a page with data on it.
+
+  Everything else already lives in the app: alerts, load balancers, log
+  retention, and editing the domain list afterwards. Home carries a checklist
+  of what a new install still needs.
 #>
 
 [CmdletBinding()]
