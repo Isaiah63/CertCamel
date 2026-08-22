@@ -2688,6 +2688,17 @@ elseif ($tlsNote) {
     Write-Diag "  Settings > Tracker address explains which piece is missing." 'DarkGray'
 }
 
+# Checked on every start, not only at setup. Setup can say this folder is local
+# and be perfectly right, and then somebody moves the folder into OneDrive six
+# months later, or turns on Known Folder Move, and nothing asks again. This line
+# goes to server.log, so a start nobody watched still records it.
+$syncedHere = Test-SyncedLocation -Path $script:Root
+if ($syncedHere) {
+    Write-Diag "  ! This folder is inside $($syncedHere.provider) ($($syncedHere.evidence))." 'Red'
+    Write-Diag "    Unencrypted private keys are being copied off this machine." 'Yellow'
+    Write-Diag "    Move the folder somewhere local, or exclude it from syncing." 'DarkGray'
+}
+
 if ($ServiceMode) {
     # No console read this, and no desktop to open a browser on. The session
     # file is the only way anyone finds the URL, so say where it is.

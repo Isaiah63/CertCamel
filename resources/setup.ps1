@@ -327,6 +327,34 @@ Write-Host ""
 
 New-TrackerDirectories
 
+# Asked BEFORE the permissions are applied, because if this folder is being
+# copied somewhere else then the permissions below are theatre: the ACLs do not
+# travel with the copy, and the destination is somebody else's infrastructure.
+$synced = Test-SyncedLocation -Path $root
+if ($synced) {
+    Write-Host "  This folder is inside $($synced.provider)." -ForegroundColor Red
+    Write-Host ""
+    Write-Host ("    detected from : {0}" -f $synced.evidence) -ForegroundColor Gray
+    if (-not $synced.certain) {
+        Write-Host "    matched on the folder name, so this may be a false alarm" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    Write-Host "  Cert Camel keeps unencrypted private keys here. That is normal for an" -ForegroundColor DarkGray
+    Write-Host "  ACME client and safe while they stay on one machine behind one account." -ForegroundColor DarkGray
+    Write-Host "  A sync client removes both of those at once: the permissions applied" -ForegroundColor DarkGray
+    Write-Host "  below are not copied, and the keys land somewhere you do not control." -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  Move this folder somewhere local - C:\CertCamel is fine - and run setup" -ForegroundColor Yellow
+    Write-Host "  again. Nothing has been written yet." -ForegroundColor Yellow
+    Write-Host ""
+
+    $anyway = Read-Host "  Continue here anyway? (y/N)"
+    if ($anyway -notmatch '^[Yy]') { Write-Host ""; exit 1 }
+    Write-Host ""
+    Write-Host "  Continuing. Exclude this folder from $($synced.provider) if you can." -ForegroundColor Yellow
+    Write-Host ""
+}
+
 Write-Host "  Permissions" -ForegroundColor Cyan
 $aclResults = Protect-CamelInstall
 foreach ($r in $aclResults) {

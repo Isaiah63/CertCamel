@@ -324,6 +324,94 @@ function Set-CamelAcl {
     }
 }
 
+function Test-SyncedLocation {
+    <#
+      Is this folder inside something that copies it somewhere else?
+
+      Cert Camel keeps unencrypted private keys on disk. That is a documented
+      and unavoidable property of an ACME client - whatever terminates TLS has
+      to read the key - and it is survivable precisely because the keys stay on
+      one machine, behind one Windows account, with the permissions
+      Protect-CamelInstall applies.
+
+      A sync client dissolves all of that silently. The ACLs are not copied, the
+      destination is somebody else's infrastructure, and nothing about the
+      running tool looks any different. Of everything in the security review
+      this is the most realistic way the keys actually escape, which is why it
+      is detected rather than only written down.
+
+      Returns $null when the path looks local, or a hashtable naming what was
+      found and why. Deliberately does not decide what to do about it - setup
+      warns and asks, the server logs a line, and neither should be buried in
+      here.
+    #>
+    param([string]$Path)
+
+    $full = ''
+    try { $full = [IO.Path]::GetFullPath($Path) } catch { return $null }
+    if (-not $full) { return $null }
+
+    # Trailing separator on both sides, so C:\Users\x\OneDriveNotes does not
+    # match C:\Users\x\OneDrive - the same prefix trap the asset routes in
+    # serve.ps1 guard against.
+    $needle = $full.TrimEnd('\') + '\'
+
+    function Test-Under {
+        param([string]$Root)
+        if (-not $Root) { return $false }
+        try { $r = [IO.Path]::GetFullPath($Root).TrimEnd('\') + '\' } catch { return $false }
+        return $needle.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)
+    }
+
+    # OneDrive publishes its roots as environment variables, which is the one
+    # signal here that is authoritative rather than a guess. Known Folder Move
+    # is the common way this happens by accident: it relocates Desktop and
+    # Documents under OneDrive without the folder path looking unusual.
+    foreach ($var in @('OneDrive', 'OneDriveCommercial', 'OneDriveConsumer')) {
+        $root = [Environment]::GetEnvironmentVariable($var)
+        if ($root -and (Test-Under $root)) {
+            return @{ provider = 'OneDrive'; evidence = $root; certain = $true }
+        }
+    }
+
+    # Dropbox records its folders in a JSON file rather than the environment.
+    foreach ($info in @((Join-Path $env:LOCALAPPDATA 'Dropbox\info.json'),
+                        (Join-Path $env:APPDATA    'Dropbox\info.json'))) {
+        if (-not (Test-Path -LiteralPath $info)) { continue }
+        try {
+            $j = (Get-Content -LiteralPath $info -Raw -Encoding UTF8) | ConvertFrom-Json
+            foreach ($acct in @($j.PSObject.Properties)) {
+                $root = $acct.Value.path
+                if ($root -and (Test-Under $root)) {
+                    return @{ provider = 'Dropbox'; evidence = $root; certain = $true }
+                }
+            }
+        }
+        catch { $null = $_ }   # an unreadable info.json is not evidence either way
+    }
+
+    # The rest have no reliable machine-readable root, so these are folder-name
+    # heuristics and are reported as such. A false positive costs one extra
+    # confirmation at setup; a false negative costs private keys in somebody
+    # else's cloud, so the trade runs this way deliberately.
+    $guesses = @(
+        @{ provider = 'Google Drive'; fragments = @('\My Drive\', '\Google Drive\', '\GoogleDrive\') },
+        @{ provider = 'iCloud Drive'; fragments = @('\iCloudDrive\', '\iCloud Drive\') },
+        @{ provider = 'Box';          fragments = @('\Box\', '\Box Sync\') },
+        @{ provider = 'Nextcloud';    fragments = @('\Nextcloud\') },
+        @{ provider = 'Sync.com';     fragments = @('\Sync\Sync\') }
+    )
+    foreach ($g in $guesses) {
+        foreach ($frag in $g.fragments) {
+            if ($needle.IndexOf($frag, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                return @{ provider = $g.provider; evidence = $frag.Trim('\'); certain = $false }
+            }
+        }
+    }
+
+    return $null
+}
+
 function Get-CamelProtectedPaths {
     <#
       What Protect-CamelInstall will act on, without acting on it.
