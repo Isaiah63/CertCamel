@@ -808,11 +808,20 @@ do {
 
             $wr = $null
             try { $wr = Test-ProviderWriteAccess -Provider $writeProv -Zone $writeZone }
-            catch { $wr = @{ wrote = $false; cleaned = $false; error = ($_.Exception.Message -split "`n")[0].Trim() } }
+            catch { $wr = @{ canWrite = $false; cleanedUp = $false; error = ($_.Exception.Message -split "`n")[0].Trim() } }
 
-            if ($wr.wrote) {
+            # canWrite / cleanedUp, NOT wrote / cleaned.
+            #
+            # Those are the names used inside the function's own scriptblock;
+            # what it RETURNS is renamed. Reading the inner names got $null every
+            # time, so this branch never ran and EVERY credential was reported as
+            # unable to write - correct ones included - with an empty error line
+            # underneath, because nothing had actually failed. serve.ps1 has read
+            # the returned names since it was written; this was the second caller
+            # and it guessed at them.
+            if ($wr.canWrite) {
                 Write-Host ("        Wrote and removed a test record in {0}." -f $writeZone) -ForegroundColor Green
-                if (-not $wr.cleaned) {
+                if (-not $wr.cleanedUp) {
                     # Harmless - a CA looks for a matching value among the TXT
                     # records, so a spare one is ignored - but never left unsaid.
                     Write-Host ("        Could not remove it again. A stray _acme-challenge.{0} TXT" -f $writeZone) -ForegroundColor Yellow

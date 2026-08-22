@@ -123,6 +123,38 @@ Check 'and before the automatic one' `
       ($writeAt -ge 0 -and $auto -ge 0 -and $writeAt -lt $auto) "test at $writeAt, auto issue at $auto"
 
 # --------------------------------------------------------------------------- #
+Write-Host "`nsetup reads the fields the write test actually returns"
+# The bug this exists for: Test-ProviderWriteAccess uses wrote/cleaned inside
+# its own scriptblock and RENAMES them to canWrite/cleanedUp on the way out.
+# setup read the inner names, got $null every time, and reported every
+# credential as unable to write - correct ones included - with an empty error
+# line underneath, because nothing had actually failed. Confirmed against a
+# live token: canWrite=True while setup insisted it could not write.
+#
+# Compared against the source rather than hardcoded, so renaming a field in the
+# function fails here instead of silently breaking the caller again.
+$libSrc = Get-Content (Join-Path $appDir 'acme-lib.ps1') -Raw -Encoding UTF8
+$ret = [regex]::Match($libSrc,
+    'function Test-ProviderWriteAccess[\s\S]*?return @\{(?<b>[\s\S]*?)
+    \}').Groups['b'].Value
+Check 'found the return contract' ([bool]$ret) 'the function shape changed'
+
+if ($ret) {
+    $returned = @([regex]::Matches($ret, '(?m)^\s*(?<k>\w+)\s*=') | ForEach-Object { $_.Groups['k'].Value })
+    Check ("it returns: {0}" -f ($returned -join ', ')) ($returned.Count -ge 3) 'no fields parsed'
+
+    $used = @([regex]::Matches($setupSrc, '\$wr\.(?<k>\w+)') |
+              ForEach-Object { $_.Groups['k'].Value } | Sort-Object -Unique)
+    $bogus = @($used | Where-Object { $returned -notcontains $_ })
+    Check 'every field setup reads is one the function returns' ($bogus.Count -eq 0) `
+          ("setup reads {0}, which the function does not return" -f ($bogus -join ', '))
+
+    Check 'and the fallback on an exception uses the same names' `
+          ($setupSrc -match 'canWrite = \$false; cleanedUp = \$false') `
+          'the catch builds the inner shape, so a thrown error reports the same lie'
+}
+
+# --------------------------------------------------------------------------- #
 Write-Host "`na fresh install orders from production"
 $fresh = New-DefaultSettings
 $ca = Get-CaProfile -Settings $fresh
