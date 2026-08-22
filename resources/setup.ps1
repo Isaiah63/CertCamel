@@ -362,54 +362,263 @@ if (-not (Test-Path $checker)) {
 # --------------------------------------------------------------------------- #
 
 if (Test-Path $domainList) {
-    Write-Host "  [1/5] domains.txt already exists - leaving it alone." -ForegroundColor Green
+    Write-Host "  [1/6] domains.txt already exists - leaving it alone." -ForegroundColor Green
 } elseif (Test-Path $domainSeed) {
     # Copied rather than generated so the example list lives in one place, and
     # so your domains.txt is yours - it is gitignored and never overwritten.
     Copy-Item -Path $domainSeed -Destination $domainList
-    Write-Host "  [1/5] Created domains.txt from the example list." -ForegroundColor Green
+    Write-Host "  [1/6] Created domains.txt from the example list." -ForegroundColor Green
     Write-Host "        Edit it to add your own domains." -ForegroundColor DarkGray
 } else {
     $utf8 = New-Object Text.UTF8Encoding $false
     [IO.File]::WriteAllText($domainList, "# One domain per line.`r`nexample.com`r`n", $utf8)
-    Write-Host "  [1/5] Created an empty domains.txt." -ForegroundColor Yellow
+    Write-Host "  [1/6] Created an empty domains.txt." -ForegroundColor Yellow
 }
 
 # --------------------------------------------------------------------------- #
-# 3. Renewal support (optional)
+# 3. Renewal support (required)
 # --------------------------------------------------------------------------- #
-# Watching needs nothing installed. Renewing needs an ACME client, and
 # Posh-ACME is fetched into lib\ inside this folder rather than installed
 # system-wide, so the bundle stays self-contained.
+#
+# This used to be optional, on the basis that watching certificates without
+# renewing them was a supported way to run Cert Camel. It is not any more:
+# watching-without-renewing becomes its own tool rather than a branch inside
+# this one, and every install here issues and renews.
+#
+# That removal is what makes the rest of setup straightforward. While the mode
+# existed, the DNS credential had to stay optional too - which is why setup
+# never asked for one, which is why the HTTPS step's very first check could
+# never pass on a first run.
 
-Write-Host "  [2/5] Renewal support" -ForegroundColor Cyan
+Write-Host "  [2/6] Renewal support" -ForegroundColor Cyan
 
 if (Get-VendoredPoshAcme) {
     Write-Host "        Posh-ACME is already in this folder." -ForegroundColor Green
 } else {
     Write-Host ""
-    Write-Host "        To renew certificates from the tracker page, this needs Posh-ACME"
-    Write-Host "        (an ACME client). It is downloaded into the 'lib' folder here -"
-    Write-Host "        nothing is installed system-wide, and it needs no admin rights."
+    Write-Host "        Cert Camel renews certificates through Posh-ACME (an ACME client)."
+    Write-Host "        It is downloaded into the 'lib' folder here - nothing is installed"
+    Write-Host "        system-wide."
     Write-Host ""
-    Write-Host "        Skip this if you only want expiry monitoring." -ForegroundColor DarkGray
+    Write-Host "        Downloading..." -ForegroundColor DarkGray
+
+    try {
+        $manifest = Install-PoshAcmeLocal
+        Write-Host "        Installed: $manifest" -ForegroundColor Green
+    }
+    catch {
+        # A stop, not a warning. Everything after this point - the DNS
+        # credential, the console's own certificate, renewal itself - needs an
+        # ACME client, so carrying on would produce an install that looks set up
+        # and cannot issue anything.
+        Write-Host ""
+        Write-Host "        Could not download it: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "        Setup cannot continue without it. Nothing else here works" -ForegroundColor Yellow
+        Write-Host "        without an ACME client, so stopping now is better than leaving" -ForegroundColor Yellow
+        Write-Host "        an install that looks finished and cannot issue a certificate." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "        If this machine has no route to the PowerShell Gallery, copy a" -ForegroundColor DarkGray
+        Write-Host "        Posh-ACME module folder into $($script:LibDir) by hand and run" -ForegroundColor DarkGray
+        Write-Host "        setup again - it is picked up as-is." -ForegroundColor DarkGray
+        Write-Host ""
+        exit 1
+    }
+}
+
+# --------------------------------------------------------------------------- #
+# 3b. Contact address and DNS automation
+# --------------------------------------------------------------------------- #
+# Collected HERE, at a console prompt, and this is the step whose absence broke
+# the whole HTTPS path.
+#
+# Both of these used to be entered in the browser, which meant the first run had
+# neither. The HTTPS step further down opens by asking Get-TrackerAddressStatus
+# whether any configured DNS credential covers the console's name - and zones
+# are discovered by ASKING a provider. With no provider, that check cannot pass,
+# so every first-time user was routed into the manual-DNS-record branch
+# immediately after a screen promising the certificate would be issued and
+# renewed automatically.
+#
+# The order is the fix. Secrecy is a side benefit and a small one: the browser
+# was only ever reachable on loopback, and anything able to read that traffic
+# can read secrets.xml directly.
+
+Write-Host ""
+Write-Host "  [3/6] Certificate authority and DNS automation" -ForegroundColor Cyan
+
+$trackerSettings = Get-TrackerSettings
+
+# --- contact address ------------------------------------------------------- #
+# The CA requires one, and it is where expiry warnings from the CA itself go.
+if ($trackerSettings.contact) {
+    Write-Host "        Contact address: $($trackerSettings.contact)" -ForegroundColor Green
+}
+else {
     Write-Host ""
-
-    $wantAcme = Read-Host "        Download Posh-ACME now? (Y/N)"
-
-    if ($wantAcme -match '^[Yy]') {
-        try {
-            Write-Host "        Downloading..." -ForegroundColor DarkGray
-            $manifest = Install-PoshAcmeLocal
-            Write-Host "        Installed: $manifest" -ForegroundColor Green
+    Write-Host "        The certificate authority requires an email address. It is used for"
+    Write-Host "        their own expiry warnings and account recovery, and it is sent to"
+    Write-Host "        them - not stored only here."
+    Write-Host ""
+    do {
+        $contact = (Read-Host "        Contact email").Trim()
+        if ($contact -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') {
+            Write-Host "        That does not look like an email address." -ForegroundColor Yellow
+            $contact = ''
         }
-        catch {
+    } while (-not $contact)
+
+    $trackerSettings.contact = $contact
+    Save-TrackerSettings -Settings $trackerSettings
+    Write-Host "        Saved." -ForegroundColor Green
+}
+
+# --- DNS provider ---------------------------------------------------------- #
+$haveProvider = @($trackerSettings.providers).Count -gt 0
+
+if ($haveProvider) {
+    # The inner parentheses are load-bearing: -f binds tighter than -join, so
+    # without them the format string consumes the array and prints only the
+    # first label, with the -join applied to the finished string.
+    $names = ((@($trackerSettings.providers) | ForEach-Object { $_.label }) -join ', ')
+    Write-Host ("        DNS profile: {0}" -f $names) -ForegroundColor Green
+}
+else {
+    Write-Host ""
+    Write-Host "        Cert Camel proves it controls a domain by writing a DNS TXT record,"
+    Write-Host "        so it needs an API credential for whoever hosts your DNS. This is"
+    Write-Host "        also what lets it renew the console's own certificate."
+    Write-Host ""
+
+    # Driven off the shared catalog rather than a list written out here. The
+    # catalog already carries the label, the per-field hint and which fields are
+    # secret, and duplicating any of that would let the two drift - the console
+    # asking for a field the settings page does not save, or vice versa.
+    $plugins = @($script:PluginCatalog.Keys | Sort-Object)
+    for ($i = 0; $i -lt $plugins.Count; $i++) {
+        Write-Host ("          {0}) {1}" -f ($i + 1), $script:PluginCatalog[$plugins[$i]].Label)
+    }
+    Write-Host ""
+
+    $choice = 0
+    do {
+        $pick = (Read-Host ("        Which one? (1-{0})" -f $plugins.Count)).Trim()
+        if ($pick -match '^\d+$' -and [int]$pick -ge 1 -and [int]$pick -le $plugins.Count) {
+            $choice = [int]$pick
+        }
+        else { Write-Host "        Pick a number from the list." -ForegroundColor Yellow }
+    } while (-not $choice)
+
+    $pluginName = $plugins[$choice - 1]
+    $catalog    = $script:PluginCatalog[$pluginName]
+
+    # Same shape the settings page produces, so a profile created here is
+    # indistinguishable from one created in the browser - including the id
+    # pattern the save path validates against.
+    $providerId = 'p' + [Convert]::ToString([DateTimeOffset]::UtcNow.ToUnixTimeSeconds(), 16) +
+                  (Get-Random -Minimum 100 -Maximum 999)
+
+    Write-Host ""
+    Write-Host ("        {0}" -f $catalog.Label) -ForegroundColor Cyan
+
+    $plainArgs = @{}
+    foreach ($a in $catalog.Args) {
+        $label = $(if ($a.Label) { $a.Label } else { $a.Name })
+
+        if ($a.Hint) {
             Write-Host ""
-            Write-Host "        Could not download it: $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host "        Monitoring still works. To retry later, run this setup again." -ForegroundColor Yellow
+            # Wrapped rather than printed as one long line: some of these hints
+            # are a paragraph, and a paragraph that runs off the right edge of a
+            # console window is a paragraph nobody reads.
+            $words = @($a.Hint -split '\s+')
+            $line  = ''
+            foreach ($w in $words) {
+                if (($line + ' ' + $w).Trim().Length -gt 68) {
+                    Write-Host ("          {0}" -f $line.Trim()) -ForegroundColor DarkGray
+                    $line = $w
+                }
+                else { $line = ($line + ' ' + $w).Trim() }
+            }
+            if ($line) { Write-Host ("          {0}" -f $line) -ForegroundColor DarkGray }
         }
-    } else {
-        Write-Host "        Skipped - monitoring only." -ForegroundColor Yellow
+
+        if ($a.Type -eq 'bool') {
+            $yn = Read-Host ("        {0}? (Y/N)" -f $label)
+            if ($yn -match '^[Yy]') { $plainArgs[$a.Name] = $true }
+            else { $plainArgs[$a.Name] = $false }
+            continue
+        }
+
+        if ($a.Secret) {
+            # Read as a SecureString so the token is not echoed. It is converted
+            # straight back for Set-TrackerSecret, which re-encrypts it under
+            # DPAPI - so this is about what appears on screen, not about what
+            # reaches disk. That matters more than it sounds: this console gets
+            # demonstrated, and screen-shared.
+            do {
+                $secure = Read-Host ("        {0}" -f $label) -AsSecureString
+                $plain  = ConvertFrom-SecureStringPlain $secure
+                if (-not $plain) { Write-Host "        Required." -ForegroundColor Yellow }
+            } while (-not $plain)
+
+            Set-TrackerSecret -Key ("{0}:{1}" -f $providerId, $a.Name) -Value $plain
+            $plain = $null
+            continue
+        }
+
+        do {
+            $val = (Read-Host ("        {0}" -f $label)).Trim()
+            if (-not $val) { Write-Host "        Required." -ForegroundColor Yellow }
+        } while (-not $val)
+        $plainArgs[$a.Name] = $val
+    }
+
+    $profileLabel = (Read-Host ("        A name for this profile [{0}]" -f $catalog.Label)).Trim()
+    if (-not $profileLabel) { $profileLabel = $catalog.Label }
+
+    $trackerSettings.providers = @(@($trackerSettings.providers) + @(@{
+        id     = $providerId
+        label  = $profileLabel
+        plugin = $pluginName
+        args   = $plainArgs
+    }))
+    Save-TrackerSettings -Settings $trackerSettings
+    Write-Host ""
+    Write-Host "        Saved." -ForegroundColor Green
+}
+
+# --- prove it works, now, rather than three steps later -------------------- #
+# The credential is not verified by being typed. A token scoped to one zone, or
+# missing Zone:Read, fails in exactly the same way as a correct one until
+# something asks it a question - and the next thing to ask is the HTTPS step,
+# by which point the reason is several screens back.
+Write-Host ""
+Write-Host "        Checking the credential..." -ForegroundColor DarkGray
+
+$zoneCache = $null
+try { $zoneCache = Update-ZoneCache -Settings (Get-TrackerSettings) }
+catch {
+    Write-Host ("        Could not reach the DNS provider: {0}" -f (($_.Exception.Message -split "`n")[0].Trim())) -ForegroundColor Red
+}
+
+if ($zoneCache) {
+    foreach ($e in @($zoneCache.errors)) {
+        Write-Host ("        {0}: {1}" -f $e.providerLabel, $e.error) -ForegroundColor Red
+    }
+
+    $zoneNames = @(@($zoneCache.zones) | ForEach-Object { $_.zone } | Sort-Object -Unique)
+    if ($zoneNames.Count) {
+        Write-Host ("        {0} zone(s) visible:" -f $zoneNames.Count) -ForegroundColor Green
+        foreach ($z in ($zoneNames | Select-Object -First 12)) { Write-Host "          $z" -ForegroundColor Gray }
+        if ($zoneNames.Count -gt 12) { Write-Host ("          ...and {0} more" -f ($zoneNames.Count - 12)) -ForegroundColor DarkGray }
+    }
+    elseif (-not @($zoneCache.errors).Count) {
+        # Credential accepted, nothing behind it. Almost always a token scoped
+        # to a single zone, which is the one failure that looks like success.
+        Write-Host "        The credential was accepted but no zones came back." -ForegroundColor Yellow
+        Write-Host "        That usually means the token is scoped to zones it cannot list." -ForegroundColor DarkGray
+        Write-Host "        Widen it and run setup again, or fix it later under Settings." -ForegroundColor DarkGray
     }
 }
 
@@ -418,14 +627,14 @@ if (Get-VendoredPoshAcme) {
 # --------------------------------------------------------------------------- #
 
 Write-Host ""
-Write-Host "  [3/5] Running the first check..." -ForegroundColor Cyan
+Write-Host "  [4/6] Running the first check..." -ForegroundColor Cyan
 & $checker
 
 # --------------------------------------------------------------------------- #
 # 5. Daily scheduled task (optional)
 # --------------------------------------------------------------------------- #
 
-Write-Host "  [4/5] Daily automatic check" -ForegroundColor Cyan
+Write-Host "  [5/6] Daily automatic check" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "        This registers a Windows scheduled task named '$taskName' that"
 Write-Host "        re-checks your domains every morning at 9:00 AM, so the page is"
@@ -488,7 +697,7 @@ if ($answer -match '^[Yy]') {
 # step can drive, because everything below depends on the provider existing.
 
 Write-Host ""
-Write-Host "  [5/5] Serve this page over HTTPS" -ForegroundColor Cyan
+Write-Host "  [6/6] Serve this page over HTTPS" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "        Optional. By default the page is served over plain HTTP at"
 Write-Host "        127.0.0.1 on a free port - nothing to set up, and it never leaves"
