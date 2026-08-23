@@ -13,6 +13,11 @@
    see nothing, and be no wiser. On a server it genuinely is worth registering,
    and there the same row should say so.
 
+   The row also carries a small (i) after its name. The explanation was always
+   on the title attribute; nothing on screen said to hover for it, and this row
+   is the one where that matters most - the tooltip is the whole reason "manual
+   launch" is not a fault.
+
    Exits non-zero on failure. */
 const fs = require('fs');
 const path = require('path');
@@ -94,11 +99,22 @@ function boot() {
   w.location.hash = '#/home';
   w.CertCamel.loadState(function () { w.CertCamel.navigate(); });
 }
+/* The name span holds the label and then the icon, so read past the icon
+   rather than matching the two together - otherwise every lookup here silently
+   depends on what glyph the icon uses. */
+function nameOf(row) {
+  const n = row.querySelector('.n');
+  if (!n) { return null; }
+  return Array.from(n.childNodes)
+    .filter(c => c.nodeType === 3)
+    .map(c => c.textContent).join('');
+}
 function rowNamed(label) {
   return Array.from(d.querySelectorAll('.svc'))
-    .filter(r => (r.querySelector('.n') || {}).textContent === label)[0] || null;
+    .filter(r => nameOf(r) === label)[0] || null;
 }
 const valueOf = r => r ? (r.querySelector('.v') || {}).textContent : '(no row)';
+const rows = () => Array.from(d.querySelectorAll('.svc'));
 
 console.log('on a desktop, where the step is never offered');
 boot();
@@ -149,6 +165,28 @@ check('the row still says manual launch', valueOf(rowNamed('Web page')) === 'man
 check('and falls back to the desktop wording', !/run First Time Setup/.test(rowNamed('Web page').title),
       'undefined was treated as a server, which is the wrong way to be wrong');
 
+console.log('\nthe hover is advertised, not left to be discovered');
+AUTOMATION = { available: true, error: null, isServer: false, tasks: [
+  task({}),
+  task({ key: 'renew', name: 'Cert Camel Renew', label: 'Renew and deploy',
+         registered: true, enabled: true, state: 'ready', triggerType: 'daily',
+         schedule: '2026-08-06T00:45:00-04:00' }) ] };
+boot();
+check('every row carries an info icon', rows().length === 2 && rows().every(r => !!r.querySelector('.i')),
+      'rendered ' + rows().length + ' row(s), ' + rows().filter(r => r.querySelector('.i')).length + ' with an icon');
+check('the icon sits after the name, inside it',
+      rows().every(r => { const n = r.querySelector('.n'); return n && n.lastElementChild === r.querySelector('.i'); }),
+      'an icon outside the name span drifts to the far side of the row, next to the value');
+check('the row still explains itself on hover',
+      rows().every(r => !!r.title),
+      'an icon pointing at an empty tooltip is worse than no icon');
+check('the name still reads as the name', nameOf(rowNamed('Web page')) === 'Web page',
+      'got "' + (rowNamed('Web page') || {}).textContent + '"');
+check('the icon is hidden from screen readers',
+      rows().every(r => r.querySelector('.i').getAttribute('aria-hidden') === 'true'),
+      'it duplicates nothing and announces as a bare letter');
+
+console.log('\nno uncaught errors');
 check('no uncaught errors', errors.length === 0, errors.join(' | '));
 
 console.log(failed ? '\n' + failed + ' CHECK(S) FAILED' : '\nall checks passed');

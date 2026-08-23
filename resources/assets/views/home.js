@@ -577,7 +577,21 @@
     var list = el('div', 'svclist');
     (a.tasks || []).forEach(function(s){
       var row = el('div', 'svc');
-      row.appendChild(el('span', 'n', s.label));
+
+      /* The name, then a small (i) marking that this row explains itself on
+         hover. The explanation was already there - every row sets a title - but
+         nothing said so, and the one that most needs reading is the web page
+         row, where the title is the whole reason "manual launch" is not a
+         fault. A tooltip nobody knows to look for is a tooltip nobody reads.
+
+         aria-hidden because it carries no information of its own: the text it
+         points at is on the row's title, which assistive technology already
+         reaches. Announcing a bare "i" would add noise, not meaning. */
+      var name = el('span', 'n', s.label);
+      var info = el('span', 'i', 'i');
+      info.setAttribute('aria-hidden', 'true');
+      name.appendChild(info);
+      row.appendChild(name);
 
       var when;
       /* The web page task is absent by design on a desktop, and "not set up"

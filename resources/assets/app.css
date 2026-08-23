@@ -999,6 +999,20 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
    tile's coloured ground, where faint does not clear AA. */
 .svc .v{color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums;}
 
+/* A hint that a hover exists. Every row carries an explanation in its title
+   attribute and nothing on screen said so, which on the web-page row meant the
+   sentence explaining why it reads "manual launch" was invisible to anyone who
+   did not think to hover.
+
+   Deliberately quiet: it marks where to look, it is not a control. Sized in em
+   so it tracks the row's font rather than needing its own breakpoint, and given
+   cursor:help so the pointer says the same thing the icon does. */
+.svc .i{display:inline-grid; place-items:center; width:1.05em; height:1.05em;
+  margin-left:.4em; border:1px solid currentColor; border-radius:50%;
+  font-size:.85em; font-style:normal; font-weight:700; line-height:1;
+  opacity:.55; cursor:help; vertical-align:baseline;}
+.svc:hover .i{opacity:.9;}
+
 .mini{font-size:.78rem; color:var(--faint); margin:.6rem 0 0;}
 /* A .mini line that is telling you to do something, rather than just adding
    detail. Amber because it is a "this needs a renewal" nudge, not a fault. */

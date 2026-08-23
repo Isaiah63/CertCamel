@@ -92,6 +92,14 @@ function XHR(){
 }
 function goto(w,h){ w.location.hash=h; w.dispatchEvent(new w.Event('hashchange')); }
 const txt = n => n ? n.textContent.replace(/\s+/g,' ').trim() : '(missing)';
+// A service row's name span ends with an (i) marking that the row explains
+// itself on hover, so textContent would return "Web pagei". Read the text
+// nodes only: these checks are about the label, not about what glyph the
+// icon uses.
+const svcName = r => { const n = r && r.querySelector('.n'); return n
+  ? Array.from(n.childNodes).filter(c => c.nodeType === 3)
+      .map(c => c.textContent).join('').replace(/\s+/g,' ').trim()
+  : '(missing)'; };
 // Selected by LABEL, never by position - the tile arrives from a fetch and the
 // point of the placeholder is that its slot is fixed regardless.
 function autoTile(){
@@ -100,7 +108,7 @@ function autoTile(){
 }
 function tileVal(){ const t=autoTile(); return t ? txt(t.querySelector('.val')) : '(no tile)'; }
 function tileSub(){ const t=autoTile(); const s=t&&t.querySelector('.sub'); return s ? txt(s) :
-  (t ? Array.from(t.querySelectorAll('.svc')).map(r=>txt(r.querySelector('.n'))+' '+txt(r.querySelector('.v'))).join('; ') : '(no tile)'); }
+  (t ? Array.from(t.querySelectorAll('.svc')).map(r=>svcName(r)+' '+txt(r.querySelector('.v'))).join('; ') : '(no tile)'); }
 
 const errors=[]; const vc=new VirtualConsole();
 vc.on('jsdomError', e=>errors.push(e.detail?e.detail.stack:e.message));
@@ -132,7 +140,7 @@ w.CertCamel.loadState(function(){
 
   console.log('\n=== the tile lists services and times, with no dangling verb ===');
   Array.from(autoTile().querySelectorAll('.svc')).forEach(function(r){
-    console.log('  ' + txt(r.querySelector('.n')).padEnd(24) + txt(r.querySelector('.v')));
+    console.log('  ' + svcName(r).padEnd(24) + txt(r.querySelector('.v')));
   });
   // Every prose attempt left "checks"/"runs" without an object, which read as
   // though the SERVICES were being checked. A name and a time cannot be misread.
@@ -140,7 +148,7 @@ w.CertCamel.loadState(function(){
   console.log('  all four services listed: ' + (autoTile().querySelectorAll('.svc').length === 4));
   // The whole point of triggerType: a boot task must not claim a daily time.
   const svcRows = Array.from(autoTile().querySelectorAll('.svc'))
-    .map(r => txt(r.querySelector('.n')) + ' = ' + txt(r.querySelector('.v')));
+    .map(r => svcName(r) + ' = ' + txt(r.querySelector('.v')));
   const boot = svcRows.find(r => /^Web page /.test(r));
   console.log('  boot task reads: ' + boot);
   // The label used to end in "at startup" too, so the row said it twice.
@@ -171,8 +179,8 @@ w.CertCamel.loadState(function(){
   const dupe = Array.from(cardNamed('Automated renewals scheduled').querySelectorAll('p.mini'))
                  .map(txt).find(t=>/Expiry check/.test(t));
   console.log('  card no longer repeats it: ' + !dupe);
-  console.log('  tile still has it: ' + Array.from(autoTile().querySelectorAll('.svc .n'))
-                 .map(txt).includes('Expiry check'));
+  console.log('  tile still has it: ' + Array.from(autoTile().querySelectorAll('.svc'))
+                 .map(svcName).includes('Expiry check'));
 
   console.log('\n=== fresh forecast: no button anywhere on Home ===');
   console.log('  buttons: ' + (Array.from(home().querySelectorAll('button')).map(b=>b.textContent).join(', ') || '(none)'));
