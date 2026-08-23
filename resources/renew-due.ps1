@@ -154,6 +154,13 @@ try {
 
         $outcome.considered += @{
             certId = $cert.certId; name = $cert.displayName
+            # The names this entry keeps alive, recorded so a reader can ask
+            # "will anything renew THIS host?" without going through certId.
+            # certId is the folder under certs\, named from the grouping id at
+            # the moment of issue, and that id legitimately changes afterwards -
+            # see Get-TrackerAddressStatus, which used to compare the two and
+            # call a perfectly healthy certificate abandoned.
+            names = @($cert.names)
             due = [bool]$reason; reason = $reason
             renewAfter = $(if ($order -and $order.PSObject.Properties['RenewAfter']) { $order.RenewAfter } else { $null })
         }

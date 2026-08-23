@@ -5609,16 +5609,28 @@ function Get-TrackerAddressStatus {
     # --- certificate: does one on disk already cover the name? --------------- #
     $cert = Find-CertificateForHost -HostName $name
     if ($cert) {
+        # What to CALL it. certId is the folder under certs\, named from the
+        # grouping id at the moment of issue - which is not necessarily what the
+        # certificate is for. The console's own certificate is ordered before
+        # its address is saved, so it lands in the zone's folder and stays
+        # there; naming the folder told people the console certificate belonged
+        # to a bare domain they had never asked for.
+        #
+        # When the name being asked about is literally on the certificate, that
+        # name is the honest answer. Only a wildcard needs its own identity
+        # spelled out, and the wildcard branch below already does that.
+        $certLabel = $(if ($cert.exact) { $name } else { $cert.certId })
+
         $out.certificate.ok       = -not $cert.expired
         $out.certificate.covered  = $true
         $out.certificate.certId   = $cert.certId
         $out.certificate.notAfter = $cert.notAfter.ToString('o')
         $out.certificate.exact    = $cert.exact
         if ($cert.expired) {
-            $out.certificate.detail = "$($cert.certId) covers this name but expired on $($cert.notAfter.ToString('d MMM yyyy'))."
+            $out.certificate.detail = "$certLabel covers this name but expired on $($cert.notAfter.ToString('d MMM yyyy'))."
         }
         elseif ($cert.exact) {
-            $out.certificate.detail = "$($cert.certId), valid to $($cert.notAfter.ToString('d MMM yyyy'))"
+            $out.certificate.detail = "$certLabel, valid to $($cert.notAfter.ToString('d MMM yyyy'))"
         }
         else {
             # Covered by a wildcard. Worth saying which, because it also means
@@ -5660,7 +5672,25 @@ function Get-TrackerAddressStatus {
         $forecast = Get-RenewalForecast
         $entry = $null
         if ($forecast -and $forecast.considered) {
-            $entry = @($forecast.considered | Where-Object { $_.certId -eq $cert.certId })[0]
+            # Matched on the names an entry covers, NOT on the folder the
+            # certificate sits in. Those two agree right up until the grouping
+            # id changes, which it does the first time an address is configured:
+            # the console's name moves off the zone's SAN certificate and onto
+            # its own, taking a new id with it, while the file stays in the
+            # folder it was written to. Comparing folder against id then reports
+            # a certificate that renews perfectly well as abandoned - and this
+            # is the one alarm on this page nobody should ever learn to ignore.
+            $entry = @($forecast.considered | Where-Object {
+                $_.PSObject.Properties['names'] -and $_.names -and
+                (Test-NameCoveredBySans -Sans @($_.names) -Name $name)
+            })[0]
+
+            # Sweep files written before names was recorded. Falling back to the
+            # old comparison keeps them reading correctly instead of flipping
+            # every console to red until the next sweep runs.
+            if (-not $entry) {
+                $entry = @($forecast.considered | Where-Object { $_.certId -eq $cert.certId })[0]
+            }
         }
 
         if (-not $forecast) {
@@ -5672,7 +5702,7 @@ function Get-TrackerAddressStatus {
             # that backs this one from domains.txt silently drops it out of the
             # renewal set - and the console's own certificate then expires with
             # nothing left running to complain about it.
-            $out.renewal.detail = "$($cert.certId) is NOT in the renewal set - nothing will renew it, and this page stops serving HTTPS when it expires. Check it is still in domains.txt and not marked as managed elsewhere."
+            $out.renewal.detail = "$certLabel is NOT in the renewal set - nothing will renew it, and this page stops serving HTTPS when it expires. Check it is still in domains.txt and not marked as managed elsewhere."
         }
         else {
             $out.renewal.ok      = $true

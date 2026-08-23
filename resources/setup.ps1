@@ -1072,6 +1072,12 @@ $wantHttps = Read-Host "        Set this up now? (Y/n)"
 if ($wantHttps -notmatch '^[Nn]') {
     . (Join-Path $appDir 'acme-lib.ps1')
 
+    # Set only if the address is written ahead of an order below, and read only
+    # to undo that. Declared here so the rollback tests a variable that always
+    # exists rather than one that may never have been assigned.
+    $webPrevName = $null
+    $webPrevPort = $null
+
     # Offer a name built from a zone the credential can actually see. Asking
     # cold invites a name in a zone this install cannot issue for, which fails
     # four checks later with a message about DNS credentials that reads as a
@@ -1194,6 +1200,32 @@ if ($wantHttps -notmatch '^[Nn]') {
                 if ($issue -match '^[Yy]') {
                     $zoneForCert = $(if ($st.zone.zone) { $st.zone.zone } else { $webName })
 
+                    # Saved BEFORE renew.ps1 runs, and the ordering is the whole
+                    # point of these lines.
+                    #
+                    # Get-CertificateGroups gives the console's address a
+                    # certificate of its own rather than a seat on the zone's SAN
+                    # certificate - but that split only fires when web.hostname is
+                    # already set. Ordered the other way round the name is still
+                    # part of the zone's SAN order, so the certificate is issued
+                    # and filed under the ZONE's id: certs\example.com holding a
+                    # certificate whose only name is tracker.example.com. It
+                    # renews correctly, and every panel that names it names a
+                    # domain the operator never asked about.
+                    #
+                    # Safe to set before a certificate exists: serve.ps1 asks
+                    # Find-CertificateForHost at startup and falls back to plain
+                    # HTTP with a note when nothing covers the name. Put back
+                    # below if the order does not produce one, so a failed issue
+                    # leaves settings as it found them.
+                    $sPre = Get-TrackerSettings
+                    if (-not $sPre.ContainsKey('web') -or -not $sPre.web) { $sPre.web = @{} }
+                    $webPrevName = [string]$sPre.web.hostname
+                    $webPrevPort = $sPre.web.port
+                    $sPre.web.hostname = $webName
+                    $sPre.web.port     = $webPort
+                    Save-TrackerSettings -Settings $sPre
+
                     # renew.ps1 reads the checker's output to work out which names
                     # belong to which certificate, and refuses outright when there
                     # is none: "There is no certificate data yet."
@@ -1261,6 +1293,17 @@ if ($wantHttps -notmatch '^[Nn]') {
                 Write-Host "        name ever stops resolving or the certificate lapses." -ForegroundColor DarkGray
             }
             else {
+                # Put the address back. It was written ahead of the order so the
+                # certificate would be filed under its own id; with no
+                # certificate to show for it, leaving the name behind would have
+                # the console announce an address it cannot serve.
+                if ($null -ne $webPrevName) {
+                    $sBack = Get-TrackerSettings
+                    if (-not $sBack.ContainsKey('web') -or -not $sBack.web) { $sBack.web = @{} }
+                    $sBack.web.hostname = $webPrevName
+                    $sBack.web.port     = $webPrevPort
+                    Save-TrackerSettings -Settings $sBack
+                }
                 Write-Host "        Not turning HTTPS on yet - there is no usable certificate for" -ForegroundColor Yellow
                 Write-Host "        that name. Settings > General will show what is still missing." -ForegroundColor Yellow
             }
