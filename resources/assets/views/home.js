@@ -580,7 +580,21 @@
       row.appendChild(el('span', 'n', s.label));
 
       var when;
-      if (!s.registered)  { when = 'not set up'; }
+      /* The web page task is absent by design on a desktop, and "not set up"
+         reads as a fault rather than a choice - it is the one row somebody
+         scans and thinks something went wrong.
+
+         Setup only offers it on Windows Server, so on a desktop it was never
+         declined; it was never proposed. Saying "manual launch" describes what
+         is actually happening: the console runs while Open Tracker.bat is open.
+
+         The tooltip differs by machine on purpose. Telling a desktop user to
+         re-run setup would send them round a loop - setup checks ProductType
+         and will not offer the step there either. */
+      if (!s.registered && s.key === 'server') {
+        when = 'manual launch';
+      }
+      else if (!s.registered)  { when = 'not set up'; }
       else if (!s.enabled){ when = 'switched off'; }
       else if (s.triggerType === 'boot') {
         // A boot trigger still carries a StartBoundary - the moment it was
@@ -601,7 +615,17 @@
         else                 { when = 'scheduled'; }
       }
       row.appendChild(el('span', 'v', when));
-      row.title = s.detail || '';
+
+      if (!s.registered && s.key === 'server') {
+        row.title = 'The console runs while Open Tracker.bat is open, and stops when you close it.'
+          + '\n\n' +
+          (a.isServer
+            ? 'This is Windows Server, where nobody stays signed in - run First Time Setup again to ' +
+              'register it to start at boot instead.'
+            : 'Starting it at boot is offered by setup on Windows Server only. On a desktop you open ' +
+              'the console when you want it, so there is nothing missing here.');
+      }
+      else { row.title = s.detail || ''; }
       list.appendChild(row);
     });
     t.appendChild(list);

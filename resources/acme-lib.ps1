@@ -1282,7 +1282,10 @@ function Get-AutomationStatus {
       it would say automation is not running when it may well be.
     #>
 
-    $out = @{ available = $true; error = $null; tasks = @() }
+    # isServer travels with the tasks because the page needs it to explain the
+    # one that is deliberately absent: "not set up" on a desktop reads as a
+    # fault when it is a step setup never offered.
+    $out = @{ available = $true; error = $null; tasks = @(); isServer = [bool](Test-IsWindowsServer) }
 
     $folder = $null
     try {
@@ -5246,6 +5249,32 @@ function Add-TrackerDomainEntry {
     Write-TextFileAtomic -Path $script:DomainsFile -Content $text
 
     return @{ ok = $true; changed = $true; entry = $entry }
+}
+
+function Test-IsWindowsServer {
+    <#
+      Whether this is Windows Server rather than a desktop.
+
+      Decides one thing: whether starting the console at boot is a sensible
+      offer. On a PC you open the tracker when you want it and close it when you
+      are done, so a background copy is clutter; on a server nobody is signed in
+      to open anything, and without it the console is gone after every reboot.
+
+      Cached because it cannot change while the process runs and the CIM query
+      is not free - /api/automation answers on every Home page load, and this
+      would otherwise be paid each time for an answer that is fixed at boot.
+
+      Unreadable is treated as a desktop: the cost of being wrong that way is a
+      step not offered, against a background task registered on a machine that
+      did not want one.
+    #>
+    if ($null -eq $script:IsWindowsServerCache) {
+        $script:IsWindowsServerCache = $false
+        try {
+            $script:IsWindowsServerCache = ([int](Get-CimInstance Win32_OperatingSystem).ProductType -ne 1)
+        } catch { $null = $_ }   # cannot tell: treated as a workstation
+    }
+    return $script:IsWindowsServerCache
 }
 
 function Test-Elevated {
