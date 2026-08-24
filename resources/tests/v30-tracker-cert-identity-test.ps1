@@ -170,6 +170,40 @@ try {
           'an upgraded install reads as abandoned until its next sweep'
 
     # ----------------------------------------------------------------------- #
+    Write-Host "`nsetup orders the certificate the grouping actually produces"
+    # The contract between two files. renew.ps1 matches -Zone against the
+    # certificate IDENTIFIER despite the parameter's name, and setup passes the
+    # console's address for it. Those agree only because the tracker kind's id
+    # IS the address - so this asserts the grouping still says so.
+    #
+    # Saving the address earlier (so the console gets its own certificate rather
+    # than a seat on the zone's SAN order) changed that id from the zone to the
+    # address, and setup went on passing the zone. Setup then failed at the last
+    # step of a first install with "not a renewable certificate", naming a zone
+    # that was managed perfectly well.
+    $fakeZones = @{ zones = @(@{ zone = $zone; providerId = 'p1'
+                                 providerLabel = 'Test'; plugin = 'Manual' }) }
+    # Built from the real defaults rather than a literal: Get-CertificateGroups
+    # resolves a CA profile per certificate and throws without one.
+    $consoleSettings = Get-TrackerSettings
+    $consoleSettings.web = @{ hostname = $trackerHost; port = 8787 }
+    $results = @(@{ host = $trackerHost; ok = $false; category = 'Tracker'
+                    notAfter = $null; sans = @() })
+    $grp = Get-CertificateGroups -Results $results -Settings $consoleSettings -ZoneCache $fakeZones
+
+    $console = @($grp.certs | Where-Object { $_.kind -eq 'tracker' })[0]
+    Check 'the console gets a certificate of its own' ($null -ne $console) `
+          ("kinds produced: " + (@($grp.certs | ForEach-Object { $_.kind }) -join ', '))
+    if ($console) {
+        Check 'and its id is the address setup passes to renew.ps1' `
+              ($console.certId -eq $trackerHost) `
+              "grouping says '$($console.certId)', setup passes '$trackerHost' - renew.ps1 matches -Zone on the id, so these must agree"
+        Check 'the zone is NOT a usable identifier here' `
+              (-not @($grp.certs | Where-Object { $_.certId -eq $zone })) `
+              'passing the zone happens to work, which hides the mismatch until the SAN certificate goes away'
+    }
+
+    # ----------------------------------------------------------------------- #
     Write-Host "`nno sweep at all"
     Remove-Item -LiteralPath $script:SweepFile -Force
     $r = Status
@@ -197,7 +231,10 @@ Write-Host "`nsetup saves the address BEFORE it orders the certificate"
 # zone's SAN order and is filed under the zone id.
 $setupSrc = Get-Content (Join-Path $srcDir 'setup.ps1') -Raw -Encoding UTF8
 $saveAt  = $setupSrc.IndexOf('$sPre.web.hostname = $webName')
-$orderAt = $setupSrc.IndexOf("'renew.ps1') -Zone `$zoneForCert")
+$orderAt = $setupSrc.IndexOf("'renew.ps1') -Zone `$certIdForConsole")
+Check 'setup passes the console address, not the zone' `
+      ($setupSrc -match '\$certIdForConsole = \$webName') `
+      'renew.ps1 matches -Zone against the certificate id, and the zone stopped being one'
 Check 'the address is written ahead of the order' `
       ($saveAt -ge 0 -and $orderAt -ge 0 -and $saveAt -lt $orderAt) `
       "save at $saveAt, order at $orderAt - reversed, the certificate is filed under the zone id"

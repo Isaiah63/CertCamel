@@ -1198,7 +1198,19 @@ if ($wantHttps -notmatch '^[Nn]') {
                 Write-Host "        This takes a few minutes while the DNS record propagates." -ForegroundColor DarkGray
                 $issue = Read-Host "        Issue it now? (Y/N)"
                 if ($issue -match '^[Yy]') {
-                    $zoneForCert = $(if ($st.zone.zone) { $st.zone.zone } else { $webName })
+                    # renew.ps1 matches -Zone against the certificate IDENTIFIER,
+                    # not the DNS zone, despite the parameter's name. Those were
+                    # the same string only while the console's name rode the
+                    # zone's SAN order: that certificate's id IS the zone.
+                    #
+                    # Saving the address below moves the name onto a certificate
+                    # of its own, whose id is the address. Passing the zone then
+                    # names a certificate the grouping no longer produces, and
+                    # renew.ps1 rejects it with "not a renewable certificate. Its
+                    # DNS zone is not managed by any configured provider" - which
+                    # is doubly misleading, because the zone is managed and the
+                    # provider is fine.
+                    $certIdForConsole = $webName
 
                     # Saved BEFORE renew.ps1 runs, and the ordering is the whole
                     # point of these lines.
@@ -1260,7 +1272,7 @@ if ($wantHttps -notmatch '^[Nn]') {
 
                     Write-Host ""
                     & powershell.exe -NoProfile -ExecutionPolicy Bypass `
-                        -File (Join-Path $appDir 'renew.ps1') -Zone $zoneForCert -Source 'cli'
+                        -File (Join-Path $appDir 'renew.ps1') -Zone $certIdForConsole -Source 'cli'
                     Write-Host ""
                     $st = Get-TrackerAddressStatus -HostName $webName -Port $webPort `
                             -Settings (Get-TrackerSettings) -ZoneCache (Get-ZoneCache)
