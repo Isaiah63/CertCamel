@@ -3464,7 +3464,7 @@ $script:TargetCatalog = @{
             @{ Name = 'remoteName'; Label = 'Certificate filename on HAProxy'; Secret = $false; Type = 'text'
                Hint  = 'Inside the Data Plane API ssl_certs_dir. Leave blank for "<cert>.pem". This is the certificate IDENTITY to HAProxy - it must never change between renewals, so no dates in it.' }
             @{ Name = 'crtList';  Label = 'crt-list path (optional)'; Secret = $false; Type = 'text'
-               Hint  = 'e.g. /etc/haproxy/ssl/crt-list.txt, exactly as it appears on the bind line. When set, a pushed certificate the list does not reference yet is appended and hot-loaded, so a brand-new certificate starts serving without a config edit. Must live inside ssl_certs_dir. {certId} is substituted, so /etc/haproxy/ssl/{certId}-crt-list.txt gives every certificate its own list - which is what you want when each domain has its own frontend.' }
+               Hint  = 'Press Discover to fill this in - the directory is not yours to choose. A crt-list is created by uploading a filename, so the API decides where it lands, and a path anywhere else is a file no bind line reads. When set, a pushed certificate the list does not reference yet is appended and hot-loaded, so a brand-new certificate starts serving without a config edit. {certId} is substituted, giving every certificate its own list - which is what you want when each domain has its own frontend.' }
             @{ Name = 'verifyPort'; Label = 'Port to verify on'; Secret = $false; Type = 'text'
                Hint  = 'Usually 443. Verification connects to each node here and reads what it actually serves.' }
             @{ Name = 'insecureTls'; Label = 'Skip TLS verification of the API endpoint'; Secret = $false; Type = 'bool'
@@ -4539,6 +4539,72 @@ function Test-CrtListPathsMatch {
     if (($pa -replace '/[^/]+$', '') -ne ($pb -replace '/[^/]+$', '')) { return $false }
     return ((Get-NormalisedStorageName (($pa -split '/')[-1])) -eq
             (Get-NormalisedStorageName (($pb -split '/')[-1])))
+}
+
+function Get-HAProxyStorageDir {
+    <#
+      The one directory this API can put files in.
+
+      A crt-list is created by uploading a FILENAME - the API alone decides the
+      directory - so a crt-list configured anywhere else is a file no bind line
+      will ever read. Sync-HAProxyCrtList refuses that case, but it only finds
+      out mid-deploy, which is late: the setting was typed days earlier on the
+      Settings page, where the answer was already knowable.
+
+      Read from the storage records rather than from configuration, because the
+      records are what the create endpoint will actually agree with. Certificates
+      first - Sync-HAProxyCrtList derives the same directory from the certificate
+      it just pushed, so agreeing with that is the point - then crt-lists, for a
+      node holding lists but no certificates yet.
+
+      Never throws: an unreachable or unreadable node is a result, because this
+      is used to VALIDATE a setting and a node being down must not stop somebody
+      saving one.
+    #>
+    param(
+        [string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion,
+        [switch]$InsecureTls, [int]$TimeoutSeconds = 10
+    )
+
+    $out = @{ ok = $false; dir = ''; source = ''; error = $null }
+
+    foreach ($probe in @(
+        @{ path = 'ssl_certificates'; source = 'certificates' },
+        @{ path = 'ssl_crt_lists';    source = 'crt-lists'    })) {
+
+        try {
+            $recs = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                        -Path "/$ApiVersion/services/haproxy/storage/$($probe.path)" `
+                        -InsecureTls:$InsecureTls -TimeoutSeconds $TimeoutSeconds)
+        }
+        catch {
+            # 404 means this build has no such route - try the next probe rather
+            # than reporting the node unreadable.
+            if ($_.Exception.Message -notmatch 'HTTP 404') {
+                $out.error = ($_.Exception.Message -split "`n")[0].Trim()
+            }
+            continue
+        }
+
+        $withPath = @($recs | Where-Object { $_.file })
+        if (-not $withPath.Count) { continue }
+
+        # Same derivation Sync-HAProxyCrtList uses, so the two cannot disagree
+        # about what counts as the directory.
+        $dir = ([string]$withPath[0].file) -replace '/[^/]+$', ''
+        if (-not $dir) { continue }
+
+        $out.ok     = $true
+        $out.dir    = $dir
+        $out.source = $probe.source
+        $out.error  = $null
+        return $out
+    }
+
+    if (-not $out.error) {
+        $out.error = 'This node holds no certificates or crt-lists yet, so the directory it would use cannot be read.'
+    }
+    return $out
 }
 
 function Get-DataPlaneCrtLists {

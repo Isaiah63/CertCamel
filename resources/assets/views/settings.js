@@ -835,7 +835,15 @@
           (counts[k] === nodes.length ? common : partial).push(counts[k + '|obj']);
         });
 
-        renderDiscovery(card, resultBox, common, partial, nodes.length);
+        /* Only when every node agrees. A pair that keeps its certificates in
+           different directories cannot have one crt-list path that works on
+           both, and quietly picking one node's answer would produce a setting
+           that half-deploys. */
+        var dirs = nodes.map(function(n){ return n.storageDir || ''; });
+        var agreedDir = (dirs.length && dirs[0] && dirs.every(function(d){ return d === dirs[0]; }))
+                          ? dirs[0] : '';
+
+        renderDiscovery(card, resultBox, common, partial, nodes.length, agreedDir);
         var n = common.length;
         setStatus(n ? (n + ' TLS frontend(s) found on every node.')
                     : 'No TLS frontend is common to every node.', n ? 'good' : 'bad');
@@ -843,9 +851,44 @@
     });
   }
 
-  function renderDiscovery(card, container, common, partial, nodeCount){
+  function renderDiscovery(card, container, common, partial, nodeCount, storageDir){
     container.textContent = '';
     var box = el('div', 'testrows');
+
+    /* The two crt-list shapes that are worth a click, built on the directory
+       the API actually writes to.
+
+       The directory is the whole problem this solves. A crt-list is created by
+       uploading a filename - the API decides where it lands - so a path in any
+       other directory is a file no bind line reads, and the only thing that
+       says so is a deployment failing days later. Offering it prefilled is
+       cheaper than explaining it.
+
+       Still only presets: the field stays free text, because a node whose list
+       is called something else entirely (crt-list-san.txt, say) is a normal
+       configuration and "Use this" below fills that in from the node itself. */
+    if (storageDir) {
+      var presets = el('div', 'testrow');
+      presets.appendChild(el('span', 'n', 'crt-list path'));
+      presets.appendChild(el('span', 'd', storageDir + ' — the only directory this API can write to'));
+
+      [{label: 'One shared list',  file: 'crt-list.txt',
+        note: 'every certificate in one list'},
+       {label: 'One per certificate', file: '{certId}-crt-list.txt',
+        note: 'a list each, for when every domain has its own frontend'}
+      ].forEach(function(p){
+        var b = el('button', 'btn sm', p.label);
+        b.type = 'button';
+        b.title = storageDir + '/' + p.file + ' — ' + p.note;
+        b.addEventListener('click', function(){
+          var listInput = card.querySelector('input[data-arg="crtList"]');
+          if (listInput) { listInput.value = storageDir + '/' + p.file; }
+          setStatus('Set to ' + storageDir + '/' + p.file + '. Press Save to keep it.', 'good');
+        });
+        presets.appendChild(b);
+      });
+      box.appendChild(presets);
+    }
 
     common.forEach(function(f){
       var row = el('div', 'testrow');
@@ -1351,8 +1394,21 @@
     if (!c.payload.contact) { setStatus('A contact email is required.', 'bad'); return; }
 
     setStatus('Saving...');
-    api('POST', '/api/settings', c.payload, function(err){
+    api('POST', '/api/settings', c.payload, function(err, saved){
       if (err) { setStatus(err, 'bad'); return; }
+
+      /* The save succeeded, so this is not an error - but it says a deployment
+         will refuse the crt-list that was just stored, which is worth more than
+         a zone count. Shown instead of the usual success line, not after it:
+         two lines racing for the same status area means the second one wins and
+         nobody sees this. */
+      var warn = (saved && saved.warnings) || [];
+      if (warn.length) {
+        setStatus('Saved, but: ' + warn.join('  |  '), 'bad');
+        CC.loadState();
+        return;
+      }
+
       setStatus('Saved. Reading DNS zones...');
       api('POST', '/api/settings/test', {}, function(err2, res){
         if (err2) { setStatus('Saved, but the DNS check failed: ' + err2, 'bad'); CC.loadState(); return; }

@@ -719,6 +719,14 @@ function Invoke-SaveSettings {
     # Write-AuditEvent itself already follow.
     $secretsSet = @()
 
+    # What each target's crt-list was BEFORE this save, so the directory check
+    # at the end only reaches out for the ones that actually changed. Taken here
+    # because $settings is mutated in place as the payload is applied.
+    $crtListWas = @{}
+    foreach ($t in @($settings.targets)) {
+        $crtListWas[[string]$t.id] = [string](Get-TargetArg -Target $t -Name 'crtList')
+    }
+
     if ($null -ne $Payload.contact) { $settings.contact = [string]$Payload.contact }
 
     # Display only - see Get-DisplayTimeZone. Validated against the machine's own
@@ -1111,7 +1119,51 @@ function Invoke-SaveSettings {
             -Detail "stored $(@($secretsSet | Sort-Object -Unique).Count) credential(s) from a settings save"
     }
 
-    return @{ ok = $true }
+    # --- crt-list directory, checked while somebody is still looking --------- #
+    #
+    # A crt-list is created by uploading a FILENAME - the API picks the
+    # directory - so a path anywhere else is a file no bind line will ever read.
+    # Sync-HAProxyCrtList already refuses that, but only mid-deploy, days after
+    # the path was typed here.
+    #
+    # A warning, not a rejection, and deliberately so: the refusal message
+    # itself offers "or create the file on the node by hand", which is a real
+    # configuration. Blocking the save would take that away.
+    #
+    # Only for targets whose crt-list actually changed, so an unrelated save
+    # never pays for a network round trip, and never fatal - a node being down
+    # must not stop somebody saving a setting.
+    $warnings = @()
+    foreach ($t in @($settings.targets)) {
+        $want = [string](Get-TargetArg -Target $t -Name 'crtList')
+        if (-not $want) { continue }
+        if ($crtListWas.ContainsKey([string]$t.id) -and $crtListWas[[string]$t.id] -eq $want) { continue }
+
+        $wantDir = $want -replace '/[^/]+$', ''
+        if (-not $wantDir) { continue }
+
+        $user     = Get-TargetArg -Target $t -Name 'user'
+        $password = Get-TargetSecret -TargetId $t.id -Name 'password'
+        $insecure = [bool](Get-TargetArg -Target $t -Name 'insecureTls' -Default $false)
+
+        foreach ($n in @($t.nodes)) {
+            try {
+                $api = Get-DataPlaneApiVersion -BaseUrl $n.url -User $user -Password $password -InsecureTls:$insecure
+                $sd  = Get-HAProxyStorageDir -BaseUrl $n.url -User $user -Password $password `
+                         -ApiVersion $api -InsecureTls:$insecure
+                if (-not $sd.ok) { continue }
+                if ($sd.dir -ne $wantDir) {
+                    $warnings += ("`"$($t.label)`" keeps its crt-list at '$want', but $($n.name) can only " +
+                                  "manage files in '$($sd.dir)'. Deployment will refuse this. Point the " +
+                                  "crt-list inside '$($sd.dir)', or create the file on the node by hand.")
+                }
+                break   # the pair is configured alike; one answer is the answer
+            }
+            catch { continue }   # unreachable node: nothing to check against, not a reason to complain
+        }
+    }
+
+    return @{ ok = $true; warnings = @($warnings) }
 }
 
 function Start-ChildJob {
@@ -1514,11 +1566,22 @@ function Invoke-Route {
 
                 foreach ($n in @($t.nodes)) {
                     $r = @{ targetId = $t.id; targetLabel = $t.label; node = $n.name; url = $n.url
-                            ok = $false; frontends = @(); error = $null }
+                            ok = $false; frontends = @(); storageDir = ''; storageDirError = $null
+                            error = $null }
                     try {
                         $api = Get-DataPlaneApiVersion -BaseUrl $n.url -User $user -Password $password -InsecureTls:$insecure
                         $r.frontends = @(Get-HAProxyFrontends -BaseUrl $n.url -User $user -Password $password `
                                             -ApiVersion $api -InsecureTls:$insecure)
+
+                        # The directory this API can actually write to, so the
+                        # page can offer a crt-list path that will work instead
+                        # of leaving someone to find out mid-deploy that the one
+                        # they typed is somewhere the API cannot reach.
+                        $sd = Get-HAProxyStorageDir -BaseUrl $n.url -User $user -Password $password `
+                                -ApiVersion $api -InsecureTls:$insecure
+                        $r.storageDir      = [string]$sd.dir
+                        $r.storageDirError = $sd.error
+
                         $r.ok = $true
                     }
                     catch { $r.error = ($_.Exception.Message -split "`n")[0].Trim() }
