@@ -1634,6 +1634,162 @@ function Get-RenewalForecast {
     catch { return $null }
 }
 
+function Get-WatchedHostNames {
+    <#
+      Every hostname domains.txt asks to be watched, normalised.
+
+      Lifted out of Get-TrackerAddressStatus rather than written afresh: the
+      same three rules - skip blanks, skip comments, skip [Category] headers,
+      then take the part before the port - were already inlined there, and a
+      second copy that drifts would make "is this name watched" answer
+      differently depending on who asked.
+
+      An unreadable file is an empty list, never an exception. Callers use this
+      to decide what to SHOW, and a file somebody is midway through editing must
+      not take a page down.
+    #>
+
+    $out = @()
+    if (-not (Test-Path $script:DomainsFile)) { return $out }
+
+    try {
+        foreach ($line in ([IO.File]::ReadAllText($script:DomainsFile, [Text.Encoding]::UTF8) -split "`r?`n")) {
+            $t = ([string]$line).Trim()
+            if (-not $t -or $t.StartsWith('#') -or $t.StartsWith('[')) { continue }
+            $name = ($t -split ':')[0].Trim().TrimEnd('.').ToLowerInvariant()
+            if ($name -and $out -notcontains $name) { $out += $name }
+        }
+    }
+    catch { $null = $_ }   # mid-edit or locked: an empty list, not a failure
+
+    return $out
+}
+
+function Get-RenewalForecastState {
+    <#
+      Is the last sweep still an honest description of what would renew?
+
+      Age was the only question asked before, and it is the wrong one. A
+      forecast goes out of date the moment the set of things to renew changes,
+      which is usually minutes after somebody edits domains.txt - not 36 hours
+      later. The Home card therefore hid its refresh button and presented a
+      one-certificate list as the whole schedule while two hosts a day from
+      expiry were absent from it.
+
+      COVERAGE IS COMPARED ON NAMES, NEVER ON CERTIFICATES. Get-CertificateGroups
+      files one SAN certificate per DNS zone, so a hostname added to a zone that
+      already has an entry in the forecast changes NOTHING at certificate level -
+      the certId is already there. The name is what is new, and the name is what
+      nothing has looked at. Certificate-level comparison is blind to exactly the
+      case this will meet most often.
+
+      Deliberately NOT a hash of the inputs. Both sides would compute the same
+      function over the same files, so the next sweep re-baselines them and the
+      signal dies within one run; and any fingerprint including expiry dates
+      fires after every successful renewal, which turns the button into wallpaper.
+      Coverage asks "has this name ever been looked at", which no sweep can fake
+      and a real sweep genuinely answers.
+
+      Three reasons to refresh, in the order they are worth knowing:
+
+        uncovered  - names nothing in the forecast speaks for. The incident.
+        incomplete - the sweep died partway and still stamped a finishedAt over
+                     a truncated list, so age says fresh and the list is a lie.
+        stale      - older than 36 hours. Kept as a backstop, not deleted: a
+                     manual renewal rewrites the CA's renewal window in
+                     acme-state without touching the sweep file, and age is the
+                     only signal left for that.
+    #>
+    param(
+        $Forecast,
+        [string[]]$WatchedHosts = @(),
+        # Live renewable certificates, each with a .names list. Passed in rather
+        # than derived: Get-CertificateGroups throws on malformed checker data,
+        # and this must never be the reason a page fails to render.
+        $Certs = @()
+    )
+
+    $out = @{ state = 'missing'; uncovered = @(); complete = $true
+              finishedAt = $null; mode = $null; ageHours = $null; reason = 'no sweep has run' }
+
+    if (-not $Forecast -or -not $Forecast.PSObject.Properties['considered']) { return $out }
+
+    $out.finishedAt = [string]$Forecast.finishedAt
+    if ($Forecast.PSObject.Properties['mode']) { $out.mode = [string]$Forecast.mode }
+
+    if ($out.finishedAt) {
+        # [datetimeoffset], not [datetime]: finishedAt is written with an offset
+        # suffix and parses back as Kind=Local, and comparing that against a UTC
+        # value silently comes out wrong by the offset - four hours here.
+        try { $out.ageHours = ([datetimeoffset]::Now - [datetimeoffset]::Parse($out.finishedAt)).TotalHours }
+        catch { $null = $_ }
+    }
+
+    # Everything the forecast speaks for. An entry with no names is from a sweep
+    # written before names was recorded: it cannot answer the coverage question,
+    # so it contributes nothing rather than being assumed to cover its certId.
+    $covered = @()
+    foreach ($e in @($Forecast.considered)) {
+        if ($e.PSObject.Properties['names'] -and $e.names) { $covered += @($e.names) }
+    }
+
+    $wanted = @()
+    foreach ($n in @($WatchedHosts)) { if ($n -and $wanted -notcontains $n) { $wanted += $n } }
+    foreach ($c in @($Certs)) {
+        if (-not $c.PSObject.Properties['names']) { continue }
+        foreach ($n in @($c.names)) {
+            $k = ([string]$n).Trim().TrimEnd('.').ToLowerInvariant()
+            # A wildcard is not a host anybody watches; it exists to cover them.
+            if ($k -and -not $k.StartsWith('*.') -and $wanted -notcontains $k) { $wanted += $k }
+        }
+    }
+
+    foreach ($n in $wanted) {
+        if (-not (Test-NameCoveredBySans -Sans $covered -Name $n)) { $out.uncovered += $n }
+    }
+
+    # Recorded by renew-due.ps1 as considered-count vs the count it set out to
+    # consider. Absent on a sweep written before that existed, which is treated
+    # as complete - the old file is not evidence of a partial run.
+    if ($Forecast.PSObject.Properties['complete'] -and $null -ne $Forecast.complete) {
+        $out.complete = [bool]$Forecast.complete
+    }
+
+    # A sweep written before names was recorded has entries but nothing to match
+    # against. Reporting its hosts as uncovered would be the safe direction and
+    # the wrong words - they may well be covered; this file simply cannot say.
+    # Said honestly, because the fix is the same either way: run one sweep.
+    if (@($Forecast.considered).Count -and -not @($covered).Count) {
+        $out.state     = 'unknown'
+        $out.uncovered = @()
+        $out.reason    = 'this forecast predates the coverage check, so it cannot say what it covers'
+        return $out
+    }
+
+    if (@($out.uncovered).Count) {
+        $out.state  = 'uncovered'
+        $out.reason = "$(@($out.uncovered).Count) watched host(s) are not in this forecast yet"
+    }
+    elseif (-not $out.complete) {
+        $out.state  = 'incomplete'
+        $out.reason = 'the last sweep stopped partway through'
+    }
+    elseif ($null -ne $out.ageHours -and $out.ageHours -gt 36) {
+        $out.state  = 'stale'
+        $out.reason = 'it was worked out more than a day and a half ago'
+    }
+    elseif (-not @($Forecast.considered).Count) {
+        $out.state  = 'missing'
+        $out.reason = 'no sweep has run'
+    }
+    else {
+        $out.state  = 'current'
+        $out.reason = ''
+    }
+
+    return $out
+}
+
 function Write-SecretAuditLog {
     <#
       A persistent, append-only record of every secret a settings save removes,
@@ -5710,18 +5866,7 @@ function Get-TrackerAddressStatus {
     }
 
     # Is it already watched? Only interesting when no wildcard covers it.
-    if (Test-Path $script:DomainsFile) {
-        try {
-            foreach ($line in ([IO.File]::ReadAllText($script:DomainsFile, [Text.Encoding]::UTF8) -split "`r?`n")) {
-                $t = ([string]$line).Trim()
-                if (-not $t -or $t.StartsWith('#') -or $t.StartsWith('[')) { continue }
-                if ((($t -split ':')[0].Trim().TrimEnd('.').ToLowerInvariant()) -eq $name) {
-                    $out.certificate.watched = $true
-                    break
-                }
-            }
-        } catch { $null = $_ }   # unreadable domains file: treated as empty rather than failing the run
-    }
+    $out.certificate.watched = [bool](@(Get-WatchedHostNames) -contains $name)
 
     # --- renewal: will anything actually keep this alive, and where is it? --- #
     # Read from the last sweep rather than recomputed: renew-due.ps1 already

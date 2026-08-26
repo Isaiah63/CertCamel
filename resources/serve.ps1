@@ -673,6 +673,23 @@ function Get-StateResponse {
             certId = $(if ($script:TlsCertId) { $script:TlsCertId } else { '' })
             notAfter = $(if ($script:TlsCert) { $script:TlsCert.NotAfter.ToString('o') } else { $null })
         }
+        # Whether the last sweep still describes what would renew, so the Home
+        # card can stop presenting an out-of-date forecast as the schedule.
+        #
+        # Computed here rather than on /api/automation on purpose: this is the
+        # one response that already holds both halves of the question - the
+        # watched host list and the live certificates' names - and it already
+        # survives a grouping failure, which /api/automation does not. A throw
+        # on that route removes the whole automation panel, which would hide
+        # the recovery button behind the very input somebody needs to recover
+        # from.
+        forecastState = $(
+            try {
+                Get-RenewalForecastState -Forecast (Get-RenewalForecast) `
+                    -WatchedHosts @(Get-WatchedHostNames) -Certs @($grouping.certs | Where-Object { -not $_.external })
+            }
+            catch { $null }   # a page that renders without this beats a page that does not render
+        )
         tally         = (Get-RenewalTally)
         catalog       = $catalogOut
         targetCatalog = $targetCatalogOut

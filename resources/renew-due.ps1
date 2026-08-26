@@ -56,6 +56,11 @@ $outcome = @{
     # The page says which, so a forecast is never mistaken for work done.
     mode = $(if ($WhatIfOnly) { 'preview' } else { 'run' })
     considered = @(); renewed = @(); error = $null
+    # How many certificates this run set out to consider, and whether it
+    # reached that many. The outer catch calls Save-Outcome too, which stamps
+    # a fresh finishedAt over a TRUNCATED considered list - so age alone
+    # reports a run that died on certificate two of five as freshly current.
+    expected = $null; complete = $false
 }
 
 function Save-Outcome {
@@ -67,6 +72,14 @@ function Save-Outcome {
     # task having to be re-registered to pass an argument.
     $path = $ResultPath
     if (-not $path) { $path = Join-Path $script:JobsDir 'renew-due-sweep.json' }
+    # Derived here rather than at each exit: there are four (nothing
+    # renewable, nothing due, -WhatIfOnly, and the outer catch) and a flag
+    # set by hand would be missed by whichever one is added next. A run that
+    # died before $renewable existed leaves expected $null, which is not
+    # complete - correctly, since it never learned what it was meant to do.
+    $outcome.complete = ($null -ne $outcome.expected -and
+                         @($outcome.considered).Count -eq $outcome.expected)
+
     $outcome.finishedAt = (Get-Date).ToString('o')
         # The Home page reads this file to answer "when will it renew?". Losing it
         # is not fatal to the renewal that just happened, but it is worth saying so.
@@ -78,6 +91,42 @@ try {
     New-TrackerDirectories
     $settings = Get-TrackerSettings
 
+    # domains.txt is not an input to this sweep - the host set comes from the
+    # checker's output - so an edit there changes nothing until a check runs.
+    # That gap is what let three hostnames sit outside the forecast: the page
+    # listed one certificate as the whole schedule while two of them were a
+    # day from expiry.
+    #
+    # Re-checking here rather than firing a sweep when domains.txt is written
+    # puts the trigger where the real dependency is, and makes the scheduled
+    # run self-correcting after an edit from ANY of its three writers, with
+    # no watcher and no new failure surface.
+    #
+    # Before Get-CheckerResults, not after: that throws when ssl-data.js is
+    # absent, which is the fresh-install case this exists to get past.
+    # Two LastWriteTimeUtc values, never finishedAt - that is written with a
+    # local offset and comparing it against a UTC file time is wrong by the
+    # offset, silently.
+    $sslData = Join-Path $script:Root 'ssl-data.js'
+    if ((Test-Path $script:DomainsFile) -and (Test-Path $sslData) -and
+        ((Get-Item $script:DomainsFile).LastWriteTimeUtc -gt (Get-Item $sslData).LastWriteTimeUtc)) {
+        Write-Log 'domains.txt changed since the last check - re-checking before working out what is due...'
+        $prevEap = $ErrorActionPreference
+        try {
+            # Continue, because a native command writing to stderr is
+            # terminating under Stop and the checker reports unreachable
+            # hosts that way. Same guard the tail re-check uses.
+            $ErrorActionPreference = 'Continue'
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+                -File (Join-Path $PSScriptRoot 'check-ssl.ps1') -Source $Source 2>&1 |
+              ForEach-Object { Write-Output $_ }
+        }
+        catch {
+            Write-Log "The re-check did not run: $(($_.Exception.Message -split "`n")[0].Trim())" 'warn'
+        }
+        finally { $ErrorActionPreference = $prevEap }
+    }
+
     $checker = Get-CheckerResults
     if (-not $checker.results -or @($checker.results).Count -eq 0) {
         throw "There is no certificate data yet. Run check-ssl.ps1 first."
@@ -85,6 +134,7 @@ try {
 
     $grouping = Get-CertificateGroups -Results @($checker.results) -Settings $settings -ZoneCache (Get-ZoneCache)
     $renewable = @($grouping.certs | Where-Object { -not $_.external })
+    $outcome.expected = @($renewable).Count
 
     # AFTER the grouping, which it now needs: the countdown only goes to hosts
     # nothing here will renew, and $grouping is what says which those are.
@@ -339,7 +389,12 @@ catch {
     # terminating under $ErrorActionPreference = 'Stop', so the run died here
     # having alerted nobody. $settings may be unset if the failure came before
     # it was read, in which case there is nothing to send with.
-    if ($settings) {
+    # -WhatIfOnly promises a side-effect-free run, and every other alert call
+    # here is guarded. Unguarded, a preview that throws emails "the unattended
+    # renewal run did not complete" about a run nobody scheduled - and because
+    # repeats are held to one a day per error message, a persistent fault hit
+    # during a preview silences the real scheduled failure later that day.
+    if ($settings -and -not $WhatIfOnly) {
         Send-SweepFailureAlert -Settings $settings -ErrorMessage $outcome.error
     }
 

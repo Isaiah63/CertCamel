@@ -714,6 +714,9 @@
   function renewalsCard(res){
     var a = res.automation || {};
     var f = res.forecast;
+    /* From /api/state, not /api/automation: that is the response holding both
+       halves of the coverage question, and it survives a grouping failure. */
+    var fstate = (CC.state || {}).forecastState;
     var renew = taskOf(a, 'renew');
     var state = CC.state || {};
     var deployment = state.deployment || {};
@@ -805,8 +808,47 @@
     stamp.textContent = 'Worked out ' + (f.finishedAt ? ago(f.finishedAt) : 'at an unknown time') +
       ' by ' + how + '.' + tail;
 
-    card.appendChild(cardFoot([stamp, refreshControl(isStale(f))]));
+    card.appendChild(cardFoot([stamp, forecastNote(fstate), refreshControl(needsRefresh(fstate, f))]));
     return card;
+  }
+
+  /* Names the forecast does not speak for, said on the card rather than left to
+     be noticed. This is the whole incident: three hostnames were added, the
+     forecast was five hours old so it counted as fresh, and the card listed one
+     certificate as the schedule while two of those hosts were a day from
+     expiry. A button nobody knew to press would not have helped - the card had
+     to say it was incomplete. */
+  function forecastNote(fs){
+    if (!fs) { return null; }
+    if (fs.state === 'uncovered' && (fs.uncovered || []).length) {
+      var names = fs.uncovered.slice(0, 4).join(', ') +
+                  (fs.uncovered.length > 4 ? ' and ' + (fs.uncovered.length - 4) + ' more' : '');
+      return el('p', 'mini warnline',
+        fs.uncovered.length + ' watched host' + (fs.uncovered.length === 1 ? ' is' : 's are') +
+        ' not in this forecast yet: ' + names + '. Nothing above speaks for ' +
+        (fs.uncovered.length === 1 ? 'it' : 'them') + '.');
+    }
+    if (fs.state === 'unknown') {
+      return el('p', 'mini warnline',
+        'This forecast predates the coverage check, so it cannot say which hosts it covers. One refresh fixes that.');
+    }
+    if (fs.state === 'incomplete') {
+      return el('p', 'mini warnline',
+        'The last sweep stopped partway through, so this list is shorter than it should be.');
+    }
+    return null;
+  }
+
+  /* Age was the only question this asked, and it is the wrong one. A forecast
+     goes out of date when the set of things to renew changes, not on a clock -
+     so the server works out coverage and this reads the verdict.
+
+     Falls back to the old age test when the server did not send one, which is
+     an older serve.ps1 or a grouping that threw. Losing the button entirely
+     would be the worse failure. */
+  function needsRefresh(fs, f){
+    if (!fs || !fs.state) { return isStale(f); }
+    return fs.state !== 'current';
   }
 
   // Notes about the card, not another entry in it. Without the rule these sat
