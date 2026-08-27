@@ -1583,7 +1583,7 @@ function Invoke-Route {
 
                 foreach ($n in @($t.nodes)) {
                     $r = @{ targetId = $t.id; targetLabel = $t.label; node = $n.name; url = $n.url
-                            ok = $false; frontends = @(); storageDir = ''; storageDirError = $null
+                            ok = $false; frontends = @(); storageDir = ''; storageDirError = $null; crtLists = @()
                             error = $null }
                     try {
                         $api = Get-DataPlaneApiVersion -BaseUrl $n.url -User $user -Password $password -InsecureTls:$insecure
@@ -1598,6 +1598,15 @@ function Invoke-Route {
                                 -ApiVersion $api -InsecureTls:$insecure
                         $r.storageDir      = [string]$sd.dir
                         $r.storageDirError = $sd.error
+
+                        # The lists this API already manages, so the page can offer
+                        # the one a bind line actually reads instead of only the two
+                        # shapes Cert Camel knows how to create. On this operator's
+                        # lab the binds read crt-list-san.txt and crt-list-wild.txt -
+                        # neither shape, both API-managed, and both correct.
+                        $r.crtLists = @(@(Get-DataPlaneCrtLists -BaseUrl $n.url -User $user -Password $password `
+                                          -ApiVersion $api -InsecureTls:$insecure) |
+                                        Where-Object { $_.file } | ForEach-Object { [string]$_.file })
 
                         $r.ok = $true
                     }

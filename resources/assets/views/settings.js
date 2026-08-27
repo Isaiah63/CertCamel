@@ -843,6 +843,18 @@
         var agreedDir = (dirs.length && dirs[0] && dirs.every(function(d){ return d === dirs[0]; }))
                           ? dirs[0] : '';
 
+        /* Every list any reachable node manages. A pair keeps the same set,
+           so a union is the honest offer and a disagreement shows up as a name
+           that only one of them has. */
+        var lists = [];
+        nodes.forEach(function(n){ (n.crtLists || []).forEach(function(f){
+          if (lists.indexOf(f) < 0) { lists.push(f); } }); });
+
+        var crtField = card.querySelector('.crtpath');
+        if (crtField && crtField.parentNode) {
+          paintCrtListField(crtField.parentNode, agreedDir, lists);
+        }
+
         renderDiscovery(card, resultBox, common, partial, nodes.length, agreedDir);
         var n = common.length;
         setStatus(n ? (n + ' TLS frontend(s) found on every node.')
@@ -851,44 +863,132 @@
     });
   }
 
+  /* The crt-list path, as a fixed directory and a chosen filename.
+
+     The directory is not the operator's to pick. A crt-list is created by
+     uploading a FILENAME - the Data Plane API decides where it lands - and
+     Sync-HAProxyCrtList resolves an existing one through the API's own listing,
+     which only ever covers that same directory. So a path anywhere else can
+     neither be created nor appended to. It cannot work, and a free-text box
+     that accepts one is lying about that: the first install to hit it copied
+     the hint's example, /etc/haproxy/ssl/, into a lab that keeps everything in
+     /opt/vrrp-lab/certs, and found out mid-deploy.
+
+     Three filenames are offered, not two. "One list for everything" and "one
+     per certificate" are the shapes Cert Camel can create - but a node's bind
+     line often reads a list named neither, and those are API-managed and
+     perfectly valid. This operator's own binds read crt-list-san.txt and
+     crt-list-wild.txt. Offering only the two shapes would make the list already
+     in use unreachable from the page.
+
+     The stored value stays a full path string, exactly as before, so nothing
+     downstream knows this control exists. */
+  var CRT_SHAPES = [
+    {file: 'crt-list.txt',            label: 'One list for everything'},
+    {file: '{certId}-crt-list.txt',   label: 'One list per certificate'}
+  ];
+
+  function crtDirOf(path){
+    var i = String(path || '').lastIndexOf('/');
+    return i > 0 ? path.slice(0, i) : '';
+  }
+  function crtFileOf(path){
+    var i = String(path || '').lastIndexOf('/');
+    return i >= 0 ? path.slice(i + 1) : (path || '');
+  }
+
+  function buildCrtListField(field, value){
+    var wrap = el('div', 'crtpath');
+    wrap.appendChild(el('span', 'dir', '\u2014'));
+    var sel = document.createElement('select');
+    sel.className = 'fname';
+    wrap.appendChild(sel);
+    field.appendChild(wrap);
+    field.appendChild(el('p', 'crtnote', ''));
+
+    /* The value lives on a hidden input so collectSettings keeps reading
+       input[data-arg] and the save path never learns about any of this. */
+    var store = document.createElement('input');
+    store.type = 'hidden';
+    store.setAttribute('data-arg', 'crtList');
+    store.value = value || '';
+    field.appendChild(store);
+
+    sel.addEventListener('change', function(){
+      var dir = wrap.getAttribute('data-dir') || '';
+      store.value = sel.value ? (dir ? dir + '/' + sel.value : sel.value) : '';
+    });
+
+    paintCrtListField(field, null, null);
+  }
+
+  /* Called on first render with what was stored, and again after Discover with
+     what the nodes reported. The directory is recovered from the stored path
+     when nothing has been discovered yet, so a configured target never drops
+     back to the empty state just because the page was reloaded. */
+  function paintCrtListField(field, storageDir, lists){
+    var wrap  = field.querySelector('.crtpath');
+    var sel   = field.querySelector('select.fname');
+    var store = field.querySelector('input[data-arg="crtList"]');
+    var note  = field.querySelector('.crtnote');
+    if (!wrap || !sel || !store) { return; }
+
+    var stored = store.value || '';
+    var dir    = storageDir || crtDirOf(stored);
+    wrap.setAttribute('data-dir', dir);
+    wrap.querySelector('.dir').textContent = dir ? dir + '/' : '\u2014';
+
+    sel.textContent = '';
+    function add(v, label){
+      var o = document.createElement('option');
+      o.value = v; o.textContent = label;
+      sel.appendChild(o);
+      return o;
+    }
+
+    if (!dir) {
+      /* Nothing has said where this API writes. Disabled rather than guessing,
+         and the stored value is left untouched - a target configured on another
+         machine must not be blanked by a node being unreachable here. */
+      sel.disabled = true;
+      add(crtFileOf(stored), stored ? crtFileOf(stored) : 'Press Discover to find where this API writes');
+      note.textContent = stored
+        ? 'Press Discover to confirm this is still where the API keeps its files.'
+        : 'Optional. Press Discover and the directory is filled in for you.';
+      note.className = 'crtnote hint';
+      return;
+    }
+
+    sel.disabled = false;
+    add('', 'Not used - reference the certificate from a bind line by hand');
+    CRT_SHAPES.forEach(function(s){ add(s.file, s.label + '  (' + s.file + ')'); });
+
+    /* Only lists in the API's own directory: one somewhere else is a file this
+       cannot manage, so offering it would recreate the bug. */
+    var here = (lists || []).map(crtFileOf).filter(function(f, i, arr){
+      return f && arr.indexOf(f) === i && !CRT_SHAPES.some(function(s){ return s.file === f; });
+    });
+    here.forEach(function(f){ add(f, f + '  (already on this node)'); });
+
+    var want = crtFileOf(stored);
+    if (want && !Array.prototype.some.call(sel.options, function(o){ return o.value === want; })) {
+      add(want, want + '  (configured)');
+    }
+    sel.value = want || '';
+
+    /* Re-derive the stored value from the directory now in force. A target
+       pointed at the wrong directory is corrected by Discover rather than
+       merely warned about on save. */
+    store.value = sel.value ? dir + '/' + sel.value : '';
+
+    note.textContent = 'Directory fixed by the Data Plane API - it decides where these files live.';
+    note.className = 'crtnote hint';
+  }
+
   function renderDiscovery(card, container, common, partial, nodeCount, storageDir){
     container.textContent = '';
     var box = el('div', 'testrows');
 
-    /* The two crt-list shapes that are worth a click, built on the directory
-       the API actually writes to.
-
-       The directory is the whole problem this solves. A crt-list is created by
-       uploading a filename - the API decides where it lands - so a path in any
-       other directory is a file no bind line reads, and the only thing that
-       says so is a deployment failing days later. Offering it prefilled is
-       cheaper than explaining it.
-
-       Still only presets: the field stays free text, because a node whose list
-       is called something else entirely (crt-list-san.txt, say) is a normal
-       configuration and "Use this" below fills that in from the node itself. */
-    if (storageDir) {
-      var presets = el('div', 'testrow');
-      presets.appendChild(el('span', 'n', 'crt-list path'));
-      presets.appendChild(el('span', 'd', storageDir + ' — the only directory this API can write to'));
-
-      [{label: 'One shared list',  file: 'crt-list.txt',
-        note: 'every certificate in one list'},
-       {label: 'One per certificate', file: '{certId}-crt-list.txt',
-        note: 'a list each, for when every domain has its own frontend'}
-      ].forEach(function(p){
-        var b = el('button', 'btn sm', p.label);
-        b.type = 'button';
-        b.title = storageDir + '/' + p.file + ' — ' + p.note;
-        b.addEventListener('click', function(){
-          var listInput = card.querySelector('input[data-arg="crtList"]');
-          if (listInput) { listInput.value = storageDir + '/' + p.file; }
-          setStatus('Set to ' + storageDir + '/' + p.file + '. Press Save to keep it.', 'good');
-        });
-        presets.appendChild(b);
-      });
-      box.appendChild(presets);
-    }
 
     common.forEach(function(f){
       var row = el('div', 'testrow');
@@ -906,8 +1006,18 @@
         use.addEventListener('click', function(){
           var listInput = card.querySelector('input[data-arg="crtList"]');
           var portInput = card.querySelector('input[data-arg="verifyPort"]');
-          if (listInput) { listInput.value = f.crtList; }
           if (portInput && f.port) { portInput.value = f.port; }
+          if (listInput) {
+            /* Set the stored value, then repaint so the selector lands on it -
+               the bind's list is usually named neither shape, and it has to
+               become a selectable option rather than silently disagreeing with
+               what the dropdown shows. */
+            listInput.value = f.crtList;
+            var wrap = card.querySelector('.crtpath');
+            if (wrap && wrap.parentNode) {
+              paintCrtListField(wrap.parentNode, crtDirOf(f.crtList), [f.crtList]);
+            }
+          }
           setStatus('Filled in from ' + f.frontend + '. Press Save to keep it.', 'good');
         });
         row.appendChild(use);
@@ -990,6 +1100,9 @@
         box.checked = !!existing;
         lb.appendChild(box); lb.appendChild(el('span', null, a.Label));
         f.appendChild(lb);
+      } else if (a.Name === 'crtList') {
+        f.appendChild(el('label', null, a.Label));
+        buildCrtListField(f, existing || '');
       } else {
         f.appendChild(el('label', null, a.Label));
         var input = document.createElement('input');
