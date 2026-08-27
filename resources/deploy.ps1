@@ -80,6 +80,10 @@ function Write-Log {
 
 $outcome = @{
     ok = $false; startedAt = (Get-Date).ToString('o'); results = @(); error = $null
+    # True when at least one certificate is on its nodes and in a crt-list that
+    # no bind line reads yet. Not a failure - see the node loop - but not
+    # "verified" either, so it needs its own field rather than a shade of ok.
+    awaitingBind = $false
 }
 
 function Save-Outcome {
@@ -179,7 +183,13 @@ try {
 
     foreach ($cert in $planned) {
         $certId = $cert.certId
+        # awaitingBind is a THIRD outcome, not a shade of failure. A crt-list
+        # created this run is referenced by nothing, so the certificate
+        # cannot be served and cannot be verified - which is exactly what
+        # was asked for on a frontend that does not exist yet. See the node
+        # loop below for why that must not read as a failed deployment.
         $entry  = @{ certId = $certId; name = $cert.displayName; ok = $false
+                     awaitingBind = $false
                      preflight = $null; targets = @(); error = $null }
 
         Write-Log "-----------------------------------------------------------"
@@ -248,7 +258,8 @@ try {
                 $target = Get-TargetProfile -Settings $settings -TargetId $tid
                 if (-not $target) { Write-Log "Target '$tid' is no longer configured - skipping." 'warn'; continue }
 
-                $tResult = @{ targetId = $tid; label = $target.label; ok = $false; nodes = @() }
+                $tResult = @{ targetId = $tid; label = $target.label; ok = $false
+                              awaitingBind = $false; nodes = @() }
 
                 # Credentials stay group-level on purpose: they describe how to
                 # reach the nodes, which is the one thing a per-certificate
@@ -537,14 +548,43 @@ try {
                         if (-not $checked.Count) { continue }   # nothing could be checked; already warned
                         $hardFailed = @($checked | Where-Object { -not $_.ok -and -not ($_.contested -and $_.role -eq 'coverage') }).Count
                         $proved     = @($checked | Where-Object { $_.ok -and $_.role -eq 'identity' }).Count
+
+                        # No bind line reads this list yet, so nothing can be
+                        # serving the certificate and no probe can pass. The run
+                        # did everything asked of it: the file is on the node and
+                        # the crt-list names it. What is missing is a frontend
+                        # the operator has not built yet - which is the normal
+                        # way to stand up a new domain, because HAProxy will not
+                        # reload against a bind naming a certificate that does
+                        # not exist. Calling that a failed deployment sent a "did
+                        # NOT fully succeed" email on every first setup, one line
+                        # after this same run printed "expected".
+                        #
+                        # Only when the push itself worked. A rejected upload
+                        # leaves crtList unset, so this cannot mask one.
+                        $awaiting = [bool]($n.push -and $n.push.ok -and
+                                           $n.ContainsKey('crtList') -and $n.crtList -and
+                                           $n.crtList.ok -and $n.crtList.needsBind)
+                        $n.awaitingBind = $awaiting
+
+                        if ($awaiting) { $t.awaitingBind = $true; continue }
                         if ($hardFailed -gt 0 -or $proved -eq 0) { $t.ok = $false }
                     }
                 }
             }
 
             $entry.ok = (@($entry.targets | Where-Object { -not $_.ok }).Count -eq 0) -and @($entry.targets).Count -gt 0
-            if ($entry.ok) { Write-Log "$($cert.displayName) deployed and verified." 'ok' }
-            else           { Write-Log "$($cert.displayName) did NOT fully succeed - see above." 'error' }
+            $entry.awaitingBind = [bool](@($entry.targets | Where-Object { $_.awaitingBind }).Count)
+
+            if ($entry.ok -and $entry.awaitingBind) {
+                # Deployed, and honestly not yet verified. Said as its own
+                # sentence rather than folded into either of the other two: "and
+                # verified" would be a claim nothing checked, and "did NOT fully
+                # succeed" describes work that has not been asked for yet.
+                Write-Log "$($cert.displayName) deployed - waiting for a bind line before it can serve." 'warn'
+            }
+            elseif ($entry.ok) { Write-Log "$($cert.displayName) deployed and verified." 'ok' }
+            else               { Write-Log "$($cert.displayName) did NOT fully succeed - see above." 'error' }
         }
         catch {
             $entry.error = ($_.Exception.Message -split "`n")[0].Trim()
@@ -559,6 +599,11 @@ try {
         # already sends its own alert covering issuance and deployment together
         # when it calls this as its own deploy step, and there is no "deployment
         # succeeded on its own" toggle to fire here on the success path.
+        # awaitingBind does not reach here: it leaves $entry.ok true, on
+        # purpose. A crt-list waiting for a frontend that has not been built yet
+        # is the normal way to stand up a new domain, and mailing "deployment did
+        # not fully succeed" about it - one line after this run printed
+        # "expected" - is how people learn to ignore deployment alerts.
         if (-not $entry.ok -and -not $CalledFromRenew) {
             Send-RenewalOutcomeAlert -Settings $settings -DisplayName $cert.displayName -Ok $false `
                 -Deployed $false -ErrorMessage $(if ($entry.error) { $entry.error } else { 'Deployment did not fully succeed - see the log.' })
@@ -577,6 +622,7 @@ try {
                 $hardFailed = @($checks | Where-Object { -not $_.ok -and -not ($_.contested -and $_.role -eq 'coverage') }).Count
                 $proved     = @($checks | Where-Object { $_.ok -and $_.role -eq 'identity' }).Count
                 $state = if (-not ($n.push -and $n.push.ok)) { 'push failed' }
+                         elseif ($n.awaitingBind)            { 'awaiting bind' }
                          elseif (-not $checks.Count)         { 'pushed, not verified' }
                          elseif ($hardFailed -eq 0 -and $proved) { 'serving' }
                          else                                { 'not serving' }
@@ -634,12 +680,23 @@ try {
         catch { Write-Log "Could not record the deployment state: $($_.Exception.Message)" 'warn' }
     }
 
-    $failed = @($outcome.results | Where-Object { -not $_.ok }).Count
+    $failed   = @($outcome.results | Where-Object { -not $_.ok }).Count
+    $awaiting = @($outcome.results | Where-Object { $_.awaitingBind }).Count
     $outcome.ok = ($failed -eq 0)
+    $outcome.awaitingBind = ($awaiting -gt 0)
 
     Write-Log "-----------------------------------------------------------"
-    if ($outcome.ok) { Write-Log "All $(@($outcome.results).Count) certificate(s) deployed and verified." 'ok' }
-    else             { Write-Log "$failed of $(@($outcome.results).Count) certificate(s) did not fully succeed." 'error' }
+    if (-not $outcome.ok) {
+        Write-Log "$failed of $(@($outcome.results).Count) certificate(s) did not fully succeed." 'error'
+    }
+    elseif ($awaiting) {
+        # "and verified" would be a claim nothing checked - no bind line reads
+        # the list, so no probe could pass and none was counted as proof.
+        Write-Log "All $(@($outcome.results).Count) certificate(s) deployed. $awaiting waiting for a bind line before serving." 'warn'
+    }
+    else {
+        Write-Log "All $(@($outcome.results).Count) certificate(s) deployed and verified." 'ok'
+    }
 
     Save-Outcome
     exit $(if ($outcome.ok) { 0 } else { 1 })

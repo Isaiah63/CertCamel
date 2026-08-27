@@ -399,6 +399,19 @@ try {
                   ForEach-Object { Write-Output $_ }
                 $deployOk = ($LASTEXITCODE -eq 0)
 
+                # Exit code alone cannot tell "serving" from "on the node, with
+                # no frontend reading it yet" - both are a successful run. Read
+                # the outcome file for that, so this does not report a
+                # certificate as live when nothing is serving it.
+                $deployAwaiting = $false
+                try {
+                    if (Test-Path $deployResult) {
+                        $dr = [IO.File]::ReadAllText($deployResult) | ConvertFrom-Json
+                        $deployAwaiting = [bool](@($dr.results | Where-Object { $_.awaitingBind }).Count)
+                    }
+                }
+                catch { $null = $_ }   # unreadable: fall back to the plainer wording
+
                 $entry.deployed = $deployOk
                 if (-not $deployOk) {
                     # The certificate exists and is valid; it just is not live
@@ -407,7 +420,11 @@ try {
                     $entry.ok    = $false
                     $entry.error = 'Issued successfully, but deployment did not fully succeed.'
                     Write-Log "$display : issued, but NOT fully deployed." 'error'
-                } else {
+                }
+                elseif ($deployAwaiting) {
+                    Write-Log "$display issued and deployed - waiting for a bind line before it can serve." 'warn'
+                }
+                else {
                     Write-Log "$display issued and deployed." 'ok'
                 }
             }
