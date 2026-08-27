@@ -12,12 +12,16 @@
    first attempt at this; a constraint is the right shape, because there is no
    valid reason to type a directory the API cannot reach.
 
-   THREE FILENAMES ARE OFFERED, NOT TWO, and that is the part most likely to be
-   "simplified" away later. Cert Camel can create two shapes - one shared list,
-   or one per certificate - but a node's bind line often reads a list named
-   neither, which is API-managed and perfectly correct. This operator's own
-   binds read crt-list-san.txt and crt-list-wild.txt. Offering only the two
-   shapes would make the list already in use unreachable from the page.
+   WHAT IS CHOSEN IS A STRUCTURE, NOT A FILE. A first setup edits its bind
+   lines whichever way this goes, so the question is not "which list do I point
+   at" but "how should these files be laid out": one list every frontend reads,
+   or one per parent domain. Offering a node's existing filenames alongside
+   those two would mix a file pick into a policy choice.
+
+   A wildcard never shares a list with SAN certificates, under either
+   structure. That is enforced in Resolve-CrtListPath rather than offered as a
+   third option, and v31 covers it - here it only has to be SAID, because a
+   control that silently applies a rule is a control people work around.
 
    Each scenario gets its OWN document. The settings view builds its cards once
    and preserves them across navigation - deliberately, so switching sub-pages
@@ -136,9 +140,9 @@ function page(opts) {
 
   const api = {
     ctx: ctx,
-    sel:     () => d.querySelector('.crtpath select.fname'),
+    sel:     () => d.querySelector('select.crtmode'),
     hidden:  () => d.querySelector('input[data-arg="crtList"]'),
-    dirText: () => { const e = d.querySelector('.crtpath .dir'); return e ? e.textContent : '(no control)'; },
+    dirText: () => { const e = d.querySelector('.crtdir'); return e ? e.textContent : '(no control)'; },
     text:    () => d.body.textContent,
     values:  () => { const s = api.sel(); return s ? Array.prototype.map.call(s.options, x => x.value) : []; },
     btn: label => Array.from(d.querySelectorAll('button')).filter(b => b.textContent.trim() === label)[0] || null,
@@ -195,26 +199,38 @@ p.btn('Discover').click();
 
 check('the directory is shown', p.dirText() === DIR + '/', 'showed "' + p.dirText() + '"');
 check('the selector is usable', !p.sel().disabled, 'still disabled after a good discovery');
-check('one shared list is offered', p.values().indexOf('crt-list.txt') >= 0,
+check('one list for every frontend is offered', p.values().indexOf('crt-list.txt') >= 0,
       'options: ' + p.values().join(', '));
-check('one per certificate is offered', p.values().indexOf('{certId}-crt-list.txt') >= 0,
+check('one list per parent domain is offered', p.values().indexOf('{certId}-crt-list.txt') >= 0,
       'options: ' + p.values().join(', '));
-check('and the lists already on the node are offered',
-      p.values().indexOf('crt-list-san.txt') >= 0 && p.values().indexOf('crt-list-wild.txt') >= 0,
-      'options: ' + p.values().join(', ') +
-      ' - the bind reads crt-list-san.txt, and only offering the two shapes makes it unreachable');
 check('"not used" is still possible, since the field is optional',
       p.values().indexOf('') >= 0, 'options: ' + p.values().join(', '));
+check('and nothing else is offered', p.values().length === 3,
+      'options: ' + p.values().join(', ') +
+      ' - a filename from a node is a file pick, not a structure, and mixing them muddles the question');
+check('the node\'s own lists are NOT offered',
+      p.values().indexOf('crt-list-san.txt') < 0 && p.values().indexOf('crt-list-wild.txt') < 0,
+      'options: ' + p.values().join(', '));
 
-console.log('\nchoosing a filename writes a whole path');
+console.log('\nthe control says what each structure does');
+p.pick('crt-list.txt');
+check('the shared structure mentions the wildcard carve-out',
+      /wildcard-crt-list\.txt/.test(p.text()),
+      'a rule applied silently is a rule people work around: ' + p.text().slice(0, 200));
 p.pick('{certId}-crt-list.txt');
-check('the stored value is directory plus filename',
+check('the per-domain structure says wildcards are separate too',
+      /each wildcard its own/i.test(p.text()),
+      'said: ' + p.text().slice(0, 200));
+
+console.log('\nchoosing a structure writes a whole path');
+p.pick('{certId}-crt-list.txt');
+check('the stored value is directory plus template',
       p.hidden().value === DIR + '/{certId}-crt-list.txt', 'got "' + p.hidden().value + '"');
-p.pick('crt-list-san.txt');
-check('picking the node\'s own list works too',
-      p.hidden().value === DIR + '/crt-list-san.txt', 'got "' + p.hidden().value + '"');
+p.pick('crt-list.txt');
+check('and the shared one replaces it',
+      p.hidden().value === DIR + '/crt-list.txt', 'got "' + p.hidden().value + '"');
 p.pick('');
-check('and "not used" clears it, rather than storing a bare directory',
+check('"not used" clears it, rather than storing a bare directory',
       p.hidden().value === '', 'got "' + p.hidden().value + '"');
 
 // --------------------------------------------------------------------------- //
@@ -238,16 +254,16 @@ check('and the stored value follows', p.hidden().value === DIR + '/{certId}-crt-
       'got "' + p.hidden().value + '" - this is the exact fault that failed a deploy');
 
 // --------------------------------------------------------------------------- //
-console.log('\n"Use this" points at what a bind really reads');
+console.log('\n"Use this" no longer writes the crt-list');
 p = page({ discover: nodes(DIR, DIR, [DIR + '/crt-list-san.txt']) });
 p.btn('Discover').click();
+p.pick('{certId}-crt-list.txt');
 const use = p.btn('Use this');
-check('it is still offered', !!use, 'discovery stopped offering what the node actually has');
+check('it is still offered for the port', !!use, 'discovery stopped offering what the node has');
 if (use) { use.click(); }
-check('the selector lands on that list', p.sel().value === 'crt-list-san.txt',
-      'selector shows "' + p.sel().value + '" while stored is "' + p.hidden().value + '"');
-check('and the stored value agrees', p.hidden().value === DIR + '/crt-list-san.txt',
-      'got "' + p.hidden().value + '"');
+check('the chosen structure survives it', p.hidden().value === DIR + '/{certId}-crt-list.txt',
+      'got "' + p.hidden().value +
+      '" - copying a frontend\'s filename in would preserve the old layout instead of choosing one');
 
 // --------------------------------------------------------------------------- //
 console.log('\nthe save-time backstop is still wired');

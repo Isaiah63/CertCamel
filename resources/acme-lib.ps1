@@ -3620,7 +3620,7 @@ $script:TargetCatalog = @{
             @{ Name = 'remoteName'; Label = 'Certificate filename on HAProxy'; Secret = $false; Type = 'text'
                Hint  = 'Inside the Data Plane API ssl_certs_dir. Leave blank for "<cert>.pem". This is the certificate IDENTITY to HAProxy - it must never change between renewals, so no dates in it.' }
             @{ Name = 'crtList';  Label = 'crt-list path (optional)'; Secret = $false; Type = 'text'
-               Hint  = 'Press Discover and the directory fills itself in - it is not yours to choose. A crt-list is created by uploading a filename, so the API alone decides where it lands, and a path in any other directory is a file no bind line reads and nothing can append to. Then pick the filename: one list for everything, one per certificate, or a list the node already has - a bind reading crt-list-san.txt is a normal setup and needs no change. When set, a pushed certificate the list does not reference yet is appended and hot-loaded, so a brand-new certificate starts serving without a config edit.' }
+               Hint  = 'How these files should be laid out. The directory is not a choice - a crt-list is created by uploading a filename, so the API decides where it lands. Press Discover and it fills itself in.' }
             @{ Name = 'verifyPort'; Label = 'Port to verify on'; Secret = $false; Type = 'text'
                Hint  = 'Usually 443. Verification connects to each node here and reads what it actually serves.' }
             @{ Name = 'insecureTls'; Label = 'Skip TLS verification of the API endpoint'; Secret = $false; Type = 'bool'
@@ -4695,6 +4695,56 @@ function Test-CrtListPathsMatch {
     if (($pa -replace '/[^/]+$', '') -ne ($pb -replace '/[^/]+$', '')) { return $false }
     return ((Get-NormalisedStorageName (($pa -split '/')[-1])) -eq
             (Get-NormalisedStorageName (($pb -split '/')[-1])))
+}
+
+function Resolve-CrtListPath {
+    <#
+      Which crt-list a certificate belongs in, from the group's template.
+
+      Two structures are worth having, and the setting picks between them:
+
+        crt-list.txt              one list, every frontend reads it
+        {certId}-crt-list.txt     one list per parent domain
+
+      A WILDCARD NEVER SHARES A LIST WITH SAN CERTIFICATES, whichever is
+      chosen. That is a rule about the certificates, not about the template, so
+      it is applied here rather than left to whoever fills the box in.
+
+      Under the per-domain template it already falls out: Get-CertificateGroups
+      files the wildcard under its own certId, so example.com and
+      wildcard.example.com produce two names on their own. Under a shared
+      template every certificate resolves to the SAME file - the substitution is
+      a no-op when there is nothing to substitute - so the wildcard would land
+      among the SAN certificates with nothing to stop it. That is what this
+      corrects: the basename gains a wildcard- prefix, giving
+      wildcard-crt-list.txt beside crt-list.txt.
+
+      Worth being exact about why they are kept apart, because the obvious
+      reason is not the real one. Verification survives a shared list: it probes
+      a synthetic certcamel-probe.<apex> that only a wildcard can match, so the
+      wildcard is still proved loaded. The reason is placement - a wildcard and
+      a SAN certificate in one list means every frontend reading it can serve
+      both, which defeats the point of separating them, and the first entry in a
+      list is what unmatched SNI falls back to.
+    #>
+    param(
+        [string]$Template,
+        [string]$CertId,
+        [switch]$IsWildcard
+    )
+
+    $t = [string]$Template
+    if (-not $t) { return '' }
+
+    if ($t.Contains('{certId}')) { return $t.Replace('{certId}', $CertId) }
+    if (-not $IsWildcard)        { return $t }
+
+    # No token, so every certificate would resolve here. Prefix the FILENAME,
+    # never the path: the directory is the API's own and a sibling directory is
+    # one it cannot write to.
+    $i = $t.LastIndexOf('/')
+    if ($i -lt 0) { return "wildcard-$t" }
+    return $t.Substring(0, $i + 1) + 'wildcard-' + $t.Substring($i + 1)
 }
 
 function Get-HAProxyStorageDir {

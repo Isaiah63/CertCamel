@@ -1007,31 +1007,17 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
    Deliberately quiet: it marks where to look, it is not a control. Sized in em
    so it tracks the row's font rather than needing its own breakpoint, and given
    cursor:help so the pointer says the same thing the icon does. */
-/* The crt-list path: a directory nobody chooses, and a filename they do.
+/* The crt-list path: a fixed directory above, a chosen structure below.
 
-   The directory reads as part of the control rather than as a value, because it
-   is not editable and should not sit there looking like it is waiting for
-   input. It gets its own line on a narrow viewport so a long path stops
-   squeezing the select into a sliver - which is exactly what the first attempt
-   at this did, wedged into the discovery table's fixed first column.
-
-   Borrows the .field input metrics deliberately: this replaced a text box and
-   should not read as a different KIND of control from the ones above it. */
-.crtpath{display:flex; align-items:stretch; width:100%;
-  border:1px solid var(--border); border-radius:var(--radius-sm);
-  background:var(--bg); overflow:hidden;}
-.crtpath .dir{display:flex; align-items:center; padding:.5rem .6rem; white-space:nowrap;
-  color:var(--faint); border-right:1px solid var(--border);
-  font-size:.82rem; font-variant-numeric:tabular-nums;}
-.crtpath select.fname{flex:1 1 auto; min-width:0; font:inherit; font-size:.88rem;
-  color:var(--text); padding:.5rem .75rem; border:0; background:transparent;}
-.crtpath select.fname:disabled{color:var(--faint);}
-.field .crtnote{margin:.3rem 0 0;}
-
-@media (max-width:40rem){
-  .crtpath{flex-direction:column;}
-  .crtpath .dir{border-right:0; border-bottom:1px solid var(--border); overflow-x:auto;}
-}
+   Side by side was the first attempt and it did not fit - a real directory is
+   long enough to leave the select showing "One list per certifica", which is
+   worse than useless because the two options differ at the END of the string.
+   Stacked, each gets the full width and the directory reads as a heading over
+   the choice rather than as a value competing with it. */
+.field .crtdir{margin:0 0 .35rem; font-size:.78rem; color:var(--faint);
+  letter-spacing:.01em; overflow-x:auto; white-space:nowrap;}
+.field select.crtmode{width:100%;}
+.field .crtnote{margin:.4rem 0 0;}
 
 .svc .i{display:inline-grid; place-items:center; width:1.05em; height:1.05em;
   margin-left:.4em; border:1px solid currentColor; border-radius:50%;

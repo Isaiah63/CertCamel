@@ -134,6 +134,44 @@ Check 'it reports not-ok'  (-not $r.ok)  "claimed '$($r.dir)'"
 Check 'and carries the reason' ($r.error -match '502') "said: $($r.error)"
 
 # --------------------------------------------------------------------------- #
+Write-Host "`na wildcard never shares a list with SAN certificates"
+# Two structures the setting picks between, and one rule that holds under both.
+# Under the per-domain template it falls out of the certIds themselves; under a
+# shared one nothing would separate them, because a template with nothing to
+# substitute resolves every certificate to the same file.
+$D = '/opt/vrrp-lab/certs'
+$shared = "$D/crt-list.txt"
+$perDom = "$D/{certId}-crt-list.txt"
+
+Check 'shared: a SAN certificate lands in the one list' `
+      ((Resolve-CrtListPath -Template $shared -CertId 'example.com') -eq "$D/crt-list.txt") `
+      "got $(Resolve-CrtListPath -Template $shared -CertId 'example.com')"
+Check 'shared: the wildcard does NOT' `
+      ((Resolve-CrtListPath -Template $shared -CertId 'wildcard.example.com' -IsWildcard) -eq "$D/wildcard-crt-list.txt") `
+      "got $(Resolve-CrtListPath -Template $shared -CertId 'wildcard.example.com' -IsWildcard) - a plain string replace put it in with the rest"
+Check 'and the prefix goes on the FILENAME, not the directory' `
+      ((Resolve-CrtListPath -Template $shared -CertId 'w' -IsWildcard) -notmatch '/wildcard-opt/') `
+      'a sibling directory is one the API cannot write to'
+
+Check 'per-domain: each zone gets its own' `
+      ((Resolve-CrtListPath -Template $perDom -CertId 'example.com') -eq "$D/example.com-crt-list.txt") `
+      "got $(Resolve-CrtListPath -Template $perDom -CertId 'example.com')"
+Check 'per-domain: the wildcard already differs, and is not double-prefixed' `
+      ((Resolve-CrtListPath -Template $perDom -CertId 'wildcard.example.com' -IsWildcard) -eq "$D/wildcard.example.com-crt-list.txt") `
+      "got $(Resolve-CrtListPath -Template $perDom -CertId 'wildcard.example.com' -IsWildcard)"
+
+Check 'an unset template stays unset' `
+      ((Resolve-CrtListPath -Template '' -CertId 'example.com') -eq '') `
+      'an empty setting must not become a filename'
+Check 'a bare filename with no directory still gets the rule' `
+      ((Resolve-CrtListPath -Template 'crt-list.txt' -CertId 'w' -IsWildcard) -eq 'wildcard-crt-list.txt') `
+      'the path form must not decide whether the rule applies'
+
+Check 'deploy asks for the rule rather than replacing inline' `
+      ((Get-Content (Join-Path $srcDir 'deploy.ps1') -Raw -Encoding UTF8) -match 'Resolve-CrtListPath `') `
+      'a bare .Replace there is what let the wildcard share a list'
+
+# --------------------------------------------------------------------------- #
 Write-Host "`nthe save path warns rather than refusing"
 $saveSrc = Get-Content (Join-Path $srcDir 'serve.ps1') -Raw -Encoding UTF8
 

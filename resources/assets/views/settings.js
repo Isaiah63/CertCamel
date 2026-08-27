@@ -843,17 +843,8 @@
         var agreedDir = (dirs.length && dirs[0] && dirs.every(function(d){ return d === dirs[0]; }))
                           ? dirs[0] : '';
 
-        /* Every list any reachable node manages. A pair keeps the same set,
-           so a union is the honest offer and a disagreement shows up as a name
-           that only one of them has. */
-        var lists = [];
-        nodes.forEach(function(n){ (n.crtLists || []).forEach(function(f){
-          if (lists.indexOf(f) < 0) { lists.push(f); } }); });
-
-        var crtField = card.querySelector('.crtpath');
-        if (crtField && crtField.parentNode) {
-          paintCrtListField(crtField.parentNode, agreedDir, lists);
-        }
+        var crtSel = card.querySelector('select.crtmode');
+        if (crtSel && crtSel.parentNode) { paintCrtListField(crtSel.parentNode, agreedDir); }
 
         renderDiscovery(card, resultBox, common, partial, nodes.length, agreedDir);
         var n = common.length;
@@ -863,29 +854,29 @@
     });
   }
 
-  /* The crt-list path, as a fixed directory and a chosen filename.
+  /* The crt-list path: a directory nobody chooses, and a structure they do.
 
      The directory is not the operator's to pick. A crt-list is created by
      uploading a FILENAME - the Data Plane API decides where it lands - and
      Sync-HAProxyCrtList resolves an existing one through the API's own listing,
-     which only ever covers that same directory. So a path anywhere else can
-     neither be created nor appended to. It cannot work, and a free-text box
-     that accepts one is lying about that: the first install to hit it copied
-     the hint's example, /etc/haproxy/ssl/, into a lab that keeps everything in
-     /opt/vrrp-lab/certs, and found out mid-deploy.
+     which covers only that same directory. A path anywhere else can neither be
+     created nor appended to.
 
-     Three filenames are offered, not two. "One list for everything" and "one
-     per certificate" are the shapes Cert Camel can create - but a node's bind
-     line often reads a list named neither, and those are API-managed and
-     perfectly valid. This operator's own binds read crt-list-san.txt and
-     crt-list-wild.txt. Offering only the two shapes would make the list already
-     in use unreachable from the page.
+     What IS theirs to choose is the structure: one list every frontend reads,
+     or one per parent domain. Not which file to point at - a first setup edits
+     its bind lines either way, so the question is how the files should be laid
+     out, and the answer is a policy rather than a path.
 
-     The stored value stays a full path string, exactly as before, so nothing
-     downstream knows this control exists. */
-  var CRT_SHAPES = [
-    {file: 'crt-list.txt',            label: 'One list for everything'},
-    {file: '{certId}-crt-list.txt',   label: 'One list per certificate'}
+     Wildcards always get a list of their own; Resolve-CrtListPath enforces that
+     server-side under both structures, so it is stated here and not offered as
+     a third choice. */
+  var CRT_MODES = [
+    {file: '',                       label: 'Not used',
+     note: 'Certificates are pushed, but nothing serves them until a bind line names them.'},
+    {file: 'crt-list.txt',           label: 'One list for every frontend',
+     note: 'Every certificate in one list. Wildcards still get wildcard-crt-list.txt.'},
+    {file: '{certId}-crt-list.txt',  label: 'One list per parent domain',
+     note: 'Each domain gets its own list, and each wildcard its own beside it.'}
   ];
 
   function crtDirOf(path){
@@ -898,16 +889,14 @@
   }
 
   function buildCrtListField(field, value){
-    var wrap = el('div', 'crtpath');
-    wrap.appendChild(el('span', 'dir', '\u2014'));
+    field.appendChild(el('p', 'crtdir', '\u2014'));
     var sel = document.createElement('select');
-    sel.className = 'fname';
-    wrap.appendChild(sel);
-    field.appendChild(wrap);
-    field.appendChild(el('p', 'crtnote', ''));
+    sel.className = 'crtmode';
+    field.appendChild(sel);
+    field.appendChild(el('p', 'hint crtnote', ''));
 
     /* The value lives on a hidden input so collectSettings keeps reading
-       input[data-arg] and the save path never learns about any of this. */
+       input[data-arg] and the save path never learns this control exists. */
     var store = document.createElement('input');
     store.type = 'hidden';
     store.setAttribute('data-arg', 'crtList');
@@ -915,74 +904,72 @@
     field.appendChild(store);
 
     sel.addEventListener('change', function(){
-      var dir = wrap.getAttribute('data-dir') || '';
+      var dir = field.getAttribute('data-dir') || '';
       store.value = sel.value ? (dir ? dir + '/' + sel.value : sel.value) : '';
+      sayCrtNote(field);
     });
 
-    paintCrtListField(field, null, null);
+    paintCrtListField(field, null);
+  }
+
+  function sayCrtNote(field){
+    var sel  = field.querySelector('select.crtmode');
+    var note = field.querySelector('.crtnote');
+    if (!sel || !note) { return; }
+    if (sel.disabled) { return; }
+    var mode = CRT_MODES.filter(function(m){ return m.file === sel.value; })[0];
+    note.textContent = mode ? mode.note : 'Kept as configured. Pick a structure above to change it.';
   }
 
   /* Called on first render with what was stored, and again after Discover with
      what the nodes reported. The directory is recovered from the stored path
-     when nothing has been discovered yet, so a configured target never drops
-     back to the empty state just because the page was reloaded. */
-  function paintCrtListField(field, storageDir, lists){
-    var wrap  = field.querySelector('.crtpath');
-    var sel   = field.querySelector('select.fname');
+     when nothing has been discovered, so a configured target never drops back
+     to the empty state on reload, and an unreachable node cannot blank it. */
+  function paintCrtListField(field, storageDir){
+    var sel   = field.querySelector('select.crtmode');
     var store = field.querySelector('input[data-arg="crtList"]');
     var note  = field.querySelector('.crtnote');
-    if (!wrap || !sel || !store) { return; }
+    var dirEl = field.querySelector('.crtdir');
+    if (!sel || !store || !dirEl) { return; }
 
     var stored = store.value || '';
     var dir    = storageDir || crtDirOf(stored);
-    wrap.setAttribute('data-dir', dir);
-    wrap.querySelector('.dir').textContent = dir ? dir + '/' : '\u2014';
+    field.setAttribute('data-dir', dir);
+    dirEl.textContent = dir ? dir + '/' : '\u2014';
 
     sel.textContent = '';
     function add(v, label){
       var o = document.createElement('option');
       o.value = v; o.textContent = label;
       sel.appendChild(o);
-      return o;
     }
 
     if (!dir) {
       /* Nothing has said where this API writes. Disabled rather than guessing,
-         and the stored value is left untouched - a target configured on another
-         machine must not be blanked by a node being unreachable here. */
+         and the stored value is left alone - a target configured elsewhere must
+         not be blanked by a node being unreachable here. */
       sel.disabled = true;
-      add(crtFileOf(stored), stored ? crtFileOf(stored) : 'Press Discover to find where this API writes');
-      note.textContent = stored
-        ? 'Press Discover to confirm this is still where the API keeps its files.'
-        : 'Optional. Press Discover and the directory is filled in for you.';
-      note.className = 'crtnote hint';
+      add(crtFileOf(stored), stored ? crtFileOf(stored) : 'Press Discover first');
+      note.textContent = 'Press Discover - the Data Plane API decides which directory these live in.';
       return;
     }
 
     sel.disabled = false;
-    add('', 'Not used - reference the certificate from a bind line by hand');
-    CRT_SHAPES.forEach(function(s){ add(s.file, s.label + '  (' + s.file + ')'); });
+    CRT_MODES.forEach(function(m){ add(m.file, m.label); });
 
-    /* Only lists in the API's own directory: one somewhere else is a file this
-       cannot manage, so offering it would recreate the bug. */
-    var here = (lists || []).map(crtFileOf).filter(function(f, i, arr){
-      return f && arr.indexOf(f) === i && !CRT_SHAPES.some(function(s){ return s.file === f; });
-    });
-    here.forEach(function(f){ add(f, f + '  (already on this node)'); });
-
+    /* A value this build would not offer is kept rather than dropped: opening a
+       page must not change what is configured. It is labelled so it does not
+       read as a third supported structure. */
     var want = crtFileOf(stored);
-    if (want && !Array.prototype.some.call(sel.options, function(o){ return o.value === want; })) {
-      add(want, want + '  (configured)');
+    if (want && !CRT_MODES.some(function(m){ return m.file === want; })) {
+      add(want, want + '  (currently set)');
     }
     sel.value = want || '';
 
-    /* Re-derive the stored value from the directory now in force. A target
-       pointed at the wrong directory is corrected by Discover rather than
-       merely warned about on save. */
+    /* Re-derived from the directory now in force, so Discover CORRECTS a target
+       pointed somewhere the API cannot write rather than only flagging it. */
     store.value = sel.value ? dir + '/' + sel.value : '';
-
-    note.textContent = 'Directory fixed by the Data Plane API - it decides where these files live.';
-    note.className = 'crtnote hint';
+    sayCrtNote(field);
   }
 
   function renderDiscovery(card, container, common, partial, nodeCount, storageDir){
@@ -1004,21 +991,13 @@
         var use = el('button', 'btn sm', 'Use this');
         use.type = 'button';
         use.addEventListener('click', function(){
-          var listInput = card.querySelector('input[data-arg="crtList"]');
+          /* The port only. The crt-list field holds a STRUCTURE now, and a
+             frontend's existing filename is not one - a first setup edits its
+             bind lines either way, so copying the old name in would just
+             preserve whatever was there instead of choosing a layout. */
           var portInput = card.querySelector('input[data-arg="verifyPort"]');
           if (portInput && f.port) { portInput.value = f.port; }
-          if (listInput) {
-            /* Set the stored value, then repaint so the selector lands on it -
-               the bind's list is usually named neither shape, and it has to
-               become a selectable option rather than silently disagreeing with
-               what the dropdown shows. */
-            listInput.value = f.crtList;
-            var wrap = card.querySelector('.crtpath');
-            if (wrap && wrap.parentNode) {
-              paintCrtListField(wrap.parentNode, crtDirOf(f.crtList), [f.crtList]);
-            }
-          }
-          setStatus('Filled in from ' + f.frontend + '. Press Save to keep it.', 'good');
+          setStatus('Verify port taken from ' + f.frontend + '. Press Save to keep it.', 'good');
         });
         row.appendChild(use);
       }
@@ -1113,7 +1092,10 @@
         else { input.value = existing || ''; }
         f.appendChild(input);
       }
-      if (a.Hint) { f.appendChild(el('p', 'hint', a.Hint)); }
+      /* crtList explains itself as the selection changes, so the catalog hint
+         would stack a second, longer paragraph under a control that has
+         already said what it does. */
+      if (a.Hint && a.Name !== 'crtList') { f.appendChild(el('p', 'hint', a.Hint)); }
       argHost.appendChild(f);
     });
 
