@@ -1703,9 +1703,11 @@ function Get-RenewalForecastState {
     param(
         $Forecast,
         [string[]]$WatchedHosts = @(),
-        # Live renewable certificates, each with a .names list. Passed in rather
-        # than derived: Get-CertificateGroups throws on malformed checker data,
-        # and this must never be the reason a page fails to render.
+        # Live certificates, each with a .names list and an .external flag.
+        # ALL of them, including the ones managed elsewhere: those are what say
+        # which watched names are somebody else's to renew. Passed in rather
+        # than derived, because Get-CertificateGroups throws on malformed
+        # checker data and this must never be why a page fails to render.
         $Certs = @()
     )
 
@@ -1733,14 +1735,45 @@ function Get-RenewalForecastState {
         if ($e.PSObject.Properties['names'] -and $e.names) { $covered += @($e.names) }
     }
 
-    $wanted = @()
-    foreach ($n in @($WatchedHosts)) { if ($n -and $wanted -notcontains $n) { $wanted += $n } }
+    # Names belonging to a certificate marked "managed elsewhere". The sweep
+    # never considers those - renew-due.ps1 filters them out - so nothing can
+    # ever cover them, and counting them would pin a warning no amount of
+    # sweeping could clear. Watching a certificate somebody else renews is the
+    # whole point of that setting; it is not a gap.
+    $foreign = @()
     foreach ($c in @($Certs)) {
-        if (-not $c.PSObject.Properties['names']) { continue }
+        if (-not ($c.PSObject.Properties['external'] -and $c.external)) { continue }
         foreach ($n in @($c.names)) {
             $k = ([string]$n).Trim().TrimEnd('.').ToLowerInvariant()
-            # A wildcard is not a host anybody watches; it exists to cover them.
-            if ($k -and -not $k.StartsWith('*.') -and $wanted -notcontains $k) { $wanted += $k }
+            if ($k -and $foreign -notcontains $k) { $foreign += $k }
+        }
+    }
+
+    function Test-Wanted {
+        param([string]$Name, [string[]]$Have, [string[]]$Skip)
+        $k = ([string]$Name).Trim().TrimEnd('.').ToLowerInvariant()
+        if (-not $k) { return $null }
+        # A wildcard is not a host anybody waits on - it is what does the
+        # covering. Applied to BOTH sources: domains.txt may carry a *.zone
+        # line, and one there would otherwise be reported uncovered forever
+        # because no entry's name list contains the literal string "*.zone".
+        if ($k.StartsWith('*.'))     { return $null }
+        if ($Skip -contains $k)      { return $null }
+        if ($Have -contains $k)      { return $null }
+        return $k
+    }
+
+    $wanted = @()
+    foreach ($n in @($WatchedHosts)) {
+        $k = Test-Wanted -Name $n -Have $wanted -Skip $foreign
+        if ($k) { $wanted += $k }
+    }
+    foreach ($c in @($Certs)) {
+        if (-not $c.PSObject.Properties['names']) { continue }
+        if ($c.PSObject.Properties['external'] -and $c.external) { continue }
+        foreach ($n in @($c.names)) {
+            $k = Test-Wanted -Name $n -Have $wanted -Skip $foreign
+            if ($k) { $wanted += $k }
         }
     }
 
@@ -4092,8 +4125,15 @@ function Get-CrtListReconciliation {
             }
             if (-not $binding) { continue }   # this certificate is not sent here
 
-            $path = [string](Resolve-TargetSetting -Target $target -Binding $binding -Name 'crtList' -Default '')
-            $path = $path.Replace('{certId}', $certId)
+            # Through Resolve-CrtListPath, exactly as deploy.ps1 does. A bare
+            # Replace here made the reader and the writer disagree about one
+            # case: under a shared template the writer puts a wildcard in
+            # wildcard-crt-list.txt while this looked for it in crt-list.txt,
+            # so a correctly deployed wildcard was reported as never going to
+            # be served - and the fix offered named the wrong file.
+            $path = Resolve-CrtListPath `
+                        -Template ([string](Resolve-TargetSetting -Target $target -Binding $binding -Name 'crtList' -Default '')) `
+                        -CertId $certId -IsWildcard:([bool]$g.wildcard)
 
             $cert = @{
                 certId = $certId; name = [string]$g.displayName

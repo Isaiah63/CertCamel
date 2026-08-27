@@ -167,6 +167,18 @@ Check 'a bare filename with no directory still gets the rule' `
       ((Resolve-CrtListPath -Template 'crt-list.txt' -CertId 'w' -IsWildcard) -eq 'wildcard-crt-list.txt') `
       'the path form must not decide whether the rule applies'
 
+# Read here rather than at the top: these two checks are about acme-lib's own
+# source, and the first of them is a -notmatch. An undefined variable would
+# satisfy that vacuously and report ok while proving nothing - which is
+# exactly what it did until its sibling failed and gave it away.
+$libSrc = Get-Content (Join-Path $srcDir 'acme-lib.ps1') -Raw -Encoding UTF8
+
+Check 'the load balancer page reads paths the same way it writes them' `
+      ($libSrc -notmatch "\`$path = \`$path\.Replace\('\{certId\}', \`$certId\)") `
+      'Get-CrtListReconciliation kept its own bare Replace, so under a shared template it hunted a wildcard in crt-list.txt while deploy had put it in wildcard-crt-list.txt - and reported a working deployment as never going to be served'
+Check 'and it passes the wildcard flag through' `
+      ($libSrc -match '-CertId \$certId -IsWildcard:\(\[bool\]\$g\.wildcard\)') `
+      'without it every certificate resolves as a SAN one and the rule is inert on that page'
 Check 'deploy asks for the rule rather than replacing inline' `
       ((Get-Content (Join-Path $srcDir 'deploy.ps1') -Raw -Encoding UTF8) -match 'Resolve-CrtListPath `') `
       'a bare .Replace there is what let the wildcard share a list'

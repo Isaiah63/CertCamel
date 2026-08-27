@@ -118,6 +118,32 @@ Check 'a wildcard name is never reported uncovered' (@($s.uncovered) -notcontain
       "named: $(@($s.uncovered) -join ', ')"
 
 # --------------------------------------------------------------------------- #
+Write-Host "`nwhat is NOT a gap, and would otherwise never clear"
+# Both of these pin an amber warning nothing can lift, which is the exact
+# failure this check was built to stop: an alarm that cannot be cleared is one
+# people learn to scroll past.
+$fcx = Sweep @(Entry -CertId 'example.com' -Names @('example.com', 'a.example.com'))
+
+# domains.txt can carry a *.zone line. Nothing in a forecast ever contains that
+# literal string, so a wildcard would read as uncovered on every load.
+$s = State $fcx @('example.com', 'a.example.com', '*.example.com')
+Check 'a wildcard line in domains.txt is not a gap' ($s.state -eq 'current') `
+      "said '$($s.state)': $(@($s.uncovered) -join ', ') - a wildcard is what does the covering"
+
+# "Managed elsewhere" means somebody else renews it. renew-due.ps1 filters those
+# out, so no sweep can ever cover them - by design, not by omission.
+$foreign = @([pscustomobject]@{ certId = 'theirs'; external = $true
+                                names = @('theirs.example.com') })
+$s = State $fcx @('example.com', 'a.example.com', 'theirs.example.com') $foreign
+Check 'a host managed elsewhere is not a gap' ($s.state -eq 'current') `
+      "said '$($s.state)': $(@($s.uncovered) -join ', ') - watching what somebody else renews is the point of that setting"
+
+# And the guard: neither exclusion may swallow a real one.
+$s = State $fcx @('example.com', 'a.example.com', 'brandnew.example.com') $foreign
+Check 'but a genuinely new host still is' (@($s.uncovered) -contains 'brandnew.example.com') `
+      "said '$($s.state)': $(@($s.uncovered) -join ', ')"
+
+# --------------------------------------------------------------------------- #
 Write-Host "`nthe two things coverage cannot see, which is why age stays"
 $s = State (Sweep -Considered @(Entry -CertId 'example.com' -Names @('example.com')) -AgeHours 0.03 -Complete $false) `
            @('example.com')

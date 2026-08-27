@@ -686,7 +686,7 @@ function Get-StateResponse {
         forecastState = $(
             try {
                 Get-RenewalForecastState -Forecast (Get-RenewalForecast) `
-                    -WatchedHosts @(Get-WatchedHostNames) -Certs @($grouping.certs | Where-Object { -not $_.external })
+                    -WatchedHosts @(Get-WatchedHostNames) -Certs @($grouping.certs)
             }
             catch { $null }   # a page that renders without this beats a page that does not render
         )
