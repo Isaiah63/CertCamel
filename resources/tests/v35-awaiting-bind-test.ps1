@@ -56,7 +56,11 @@ function Test-Awaiting {
                   $Node.ContainsKey('crtList') -and $Node.crtList -and
                   $Node.crtList.ok -and $Node.crtList.needsBind)
 }
-function Node {
+# NOT named Node. PSScriptAnalyzer's PSAvoidOverwritingBuiltInCmdlets compares
+# against a per-edition list of built-ins, and the CI runner's list is not this
+# machine's - so a name that looks free locally is flagged there. Same family as
+# Dir, which is an alias for Get-ChildItem and silently won every call in v31.
+function NewNodeResult {
     param([bool]$PushOk = $true, $CrtList = $null)
     $n = @{ name = 'n1'; push = @{ ok = $PushOk }; verify = @() }
     if ($null -ne $CrtList) { $n.crtList = $CrtList }
@@ -64,28 +68,28 @@ function Node {
 }
 
 Write-Host "`nthe bootstrap: pushed, listed, nothing reading it yet"
-$boot = Node -CrtList @{ ok = $true; needsBind = $true; path = '/certs/example.com-crt-list.txt' }
+$boot = NewNodeResult -CrtList @{ ok = $true; needsBind = $true; path = '/certs/example.com-crt-list.txt' }
 Check 'it is recognised as waiting for a bind' (Test-Awaiting $boot) `
       'the run reports a failed deployment on the documented way to add a domain'
 
 Write-Host "`nand once the operator adds the bind line"
-$bound = Node -CrtList @{ ok = $true; needsBind = $false; runtimeLoaded = $true }
+$bound = NewNodeResult -CrtList @{ ok = $true; needsBind = $false; runtimeLoaded = $true }
 Check 'it is an ordinary deployment again' (-not (Test-Awaiting $bound)) `
       'the state would stick, and a genuinely unserved certificate would be forgiven forever'
 
 # --------------------------------------------------------------------------- #
 Write-Host "`nwhat it must NOT forgive"
 Check 'a rejected upload is still a failure' `
-      (-not (Test-Awaiting (Node -PushOk $false -CrtList @{ ok = $true; needsBind = $true }))) `
+      (-not (Test-Awaiting (NewNodeResult -PushOk $false -CrtList @{ ok = $true; needsBind = $true }))) `
       'T1 failed, so nothing was pushed - forgiving this hides a node that took nothing'
 Check 'a crt-list that could not be written is still a failure' `
-      (-not (Test-Awaiting (Node -CrtList @{ ok = $false; needsBind = $true; error = 'HTTP 500' }))) `
+      (-not (Test-Awaiting (NewNodeResult -CrtList @{ ok = $false; needsBind = $true; error = 'HTTP 500' }))) `
       'the sync itself failed, which is not the same as it having nothing to read it'
 Check 'no crt-list configured at all is not this state' `
-      (-not (Test-Awaiting (Node))) `
+      (-not (Test-Awaiting (NewNodeResult))) `
       'without a crt-list a human must edit a bind line for every certificate - a different problem, already warned about'
 Check 'a served node is not waiting for anything' `
-      (-not (Test-Awaiting (Node -CrtList @{ ok = $true; needsBind = $false }))) `
+      (-not (Test-Awaiting (NewNodeResult -CrtList @{ ok = $true; needsBind = $false }))) `
       'this would forgive a wrong serial or an uncovered name on every node'
 
 # --------------------------------------------------------------------------- #
