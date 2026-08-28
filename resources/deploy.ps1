@@ -285,9 +285,17 @@ try {
                 # the certificates rather than about the template, and a plain
                 # .Replace here silently put the wildcard in with the rest
                 # whenever the template had nothing to substitute.
+                # Whether this came from the certificate or from the group, asked
+                # BEFORE resolving: the resolved string cannot say which it was,
+                # and the wildcard rule must not rewrite a filename somebody
+                # pinned by hand.
+                $crtListPinned = [bool]($binding -and $binding.overrides -and
+                                        $binding.overrides.ContainsKey('crtList') -and
+                                        "$($binding.overrides['crtList'])" -ne '')
+
                 $crtListPath = Resolve-CrtListPath `
                     -Template ([string](Resolve-TargetSetting -Target $target -Binding $binding -Name 'crtList' -Default '')) `
-                    -CertId $certId -IsWildcard:([bool]$cert.wildcard)
+                    -CertId $certId -IsWildcard:([bool]$cert.wildcard) -FromOverride:$crtListPinned
 
                 if (@($binding.overrides.Keys).Count) {
                     Write-Log "  (this certificate overrides $(@($binding.overrides.Keys) -join ', ') for this group)"
@@ -305,6 +313,9 @@ try {
                     $nResult = @{
                         name = $nodeName; url = $node.url; push = $null; verify = @()
                         verifyHost = $vt.host; verifyPort = $vt.port
+                        # Declared, not only assigned when true - the pages read
+                        # this record and absent must not be ambiguous with old.
+                        awaitingBind = $false
                     }
 
                     # --- T1: transport ------------------------------------ #
@@ -660,12 +671,20 @@ try {
                 $pv = @($checks | Where-Object { $_.ok -and $_.role -eq 'identity' }).Count
                 $nodeStates += @{
                     name = [string]$n.name
+                    # ok keeps its meaning: PROVED to be serving it. Nothing that
+                    # follows may loosen that - other readers depend on it, and a
+                    # node waiting for a bind line is genuinely not serving.
                     ok   = [bool](($n.push -and $n.push.ok) -and $checks.Count -and $hf -eq 0 -and $pv)
+                    # Carried separately, which is the whole point: the page needs
+                    # to tell "not serving because nothing reads the list yet"
+                    # apart from "not serving because something is wrong".
+                    awaitingBind = [bool]$n.awaitingBind
                 }
             }
             $byTarget[[string]$t.targetId] = @{
                 targetId = [string]$t.targetId; label = [string]$t.label
-                ok = [bool]$t.ok; at = $stamp; nodes = $nodeStates
+                ok = [bool]$t.ok; awaitingBind = [bool]$t.awaitingBind
+                at = $stamp; nodes = $nodeStates
             }
         }
 

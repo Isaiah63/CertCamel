@@ -2051,7 +2051,18 @@ function Format-DeploymentSummary {
                 $checks = @($n.verify)
                 $served = ($checks.Count -gt 0) -and (@($checks | Where-Object { $_.ok }).Count -gt 0)
 
+                # awaitingBind ahead of $served, because an awaiting-bind node DOES
+                # have a failed verify record - deploy.ps1 appends one before it
+                # skips the hard-fail test - so $served is false and the old
+                # ladder ended on FAILED. That put "node1 : FAILED" underneath
+                # "issued and deployed successfully" in the same email.
+                #
+                # Property-tested rather than read directly: deploy records
+                # written before this state existed carry no such field.
+                $awaiting = [bool]($n.PSObject.Properties['awaitingBind'] -and $n.awaitingBind)
+
                 $state = if (-not $pushed)      { 'FAILED - the node did not accept it' }
+                         elseif ($awaiting)     { 'deployed, waiting for a bind line' }
                          elseif ($checks.Count -eq 0) { 'pushed, not verified' }
                          elseif ($served)       { 'serving it' }
                          else                   { 'FAILED - pushed, but not serving it' }
@@ -4750,6 +4761,11 @@ function Resolve-CrtListPath {
       chosen. That is a rule about the certificates, not about the template, so
       it is applied here rather than left to whoever fills the box in.
 
+      With ONE exception, which is the whole reason -FromOverride exists: a
+      per-certificate override is not a template. It is one file named for one
+      certificate by somebody who already knows which certificate it is, so
+      there is nothing left to infer and nothing to correct.
+
       Under the per-domain template it already falls out: Get-CertificateGroups
       files the wildcard under its own certId, so example.com and
       wildcard.example.com produce two names on their own. Under a shared
@@ -4770,13 +4786,25 @@ function Resolve-CrtListPath {
     param(
         [string]$Template,
         [string]$CertId,
-        [switch]$IsWildcard
+        [switch]$IsWildcard,
+        # Set when the template came from a per-certificate override rather than
+        # from the group. An override is somebody naming one file for one
+        # certificate, which already answers the question the wildcard rule
+        # exists to ask - so the rule steps aside rather than renaming their
+        # choice to something no bind line reads. Without this, a wildcard
+        # pinned to /certs/crt-list-wild.txt was deployed to
+        # /certs/wildcard-crt-list-wild.txt, and silently: the directory guard
+        # in Sync-HAProxyCrtList compares directories, the prefix only changes
+        # the filename, so the wrong file was created and then reported as
+        # awaiting a bind line.
+        [switch]$FromOverride
     )
 
     $t = [string]$Template
     if (-not $t) { return '' }
 
     if ($t.Contains('{certId}')) { return $t.Replace('{certId}', $CertId) }
+    if ($FromOverride)           { return $t }
     if (-not $IsWildcard)        { return $t }
 
     # No token, so every certificate would resolve here. Prefix the FILENAME,
@@ -5996,6 +6024,18 @@ function Get-TrackerAddressStatus {
 
         if (-not $forecast) {
             $out.renewal.detail = 'No renewal sweep has run yet, so this cannot be confirmed. Run one from the Certificates page.'
+        }
+        elseif (-not $entry -and (Get-RenewalForecastState -Forecast $forecast -WatchedHosts @(Get-WatchedHostNames)).state -ne 'current') {
+            # Absent from the forecast, but the forecast itself has not caught
+            # up - so absence proves nothing. The console's own certificate hits
+            # this the moment its address is configured: that splits it onto a
+            # certificate with a brand-new id, which no earlier sweep contains.
+            #
+            # Said as "not caught up" rather than "nothing will renew it",
+            # because the hard wording below is the one alarm on this page
+            # nobody should ever learn to ignore, and it clears itself on the
+            # next sweep. Spending it on a race would teach exactly that habit.
+            $out.renewal.detail = "The last renewal sweep predates this certificate, so it cannot say yet. Press 'Work it out now' on the Home page, or wait for tonight's run."
         }
         elseif (-not $entry) {
             # The failure this row exists to catch. renew-due.ps1 only considers

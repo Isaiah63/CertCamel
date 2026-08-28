@@ -644,13 +644,20 @@
       dep.last.targets.forEach(function(t){
         byTarget[t.targetId] = {
           targetId: t.targetId, label: t.label, ok: t.ok, at: dep.last.at,
+          awaitingBind: !!t.awaitingBind,
           nodes: (t.nodes || []).map(function(n){
             var checks = n.verify || [];
             var hardFailed = checks.filter(function(v){
               return !v.ok && !(v.contested && v.role === 'coverage');
             }).length;
             var proved = checks.filter(function(v){ return v.ok && v.role === 'identity'; }).length;
+            /* awaitingBind carried through, not recomputed. This branch rebuilds
+               the per-target record from the full run when the compact one is
+               absent, and it has to produce the same shape - otherwise the same
+               deployment reads blue through one path and red through the other,
+               depending only on which file the page happened to find. */
             return { name: n.name,
+                     awaitingBind: !!n.awaitingBind,
                      ok: !!(n.push && n.push.ok) && !!checks.length && hardFailed === 0 && !!proved };
           })
         };
@@ -701,14 +708,35 @@
         return;
       }
 
-      var bad = (rec.nodes || []).filter(function(n){ return !n.ok; });
-      var cls = rec.ok && !bad.length ? 'good' : 'bad';
+      /* Three states, because a node can be not-serving for two very
+         different reasons. A crt-list nobody reads yet is the normal way to
+         stand up a new frontend - HAProxy will not reload against a bind line
+         naming a certificate that does not exist, so the certificate has to go
+         first. Painting that red is the same false alarm that was taken out of
+         the deployment email, still sitting on the page.
+
+         Its own class, never .pip.warn: that one already means "deployed here
+         but not assigned anywhere", which is a different and more urgent thing
+         to be told. */
+      var waiting = (rec.nodes || []).filter(function(n){ return !n.ok && n.awaitingBind; });
+      var bad = (rec.nodes || []).filter(function(n){ return !n.ok && !n.awaitingBind; });
+
+      var cls = 'bad';
+      if (rec.ok && !bad.length && !waiting.length) { cls = 'good'; }
+      else if (!bad.length && waiting.length)       { cls = 'pending'; }
       var pip = el('span', 'pip ' + cls, label);
 
       var why = [label + ': last deployed ' + new Date(rec.at).toLocaleString()];
       (rec.nodes || []).forEach(function(n){
-        why.push('  ' + n.name + ': ' + (n.ok ? 'serving it' : 'NOT serving it'));
+        why.push('  ' + n.name + ': ' +
+          (n.ok ? 'serving it'
+                : n.awaitingBind ? 'deployed, waiting for a bind line'
+                                 : 'NOT serving it'));
       });
+      if (waiting.length && !bad.length) {
+        why.push('');
+        why.push('Add the bind line the deployment log printed, then reload HAProxy.');
+      }
       if (!rec.nodes || !rec.nodes.length) { why.push('  no node detail recorded'); }
       pip.title = why.join('\n');
       wrap.appendChild(pip);

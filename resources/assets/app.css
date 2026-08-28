@@ -654,6 +654,12 @@ td.deploy{padding-top:.55rem; padding-bottom:.55rem;}
   border-radius:999px; border:1px solid transparent; cursor:help;}
 .pip.good{color:var(--green); background:var(--green-bg); border-color:var(--green);}
 .pip.warn{color:var(--amber); background:var(--amber-bg); border-color:var(--amber);}
+/* Deployed, and waiting for a bind line before it can serve. Its own colour
+   rather than .pip.warn, which already means "deployed here but not assigned
+   anywhere" - two amber pips meaning different things on one page is worse
+   than the red this replaces. Blue reads as in-progress rather than wrong,
+   which is exactly what this state is. */
+.pip.pending{color:var(--blue); background:var(--blue-bg); border-color:var(--blue);}
 .pip.bad{color:var(--red);   background:var(--red-bg);   border-color:var(--red);}
 
 /* Job log */

@@ -210,7 +210,12 @@ try {
             Write-Log ("Not included: {0}. These are on the live certificate but are either wildcards or in a zone no configured provider manages." -f (@($cert.deferredNames) -join ', ')) 'warn'
         }
 
-        $entry = @{ certId = $certId; name = $display; kind = $cert.kind; names = $names; ok = $false; error = $null; pem = $null; files = @() }
+        # awaitingBind declared here rather than assigned only when true: the
+        # renewal mail and the audit trail both read this record, and a field
+        # that appears only on some runs leaves every reader guessing whether
+        # absent means false or means written by an older version.
+        $entry = @{ certId = $certId; name = $display; kind = $cert.kind; names = $names
+                    ok = $false; error = $null; pem = $null; files = @(); awaitingBind = $false }
 
         $entry.ca = $cert.caLabel
 
@@ -413,6 +418,10 @@ try {
                 catch { $null = $_ }   # unreadable: fall back to the plainer wording
 
                 $entry.deployed = $deployOk
+                # Kept on the entry, not just used for the log line above. The
+                # renewal email and the audit trail both read this record, and
+                # both were saying "deployed" about a certificate nothing serves.
+                $entry.awaitingBind = $deployAwaiting
                 if (-not $deployOk) {
                     # The certificate exists and is valid; it just is not live
                     # anywhere yet. Say exactly that rather than implying the
@@ -456,7 +465,7 @@ try {
         # always "what happened to this certificate", never "what did run 7 do".
         Write-AuditEvent -Event 'renew' -Object $display -Outcome $(if ($entry.ok) { 'ok' } else { 'fail' }) `
             -Detail $(if ($entry.ok) {
-                "issued serial $($entry.serial), expires $(if ($entry.notAfter) { ([datetime]$entry.notAfter).ToString('yyyy-MM-dd') } else { 'unknown' })$(if ($null -eq $entry.deployed) { ', not deployed' } elseif ($entry.deployed) { ', deployed' } else { ', deployment incomplete' })"
+                "issued serial $($entry.serial), expires $(if ($entry.notAfter) { ([datetime]$entry.notAfter).ToString('yyyy-MM-dd') } else { 'unknown' })$(if ($null -eq $entry.deployed) { ', not deployed' } elseif ($entry.deployed -and $entry.awaitingBind) { ', deployed - awaiting a bind line' } elseif ($entry.deployed) { ', deployed' } else { ', deployment incomplete' })"
             } else { $entry.error })
 
         $outcome.results += $entry
