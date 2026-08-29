@@ -381,10 +381,21 @@ try {
                                 # the file already there. All three need the same
                                 # bind line, and none of them is serving yet.
                                 if ($sync.needsBind) {
-                                    Write-Log "  $nodeName : NOT served yet - no bind line references this list. Add it to the frontend, then reload:" 'warn'
+                                    # The bind line is Cert Camel's to state: it knows the
+                                    # crt-list path, including the name the API filed it
+                                    # under after rewriting dots.
+                                    #
+                                    # How to validate and reload is NOT. This used to print
+                                    # "haproxy -c -f /etc/haproxy/haproxy.cfg" and
+                                    # "systemctl reload haproxy", which assume a config path
+                                    # and an init system nothing here has looked at - wrong
+                                    # for a container, wrong for a non-systemd host, wrong
+                                    # for anyone whose config lives elsewhere. Printing a
+                                    # command that does not fit is worse than printing none:
+                                    # it invites a paste that fails, on a load balancer.
+                                    Write-Log "  $nodeName : NOT served yet - no bind line references this list." 'warn'
+                                    Write-Log "      Add this to the frontend, then reload HAProxy however this host does that:"
                                     Write-Log "      $($sync.bindLine)"
-                                    Write-Log "      haproxy -c -f /etc/haproxy/haproxy.cfg     # check it parses"
-                                    Write-Log "      systemctl reload haproxy                   # graceful, no dropped connections"
                                 }
                             }
                             else { Write-Log "  $nodeName : crt-list FAILED - $($sync.error)" 'error' }
@@ -573,9 +584,22 @@ try {
                         #
                         # Only when the push itself worked. A rejected upload
                         # leaves crtList unset, so this cannot mask one.
+                        # AND nothing proved it is already serving. A node can
+                        # have an unread crt-list and still serve the certificate
+                        # perfectly well - through a DIFFERENT list a bind line
+                        # does read, which is what happens the moment a group's
+                        # crt-list setting is pointed somewhere new while the
+                        # frontend still reads the old file.
+                        #
+                        # Without this the state under-claims: a live deployment,
+                        # proved by a serial match against the running process,
+                        # was reported as waiting for a bind line it did not need.
+                        # "Awaiting bind" means nothing could verify it, not that
+                        # some list is unread.
                         $awaiting = [bool]($n.push -and $n.push.ok -and
                                            $n.ContainsKey('crtList') -and $n.crtList -and
-                                           $n.crtList.ok -and $n.crtList.needsBind)
+                                           $n.crtList.ok -and $n.crtList.needsBind -and
+                                           $proved -eq 0)
                         $n.awaitingBind = $awaiting
 
                         if ($awaiting) { $t.awaitingBind = $true; continue }

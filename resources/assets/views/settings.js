@@ -1037,7 +1037,7 @@
     headBtns.appendChild(test);
     var disco = el('button', 'btn sm', 'Discover');
     disco.type = 'button';
-    disco.title = 'Ask the nodes which frontends terminate TLS, and fill in the crt-list and port from what they report';
+    disco.title = 'Ask the nodes which frontends terminate TLS, fill in the directory this API can write to, and take the verify port from what they report.';
     headBtns.appendChild(disco);
     var rm = el('button', 'btn sm', 'Remove');
     rm.type = 'button';

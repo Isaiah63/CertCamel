@@ -541,9 +541,11 @@ per year. The certificates also have to sit inside the directory the Data Plane 
 lines. <strong>One reload to migrate, zero reloads thereafter.</strong></p>
 <p>Using <code>crt-list</code> rather than <code>crt</code> additionally makes <em>adding</em> a new
 domain hitless, not just renewing an existing one. Both are supported &mdash; and with a crt-list
-it is automatic: put the list's path in the deployment group's <em>crt-list path</em> field,
-exactly as it appears on the bind line, and any pushed certificate the list does not reference yet
-is appended and hot-loaded. The deploy log says which happened per node (<code>appended&hellip;
+it is automatic: choose a <em>crt-list structure</em> on the deployment group &mdash; one list
+every frontend reads, or one per parent domain &mdash; and any pushed certificate the list does not
+reference yet is appended and hot-loaded. The directory is not a choice: a crt-list is created by
+uploading a filename, so the Data Plane API decides where it lands, and pressing <em>Discover</em>
+fills it in from the node. A wildcard always gets a list of its own under either structure. The deploy log says which happened per node (<code>appended&hellip;
 and the running process loaded it</code> versus <code>already referenced</code>), and an append the
 running process never picks up fails the node loudly rather than surfacing later as an unexplained
 verification failure.</p>
@@ -618,8 +620,12 @@ pre-ticked, changeable for the run in hand:</p>
   it. A node that missed the push stays invisible until failover &mdash; precisely when you cannot
   afford it. That is why the Deployed column shows one pip per node.</p>
 </div>
-<p>A deployment is green only when <strong>every</strong> node passes. One node failing does not
-stop the others, and the exit code is non-zero.</p>
+<p>A deployment is green only when <strong>every</strong> node passes, with one exception: a node
+whose crt-list no bind line reads yet is reported as <em>waiting for a bind line</em>, not as a
+failure. That is the normal way to stand up a new frontend &mdash; HAProxy will not reload against a
+bind naming a certificate that does not exist, so the certificate has to go first. The run exits
+zero and sends no failure alert, and the log hands over the bind line to add. Any other node failing
+does not stop the others, and the exit code is non-zero.</p>
 
 <h3>The Load balancers page</h3>
 <p>Verification proves a certificate is <em>deployed</em>. The <strong>Load balancers</strong> page
@@ -797,7 +803,7 @@ it reports on the tasks, it does not administer them.</p>
     <tr><td>Renewal scheduled</td><td>The run before a renewal happens: which certificate, which
       names, when, and which load balancers it will be pushed to. Sent once per renewal cycle, not
       once per run.</td></tr>
-    <tr><td>Renewal succeeded</td><td>Issuance and every deployment check passed.</td></tr>
+    <tr><td>Renewal succeeded</td><td>Issuance passed, and every deployment check either passed or is waiting for a bind line.</td></tr>
     <tr><td>Automated deployment failed</td><td>Anything on the unattended path did not fully
     succeed &mdash; the one that matters most, since it is the only signal an unattended renewal
     has stopped working.</td></tr>

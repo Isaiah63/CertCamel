@@ -3663,7 +3663,7 @@ $script:TargetCatalog = @{
             @{ Name = 'password'; Label = 'API password'; Secret = $true;  Type = 'text' }
             @{ Name = 'remoteName'; Label = 'Certificate filename on HAProxy'; Secret = $false; Type = 'text'
                Hint  = 'Inside the Data Plane API ssl_certs_dir. Leave blank for "<cert>.pem". This is the certificate IDENTITY to HAProxy - it must never change between renewals, so no dates in it.' }
-            @{ Name = 'crtList';  Label = 'crt-list path (optional)'; Secret = $false; Type = 'text'
+            @{ Name = 'crtList';  Label = 'crt-list structure (optional)'; Secret = $false; Type = 'text'
                Hint  = 'How these files should be laid out. The directory is not a choice - a crt-list is created by uploading a filename, so the API decides where it lands. Press Discover and it fills itself in.' }
             @{ Name = 'verifyPort'; Label = 'Port to verify on'; Secret = $false; Type = 'text'
                Hint  = 'Usually 443. Verification connects to each node here and reads what it actually serves.' }

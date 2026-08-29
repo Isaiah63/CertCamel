@@ -70,9 +70,13 @@ is usually more work than the config lines themselves.
 
 Referencing them with `crt-list` rather than `crt` additionally makes *adding* a
 new domain hitless, not just renewing an existing one. Both are supported — and
-with a crt-list this is automatic: put the list's path in the deployment group's
-**crt-list path** field (exactly as it appears on the bind line), and any pushed
-certificate the list does not reference yet is appended and hot-loaded. The
+with a crt-list this is automatic: choose a **crt-list structure** on the
+deployment group — one list every frontend reads, or one per parent domain — and
+any pushed certificate the list does not reference yet is appended and
+hot-loaded. The directory is not a choice: a crt-list is created by uploading a
+filename, so the Data Plane API decides where it lands, and pressing **Discover**
+fills it in from the node. A wildcard always gets a list of its own under either
+structure. The
 deploy log says which happened per node — `appended ... and the running process
 loaded it` versus `already referenced` — and a certificate that got appended on
 disk but never picked up by the running process fails the node loudly instead
@@ -95,7 +99,7 @@ assignment can override the group's placement settings for one certificate:
 ```json
 "certs": {
   "wildcard.example.com": {
-    "targets": [ { "id": "office", "crtList": "/etc/haproxy/crt-list-wild.txt" } ]
+    "targets": [ { "id": "office", "crtList": "/etc/haproxy/certs/crt-list-wild.txt" } ]
   },
   "example.com": { "targets": [ "office" ] }
 }
@@ -168,8 +172,13 @@ ever exercises whichever node currently holds it. A node that missed the push
 stays invisible until failover — precisely when you cannot afford it. The
 Deployed column shows one pip per node for the same reason.
 
-A deployment is green only when **every** node passes. One node failing does not
-stop the others, and the exit code is non-zero.
+A deployment is green only when **every** node passes, with one exception: a
+node whose crt-list no bind line reads yet is reported as *waiting for a bind
+line*, not as a failure. That is the normal way to stand up a new frontend —
+HAProxy will not reload against a bind naming a certificate that does not exist,
+so the certificate has to go first. The run exits zero and sends no failure
+alert, and the log hands over the bind line to add. Any other node failing does
+not stop the others, and the exit code is non-zero.
 
 ## Unattended renewal
 
@@ -203,7 +212,7 @@ Under Settings > Alerts, five independently switchable alerts:
 |---|---|
 | Certificate expiring soon | A watched host crosses a configured threshold (default 30, 14, 7 days). Once per host per threshold, not on every check. |
 | Renewal scheduled | The run before a renewal happens: which certificate, which names, when, and which load balancers it will be pushed to. Sent once per renewal cycle, not once per run. |
-| Renewal succeeded | Issuance and every deployment check passed. |
+| Renewal succeeded | Issuance passed, and every deployment check either passed or is waiting for a bind line. |
 | Automated deployment failed | Anything on the unattended path did not fully succeed. The one that matters most — it is the only signal an unattended renewal has stopped working. |
 | Monthly summary | 1st of the month: everything due within 31 days, and anything currently failing. |
 

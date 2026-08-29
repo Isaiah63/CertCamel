@@ -51,10 +51,11 @@ $libSrc    = Get-Content (Join-Path $srcDir 'acme-lib.ps1') -Raw -Encoding UTF8
 # here against hand-built node records, so the cases below are decided by logic
 # and not by whether a regex still matches.
 function Test-Awaiting {
-    param($Node)
+    param($Node, [int]$Proved = 0)
     return [bool]($Node.push -and $Node.push.ok -and
                   $Node.ContainsKey('crtList') -and $Node.crtList -and
-                  $Node.crtList.ok -and $Node.crtList.needsBind)
+                  $Node.crtList.ok -and $Node.crtList.needsBind -and
+                  $Proved -eq 0)
 }
 # NOT named Node. PSScriptAnalyzer's PSAvoidOverwritingBuiltInCmdlets compares
 # against a per-edition list of built-ins, and the CI runner's list is not this
@@ -76,6 +77,24 @@ Write-Host "`nand once the operator adds the bind line"
 $bound = NewNodeResult -CrtList @{ ok = $true; needsBind = $false; runtimeLoaded = $true }
 Check 'it is an ordinary deployment again' (-not (Test-Awaiting $bound)) `
       'the state would stick, and a genuinely unserved certificate would be forgiven forever'
+
+Write-Host "`na node that is already serving it, through a list nobody changed"
+# Found by a real deployment, not by this file. Pointing a group's crt-list
+# setting somewhere new leaves the frontend reading the OLD file - which still
+# references the certificate, so the node serves it perfectly well while the new
+# list sits unread. Both test nodes reported "awaiting bind" while an identity
+# probe had just matched the serial against the running process.
+#
+# The state means "nothing could verify it", not "some list is unread".
+$live = NewNodeResult -CrtList @{ ok = $true; needsBind = $true; path = '/certs/new-list.txt' }
+Check 'a proved node is not waiting for anything' (-not (Test-Awaiting $live -Proved 1)) `
+      'a live deployment was reported as waiting for a bind line it did not need'
+Check 'and the same node with nothing proved still is' (Test-Awaiting $live -Proved 0) `
+      'the guard must not swallow the case the state exists for'
+
+Check 'deploy requires that nothing proved it' `
+      ($deploySrc -match '\$n\.crtList\.ok -and \$n\.crtList\.needsBind -and[\s\S]{0,60}\$proved -eq 0\)') `
+      'without it the state under-claims, which is its own kind of wrong report'
 
 # --------------------------------------------------------------------------- #
 Write-Host "`nwhat it must NOT forgive"
