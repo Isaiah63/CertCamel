@@ -8,6 +8,7 @@
 
   var DOCS = [
     {href: 'readme.html', title: 'Read me', desc: 'The complete manual: how certificates are grouped, wildcards, certificate authorities, staging, logs and the audit trail, alerts, and every status the page can show you.'},
+    {href: 'certificate-path.html', title: 'How a certificate reaches the wire', desc: 'The mechanism, end to end: how watched hostnames become certificates, why a wildcard is kept apart from the rest, when renewal actually fires, which crt-list a certificate lands in, and how a node is proved to be serving it rather than merely holding it.'},
     {href: 'haproxy-setup.html', title: 'HAProxy setup guide', desc: 'Step by step: the Data Plane API, a dedicated user, TLS on the API itself, and pointing Cert Camel at it.'},
     {href: 'windows-server-setup.html', title: 'Windows Server install', desc: 'Installing where nobody is signed in: which account owns the scheduled tasks and the encrypted credentials, why that cannot be changed afterwards, and who can open the console once it is running.'},
     {href: 'security.html', title: 'Security', desc: 'What the loopback binding and the token actually protect against, where credentials are stored and what breaks when the account changes, what reaches the logs and what never does.'},

@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cert Camel &mdash; How a certificate reaches the wire</title>
+<link rel="icon" href="data:image/png;base64,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">
+<script>
+(function(){
+  try {
+    // See readme.html: the guides honour which SIDE a theme sits on, not the
+    // theme itself, so opening one from Matrix does not flash a white page.
+    var SIDE = {light:'light', usa:'light', dawn:'light', spring:'light', summer:'light', winter:'light', autumn:'light', dark:'dark', thunderstorm:'dark', matrix:'dark', synthwave:'dark'};
+    var t = SIDE[localStorage.getItem('certcamel-theme')];
+    if (t) { document.documentElement.setAttribute('data-theme', t); }
+  } catch (e) { }
+})();
+</script>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#e9ebf1; --glow-1:rgba(99,102,241,.14); --glow-2:rgba(168,85,247,.12);
+  --surface:rgba(255,255,255,.62); --surface-solid:#f7f8fb;
+  --border:rgba(17,24,39,.11); --border-strong:rgba(17,24,39,.18);
+  --text:#0b0d12; --muted:#4d5666; --faint:#606875;
+  --accent:#6366f1; --accent-2:#a855f7;
+  --amber:#b45309; --amber-bg:rgba(245,158,11,.10);
+  --green:#15803d; --green-bg:rgba(34,197,94,.10);
+  --blue:#1d4ed8; --blue-bg:rgba(59,130,246,.10);
+  --red:#b91c1c; --red-bg:rgba(239,68,68,.10);
+  --shadow:0 1px 2px rgba(17,24,39,.04), 0 10px 30px -14px rgba(17,24,39,.20);
+  --radius:16px; --radius-sm:11px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#808a9c;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0a0b0f; --glow-1:rgba(99,102,241,.20); --glow-2:rgba(168,85,247,.15);
+  --surface:rgba(255,255,255,.045); --surface-solid:#15161b;
+  --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+  --text:#f2f3f6; --muted:#aab3c5; --faint:#808a9c;
+  --amber:#fbbf24; --amber-bg:rgba(245,158,11,.12);
+  --green:#4ade80; --green-bg:rgba(34,197,94,.11);
+  --blue:#60a5fa; --blue-bg:rgba(59,130,246,.12);
+  --red:#f87171; --red-bg:rgba(239,68,68,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box;}
+body{margin:0; min-height:100vh; color:var(--text); background:var(--bg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background-image:radial-gradient(58rem 58rem at 6% -10%,var(--glow-1),transparent 60%),
+    radial-gradient(48rem 48rem at 104% 2%,var(--glow-2),transparent 55%);
+  background-attachment:fixed; -webkit-font-smoothing:antialiased; line-height:1.65;}
+
+.shell{max-width:min(96rem,96vw); margin:0 auto; padding:clamp(1.25rem,3vw,2.25rem) clamp(1rem,3vw,2.5rem) 5rem;}
+
+.masthead{display:flex; align-items:center; gap:1.5rem; padding:.2rem 0 1.15rem;
+  border-bottom:1px solid var(--border); margin-bottom:1.6rem;}
+.masthead .side{flex:1 1 0; min-width:0;}
+.masthead .actions{display:flex; align-items:center; gap:.5rem; justify-content:flex-end;}
+.brand{display:flex; align-items:center; gap:.75rem; flex:none;}
+.brand .mark{display:block; flex:none; height:2.75rem;}
+.brand .mark img{height:100%; width:auto; display:block;}
+.brand h1{font-size:1.65rem; line-height:1.1; letter-spacing:-.025em; font-weight:850;
+  margin:0; padding-bottom:.06em; white-space:nowrap;
+  background:linear-gradient(135deg,var(--text) 38%,var(--accent) 145%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;}
+
+.back{display:inline-flex; align-items:center; gap:.45rem; text-decoration:none; color:var(--muted);
+  font-size:.85rem; font-weight:550; padding:.4rem .8rem; border:1px solid var(--border);
+  border-radius:999px; background:var(--surface); backdrop-filter:blur(14px); white-space:nowrap;}
+.back:hover{color:var(--text); border-color:var(--border-strong);}
+.tag{font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; font-weight:700; color:var(--faint);}
+.lede{font-size:clamp(1rem,2vw,1.12rem); color:var(--muted); max-width:52rem; margin:0 0 2rem;}
+
+@media (max-width:56rem){
+  .masthead{flex-wrap:wrap; justify-content:space-between;}
+  .masthead .side{flex:0 0 auto;}
+  .brand{order:-1; flex-basis:100%; margin-bottom:.4rem;}
+}
+
+.cols{display:grid; grid-template-columns:14rem 1fr; gap:2.5rem; align-items:start;}
+@media (max-width:60rem){.cols{grid-template-columns:1fr;}}
+nav.toc{position:sticky; top:1.5rem; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); padding:1rem 1.1rem; box-shadow:var(--shadow);}
+nav.toc h2{font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);
+  margin:0 0 .6rem; font-weight:800;}
+nav.toc ol{list-style:none; margin:0; padding:0; counter-reset:t;}
+nav.toc li{counter-increment:t; margin:.25rem 0;}
+nav.toc a{display:block; text-decoration:none; color:var(--muted); font-size:.84rem; padding:.15rem 0;}
+nav.toc a::before{content:counter(t) ". "; color:var(--faint);}
+nav.toc a:hover{color:var(--accent);}
+
+article h2{font-size:1.3rem; font-weight:750; letter-spacing:-.015em; margin:2.6rem 0 .7rem;
+  scroll-margin-top:1.5rem;}
+article h2:first-child{margin-top:0;}
+article h3{font-size:1rem; font-weight:700; margin:1.6rem 0 .4rem;}
+article p{margin:.7rem 0; max-width:62rem;}
+article ul,article ol{margin:.7rem 0; padding-left:1.3rem; max-width:62rem;}
+article li{margin:.3rem 0;}
+strong{font-weight:700;}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.87em;
+  background:var(--surface-solid); border:1px solid var(--border); border-radius:6px; padding:.1rem .35rem;}
+pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.82rem; line-height:1.55;
+  overflow-x:auto; margin:.9rem 0; padding:.9rem 1.1rem; color:var(--muted);
+  border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-solid);}
+pre code{background:none; border:none; padding:0; font-size:1em;}
+
+.tablewrap{overflow-x:auto; margin:1rem 0; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);}
+table{border-collapse:collapse; width:100%; font-size:.9rem;}
+th,td{text-align:left; padding:.65rem 1rem; border-bottom:1px solid var(--border); vertical-align:top;}
+thead th{font-size:.68rem; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); font-weight:800;}
+tbody tr:last-child td{border-bottom:none;}
+
+.callout{border:1px solid var(--border); border-left-width:4px; border-radius:var(--radius-sm);
+  padding:.85rem 1.1rem; margin:1.2rem 0; background:var(--surface); max-width:62rem;}
+.callout .h{font-weight:700; font-size:.92rem; margin-bottom:.15rem;}
+.callout p{margin:.3rem 0 0; font-size:.92rem;}
+.callout.warn{border-left-color:var(--amber); background:var(--amber-bg);} .callout.warn .h{color:var(--amber);}
+.callout.crit{border-left-color:var(--red); background:var(--red-bg);} .callout.crit .h{color:var(--red);}
+.callout.note{border-left-color:var(--blue); background:var(--blue-bg);} .callout.note .h{color:var(--blue);}
+.callout.good{border-left-color:var(--green); background:var(--green-bg);} .callout.good .h{color:var(--green);}
+
+footer{margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border);
+  color:var(--faint); font-size:.82rem;}
+/* Figures for this guide only. currentColor and the shared tokens do the theme
+   work, so a diagram reads correctly in every one of the app's themes without
+   a second palette to keep in step. */
+figure.diagram{margin:1.4rem 0; padding:1.1rem 1rem .8rem; background:var(--surface);
+  border:1px solid var(--border); border-radius:var(--radius-sm); overflow-x:auto;}
+figure.diagram svg{display:block; max-width:100%; height:auto; margin:0 auto; color:var(--muted);}
+figure.diagram figcaption{margin-top:.8rem; padding-top:.7rem; border-top:1px solid var(--border);
+  font-size:.86rem; color:var(--faint);}
+figure.diagram figcaption b{color:var(--text);}
+.pillrow{display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 0;}
+.pill{display:inline-block; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.74rem; padding:.12em .55em; border-radius:999px; border:1px solid;}
+.pill.good{color:var(--green); background:var(--green-bg); border-color:var(--green);}
+.pill.warn{color:var(--amber); background:var(--amber-bg); border-color:var(--amber);}
+.pill.crit{color:var(--red);   background:var(--red-bg);   border-color:var(--red);}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header class="masthead">
+  <span class="tag side">How a certificate reaches the wire</span>
+
+  <div class="brand">
+    <span class="mark">
+      <img src="assets/logo.png" alt="" width="244" height="256">
+    </span>
+    <h1>Cert Camel</h1>
+  </div>
+
+  <div class="side actions">
+    <a class="back" href="readme.html">Read me</a>
+    <a class="back" href="haproxy-setup.html">HAProxy setup</a>
+  </div>
+</header>
+
+<p class="lede">Cert Camel obtains TLS certificates from a certificate authority and installs them on
+HAProxy load balancers. This page follows one certificate the whole way &mdash; from the list of
+names you asked to be watched, to bytes a browser receives &mdash; and explains each decision made
+along the route.</p>
+
+<div class="cols">
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#stages">Six stages, six files</a></li>
+    <li><a href="#grouping">Hosts become certificates</a></li>
+    <li><a href="#when">When it renews</a></li>
+    <li><a href="#node">Where files land on a node</a></li>
+    <li><a href="#serving">Proving it is really serving</a></li>
+    <li><a href="#agree">Where two parts must agree</a></li>
+  </ol>
+</nav>
+
+<article>
+
+<h2 id="stages">Six stages, six files</h2>
+
+<p>Nothing is passed in memory. Each stage reads a file the previous one wrote and writes a file the
+next one reads. Every stage can also be run on its own, which is why the handoffs are files rather
+than function calls.</p>
+
+<figure class="diagram">
+  <svg viewBox="0 0 940 250" role="img"
+       aria-label="domains.txt is read by check-ssl, which writes ssl-data.js. renew-due reads that, groups hosts into certificates, and writes a sweep verdict. renew orders the certificates that are due and writes them into the certs folder. deploy pushes each one to every HAProxy node over the Data Plane API.">
+    <defs>
+      <marker id="g1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <g font-family="ui-monospace,monospace" font-size="11.5" text-anchor="middle">
+      <rect x="10"  y="14" width="128" height="34" rx="5" fill="none" stroke="currentColor" stroke-dasharray="3 3" opacity=".75"/>
+      <text x="74"  y="35" fill="currentColor" opacity=".85">domains.txt</text>
+      <rect x="272" y="14" width="128" height="34" rx="5" fill="none" stroke="currentColor" stroke-dasharray="3 3" opacity=".75"/>
+      <text x="336" y="35" fill="currentColor" opacity=".85">ssl-data.js</text>
+      <rect x="534" y="14" width="150" height="34" rx="5" fill="none" stroke="currentColor" stroke-dasharray="3 3" opacity=".75"/>
+      <text x="609" y="35" fill="currentColor" opacity=".85">sweep verdict</text>
+      <rect x="790" y="14" width="140" height="34" rx="5" fill="none" stroke="currentColor" stroke-dasharray="3 3" opacity=".75"/>
+      <text x="860" y="35" fill="currentColor" opacity=".85">certs\&lt;certId&gt;\</text>
+    </g>
+    <g font-family="ui-monospace,monospace" font-size="12" text-anchor="middle">
+      <rect x="140" y="98" width="130" height="42" rx="6" fill="none" stroke="currentColor"/>
+      <text x="205" y="124" fill="currentColor">check-ssl</text>
+      <rect x="402" y="98" width="130" height="42" rx="6" fill="none" stroke="currentColor"/>
+      <text x="467" y="124" fill="currentColor">renew-due</text>
+      <rect x="664" y="98" width="118" height="42" rx="6" fill="none" stroke="currentColor"/>
+      <text x="723" y="124" fill="currentColor">renew</text>
+      <rect x="820" y="176" width="110" height="42" rx="6" fill="none" stroke="currentColor"/>
+      <text x="875" y="202" fill="currentColor">deploy</text>
+      <rect x="612" y="176" width="150" height="42" rx="6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <text x="687" y="202" fill="currentColor">HAProxy node</text>
+    </g>
+    <g stroke="currentColor" fill="none" marker-end="url(#g1)">
+      <path d="M74,52 L74,119 L136,119"/>
+      <path d="M274,119 L336,119 L336,54"/>
+      <path d="M336,119 L398,119"/>
+      <path d="M536,119 L609,119 L609,54"/>
+      <path d="M609,119 L660,119"/>
+      <path d="M782,119 L860,119 L860,54"/>
+      <path d="M875,52 L875,172"/>
+      <path d="M816,197 L768,197"/>
+    </g>
+    <g font-family="-apple-system,system-ui,sans-serif" font-size="10.5" fill="currentColor" opacity=".7">
+      <text x="80"  y="83">probes each host</text>
+      <text x="345" y="83">groups into certificates</text>
+      <text x="617" y="83">orders what is due</text>
+      <text x="884" y="105">pushes</text>
+      <text x="700" y="240" text-anchor="middle">Data Plane API</text>
+    </g>
+  </svg>
+  <figcaption><b>Reading a stale file looks exactly like reading a fresh one.</b> Because of that,
+    <code>renew-due</code> re-runs the checker whenever <code>domains.txt</code> is newer than
+    <code>ssl-data.js</code>, rather than working from a host list that has since changed.</figcaption>
+</figure>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Stage</th><th>Reads</th><th>Writes</th><th>What it decides</th></tr></thead>
+  <tbody>
+    <tr><td><code>check-ssl</code></td><td><code>domains.txt</code></td><td><code>ssl-data.js</code></td>
+        <td>What each host is serving today, and when it expires</td></tr>
+    <tr><td><code>renew-due</code></td><td><code>ssl-data.js</code></td><td>sweep verdict</td>
+        <td>Which certificates exist, and which are due</td></tr>
+    <tr><td><code>renew</code></td><td>sweep verdict</td><td><code>certs\</code></td>
+        <td>Obtains the certificate from the authority</td></tr>
+    <tr><td><code>deploy</code></td><td><code>certs\</code></td><td>deploy record</td>
+        <td>Puts it on each node and proves it is serving</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>check-ssl</code> connects to each host on the port <code>domains.txt</code> names &mdash;
+<code>host:port</code>, defaulting to 443 &mdash; and records what is being served now. That is how a
+certificate obtained somewhere else is still watched, and how expiry is known for something Cert
+Camel has never issued.</p>
+
+<h2 id="grouping">Hosts become certificates</h2>
+
+<p>You list <em>hostnames</em>. A certificate authority issues <em>certificates</em>, each covering
+one or more names. Turning the first into the second is the decision everything downstream
+inherits.</p>
+
+<p>Hosts are grouped by DNS zone, because a zone is what one DNS credential can prove control of.
+Each zone produces one to three certificates, and each gets an identifier &mdash; its
+<code>certId</code> &mdash; which becomes its folder name, its file name, and the name of the
+crt-list it goes into.</p>
+
+<figure class="diagram">
+  <svg viewBox="0 0 900 330" role="img"
+       aria-label="The watched hosts for one DNS zone split into three certificates: a SAN certificate identified by the zone name, a wildcard certificate identified by wildcard dot zone which also carries the bare zone name, and the console's own certificate identified by its hostname.">
+    <defs>
+      <marker id="g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <rect x="14" y="112" width="196" height="106" rx="7" fill="none" stroke="currentColor" stroke-dasharray="3 3"/>
+    <g font-family="ui-monospace,monospace" font-size="11" fill="currentColor">
+      <text x="30" y="134" opacity=".65">watched, zone example.com</text>
+      <text x="30" y="156">example.com</text>
+      <text x="30" y="174">a.example.com</text>
+      <text x="30" y="192">*.example.com</text>
+      <text x="30" y="210">console.example.com</text>
+    </g>
+    <path d="M212,165 L282,165" stroke="currentColor" fill="none" marker-end="url(#g2)"/>
+    <text x="247" y="156" font-family="-apple-system,system-ui,sans-serif" font-size="10.5"
+          fill="currentColor" opacity=".7" text-anchor="middle">splits</text>
+
+    <rect x="292" y="18" width="316" height="80" rx="7" fill="none" stroke="var(--green)" stroke-width="1.7"/>
+    <g font-family="ui-monospace,monospace" font-size="11">
+      <text x="308" y="40" fill="var(--green)" font-size="10.5">the zone's SAN certificate</text>
+      <text x="308" y="60" fill="currentColor">certId  example.com</text>
+      <text x="308" y="80" fill="currentColor">covers  a.example.com</text>
+    </g>
+
+    <rect x="292" y="126" width="316" height="80" rx="7" fill="none" stroke="var(--accent-2)" stroke-width="1.7"/>
+    <g font-family="ui-monospace,monospace" font-size="11">
+      <text x="308" y="148" fill="var(--accent-2)" font-size="10.5">the zone's wildcard certificate</text>
+      <text x="308" y="168" fill="currentColor">certId  wildcard.example.com</text>
+      <text x="308" y="188" fill="currentColor">covers  *.example.com  example.com</text>
+    </g>
+
+    <rect x="292" y="234" width="316" height="80" rx="7" fill="none" stroke="var(--amber)" stroke-width="1.7"/>
+    <g font-family="ui-monospace,monospace" font-size="11">
+      <text x="308" y="256" fill="var(--amber)" font-size="10.5">the console's own certificate</text>
+      <text x="308" y="276" fill="currentColor">certId  console.example.com</text>
+      <text x="308" y="296" fill="currentColor">covers  console.example.com</text>
+    </g>
+
+    <g stroke="currentColor" fill="none" marker-end="url(#g2)" opacity=".8">
+      <path d="M282,150 L282,58 L288,58"/>
+      <path d="M282,165 L288,165"/>
+      <path d="M282,180 L282,274 L288,274"/>
+    </g>
+    <path d="M470,98 L470,122" stroke="var(--accent-2)" fill="none" stroke-width="1.7" marker-end="url(#g2)"/>
+    <text x="484" y="115" font-family="-apple-system,system-ui,sans-serif" font-size="10.5"
+          fill="var(--accent-2)">example.com moves here</text>
+
+    <g font-family="-apple-system,system-ui,sans-serif" font-size="11" fill="currentColor" opacity=".78">
+      <text x="628" y="46">its own folder,</text>
+      <text x="628" y="62">its own crt-list,</text>
+      <text x="628" y="78">its own renewal date</text>
+      <text x="628" y="162">never shares a crt-list</text>
+      <text x="628" y="178">with the SAN certificate</text>
+      <text x="628" y="270">installed nowhere &mdash;</text>
+      <text x="628" y="286">it serves the console itself</text>
+    </g>
+  </svg>
+  <figcaption><b>The bare domain belongs to the wildcard whenever a zone has one.</b>
+    <code>*.example.com</code> does not match <code>example.com</code>, so a wildcard certificate must
+    carry the bare name too. If the SAN certificate carried it as well, both would answer to it with
+    equal claim, HAProxy would pick one, and the other would silently never be used.</figcaption>
+</figure>
+
+<h3>Why the console is separate</h3>
+
+<p>Cert Camel serves its own page over HTTPS with a certificate it obtains like any other. Keeping it
+on its own means adding or removing a production hostname never re-issues it, and it is never
+installed on a load balancer, so its name does not travel anywhere nobody asked it to go. See
+<a href="console-certificate.html">The console certificate</a>.</p>
+
+<h3>Certificates somebody else renews</h3>
+
+<p>A certificate can be marked <strong>managed elsewhere</strong>. It is still watched &mdash; so you
+find out when whatever renews it stops &mdash; but Cert Camel never orders it and never counts it as
+a gap in its own coverage. Issuing a second certificate for a name another system is already
+renewing is a good way to have two systems fighting over one name.</p>
+
+<h2 id="when">When it renews</h2>
+
+<p>A sweep runs on a schedule and decides, per certificate, whether to renew now. It asks the
+certificate authority rather than counting days: authorities publish a renewal window per certificate
+(ARI), which spreads renewals out instead of stacking everyone on the same threshold.</p>
+
+<figure class="diagram">
+  <svg viewBox="0 0 860 210" role="img"
+       aria-label="For each certificate the sweep asks whether this authority issued it. If so it renews when the authority's window has opened. If not, it renews only when the live certificate is within thirty days of expiry, otherwise it waits.">
+    <defs>
+      <marker id="g3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <rect x="14" y="80" width="168" height="44" rx="6" fill="none" stroke="currentColor"/>
+    <text x="98" y="107" font-family="ui-monospace,monospace" font-size="11.5" fill="currentColor" text-anchor="middle">each certificate</text>
+    <path d="M186,102 L246,102" stroke="currentColor" fill="none" marker-end="url(#g3)"/>
+    <rect x="250" y="72" width="196" height="60" rx="6" fill="none" stroke="currentColor"/>
+    <text x="348" y="96" font-family="-apple-system,system-ui,sans-serif" font-size="11.5" fill="currentColor" text-anchor="middle">did this authority</text>
+    <text x="348" y="114" font-family="-apple-system,system-ui,sans-serif" font-size="11.5" fill="currentColor" text-anchor="middle">issue it?</text>
+    <g stroke="currentColor" fill="none" marker-end="url(#g3)">
+      <path d="M450,88 L516,48"/>
+      <path d="M450,116 L516,156"/>
+    </g>
+    <text x="474" y="58" font-family="-apple-system,system-ui,sans-serif" font-size="10.5" fill="currentColor" opacity=".75">yes</text>
+    <text x="474" y="152" font-family="-apple-system,system-ui,sans-serif" font-size="10.5" fill="currentColor" opacity=".75">no</text>
+    <rect x="520" y="24" width="322" height="48" rx="6" fill="none" stroke="currentColor"/>
+    <text x="536" y="44" font-family="-apple-system,system-ui,sans-serif" font-size="11.5" fill="currentColor">renew once the authority's window opens</text>
+    <text x="536" y="62" font-family="ui-monospace,monospace" font-size="10.5" fill="currentColor" opacity=".7">a date it publishes per certificate</text>
+    <rect x="520" y="132" width="322" height="48" rx="6" fill="none" stroke="currentColor"/>
+    <text x="536" y="152" font-family="-apple-system,system-ui,sans-serif" font-size="11.5" fill="currentColor">renew only within 30 days of expiry</text>
+    <text x="536" y="170" font-family="ui-monospace,monospace" font-size="10.5" fill="currentColor" opacity=".7">otherwise leave it alone</text>
+  </svg>
+  <figcaption><b>The second branch is why a first run does not reissue everything.</b> A certificate
+    obtained elsewhere is watched from the moment it is listed, but only taken over when it is
+    genuinely close to expiring &mdash; so adding twenty hostnames does not order twenty certificates
+    that night.</figcaption>
+</figure>
+
+<div class="callout note">
+  <div class="h">Rate limits are why this is careful</div>
+  <p>Let's Encrypt allows 50 certificates per registered domain per week, and only 5 identical
+  certificates per week. A loop that reissues on every run burns the duplicate limit in an afternoon
+  and then cannot renew anything for seven days. Asking the authority when it wants the next
+  renewal avoids the question entirely.</p>
+</div>
+
+<h2 id="node">Where files land on a node</h2>
+
+<p>Certificates reach HAProxy through its Data Plane API, a REST interface that writes files and
+reloads configuration on the operator's behalf. Two of its behaviours shape everything here.</p>
+
+<p><strong>The API chooses the directory.</strong> A file is uploaded by name, not by path, so a path
+pointing anywhere else describes a file that will never exist. The directory is discovered from the
+node rather than typed &mdash; which is why the crt-list setting offers a structure and fills the
+directory in for you.</p>
+
+<p><strong>The API rewrites names.</strong> Dots in a filename become underscores, so
+<code>example.com.pem</code> is stored as <code>example_com.pem</code>. Anything referring to that
+file afterwards &mdash; a crt-list entry, a bind line, a later lookup &mdash; must use the stored
+name, not the requested one.</p>
+
+<figure class="diagram">
+  <svg viewBox="0 0 860 250" role="img"
+       aria-label="Two crt-list structures. One shared list puts SAN certificates in crt-list.txt and wildcards in wildcard-crt-list.txt. One list per parent domain names each file after the certificate's own identifier, which separates wildcards automatically.">
+    <defs>
+      <marker id="g4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <text x="18" y="26" font-family="-apple-system,system-ui,sans-serif" font-size="12" font-weight="600"
+          fill="currentColor" letter-spacing=".08em">ONE LIST FOR EVERY FRONTEND</text>
+    <line x1="18" y1="36" x2="842" y2="36" stroke="currentColor" opacity=".18"/>
+    <rect x="18" y="52" width="150" height="34" rx="5" fill="none" stroke="var(--green)" stroke-width="1.6"/>
+    <text x="93" y="73" font-family="ui-monospace,monospace" font-size="11" fill="var(--green)" text-anchor="middle">SAN cert</text>
+    <rect x="18" y="96" width="150" height="34" rx="5" fill="none" stroke="var(--accent-2)" stroke-width="1.6"/>
+    <text x="93" y="117" font-family="ui-monospace,monospace" font-size="11" fill="var(--accent-2)" text-anchor="middle">wildcard cert</text>
+    <g stroke="currentColor" fill="none" marker-end="url(#g4)">
+      <path d="M172,69 L286,69"/>
+      <path d="M172,113 L286,113"/>
+    </g>
+    <text x="229" y="105" font-family="-apple-system,system-ui,sans-serif" font-size="10" fill="var(--accent-2)" text-anchor="middle">split off</text>
+    <g font-family="ui-monospace,monospace" font-size="11.5">
+      <rect x="290" y="52" width="250" height="34" rx="5" fill="none" stroke="currentColor"/>
+      <text x="304" y="73" fill="currentColor">crt-list.txt</text>
+      <rect x="290" y="96" width="250" height="34" rx="5" fill="none" stroke="var(--accent-2)" stroke-width="1.6"/>
+      <text x="304" y="117" fill="var(--accent-2)">wildcard-crt-list.txt</text>
+    </g>
+    <text x="562" y="74" font-family="-apple-system,system-ui,sans-serif" font-size="11" fill="currentColor" opacity=".75">two files, however many</text>
+    <text x="562" y="90" font-family="-apple-system,system-ui,sans-serif" font-size="11" fill="currentColor" opacity=".75">domains you renew</text>
+
+    <text x="18" y="172" font-family="-apple-system,system-ui,sans-serif" font-size="12" font-weight="600"
+          fill="currentColor" letter-spacing=".08em">ONE LIST PER PARENT DOMAIN</text>
+    <line x1="18" y1="182" x2="842" y2="182" stroke="currentColor" opacity=".18"/>
+    <rect x="18" y="198" width="150" height="34" rx="5" fill="none" stroke="currentColor" stroke-dasharray="3 3"/>
+    <text x="93" y="219" font-family="ui-monospace,monospace" font-size="11" fill="currentColor" text-anchor="middle">any certificate</text>
+    <path d="M172,215 L286,215" stroke="currentColor" fill="none" marker-end="url(#g4)"/>
+    <rect x="290" y="198" width="250" height="34" rx="5" fill="none" stroke="currentColor"/>
+    <text x="304" y="219" font-family="ui-monospace,monospace" font-size="11.5" fill="currentColor">&lt;certId&gt;-crt-list.txt</text>
+    <text x="562" y="212" font-family="-apple-system,system-ui,sans-serif" font-size="11" fill="currentColor" opacity=".75">already separate &mdash; a wildcard</text>
+    <text x="562" y="228" font-family="-apple-system,system-ui,sans-serif" font-size="11" fill="currentColor" opacity=".75">has its own identifier</text>
+  </svg>
+  <figcaption><b>A crt-list is a file listing certificates a frontend may serve.</b> Referencing
+    certificates through a list rather than one by one means a new certificate starts being served by
+    adding a line to the list, with no change to the HAProxy configuration itself.</figcaption>
+</figure>
+
+<h3>Why a wildcard is always kept apart</h3>
+
+<p>Anything reading one list can serve everything in it. Putting a wildcard beside the certificates
+it overlaps means a frontend intended for one can serve the other, and the first entry in a list is
+what an unrecognised request falls back to. Separate files keep that choice explicit.</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Structure</th><th>SAN certificate</th><th>Wildcard certificate</th></tr></thead>
+  <tbody>
+    <tr><td><code>crt-list.txt</code></td><td><code>crt-list.txt</code></td><td><code>wildcard-crt-list.txt</code></td></tr>
+    <tr><td><code>{certId}-crt-list.txt</code></td><td><code>example.com-crt-list.txt</code></td><td><code>wildcard.example.com-crt-list.txt</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout note">
+  <div class="h">A group answers "which nodes", a crt-list answers "which file"</div>
+  <p>A deployment group holds the nodes and the credentials to reach them. A certificate is assigned
+  to one or more groups, and the crt-list setting on the group decides the filename inside each. A
+  single certificate can be pinned to a different file on one group than on another; an explicit
+  per-certificate override is left exactly as written, because it is already a deliberate answer.</p>
+</div>
+
+<h2 id="serving">Proving it is really serving</h2>
+
+<p>An API returning success means the file was accepted, not that anything is using it. So each node
+is checked afterwards, in tiers.</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Tier</th><th>Question</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td><code>T0</code></td><td>Is the bundle valid at all?</td><td>before anything is pushed</td></tr>
+    <tr><td><code>T1</code></td><td>Did the node's API accept it?</td><td>per node</td></tr>
+    <tr><td><code>T3</code></td><td>Is the node actually serving it, by serial?</td><td>per node, per name</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>There is no T2. "Present in HAProxy's memory" is covered implicitly: the Data Plane API pushes to
+the runtime socket and only falls back to a reload if that fails, so a node passing T3 has
+necessarily loaded it.</p>
+
+<figure class="diagram">
+  <svg viewBox="0 0 900 300" role="img"
+       aria-label="At each node the certificate is uploaded, then added to a crt-list, then the running process is asked whether it knows that list. If it does not, no bind line reads it and the outcome is awaiting bind. Otherwise the node is probed and the outcome is serving or failed.">
+    <defs>
+      <marker id="g5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <g font-family="ui-monospace,monospace" font-size="11.5" text-anchor="middle">
+      <rect x="16" y="66" width="132" height="44" rx="6" fill="none" stroke="currentColor"/>
+      <text x="82" y="84" fill="currentColor">upload</text>
+      <text x="82" y="100" fill="currentColor" font-size="10" opacity=".65">T1: API accepts it</text>
+      <rect x="196" y="66" width="150" height="44" rx="6" fill="none" stroke="currentColor"/>
+      <text x="271" y="84" fill="currentColor">crt-list</text>
+      <text x="271" y="100" fill="currentColor" font-size="10" opacity=".65">create or append</text>
+      <rect x="394" y="66" width="156" height="44" rx="6" fill="none" stroke="currentColor"/>
+      <text x="472" y="84" fill="currentColor">ask the process</text>
+      <text x="472" y="100" fill="currentColor" font-size="10" opacity=".65">does it know this list?</text>
+    </g>
+    <g stroke="currentColor" fill="none" marker-end="url(#g5)">
+      <path d="M152,88 L192,88"/>
+      <path d="M350,88 L390,88"/>
+      <path d="M554,88 L604,88"/>
+      <path d="M472,114 L472,196 L604,196"/>
+    </g>
+    <text x="530" y="80" font-family="-apple-system,system-ui,sans-serif" font-size="10.5" fill="currentColor" opacity=".7" text-anchor="middle">yes</text>
+    <text x="498" y="188" font-family="-apple-system,system-ui,sans-serif" font-size="10.5" fill="var(--amber)" text-anchor="middle">nothing reads it</text>
+    <rect x="608" y="66" width="140" height="44" rx="6" fill="none" stroke="currentColor"/>
+    <text x="678" y="84" font-family="ui-monospace,monospace" font-size="11.5" fill="currentColor" text-anchor="middle">T3 probe</text>
+    <text x="678" y="100" font-family="ui-monospace,monospace" font-size="10" fill="currentColor" opacity=".65" text-anchor="middle">serial must match</text>
+    <g stroke="currentColor" fill="none" marker-end="url(#g5)">
+      <path d="M752,78 L804,44"/>
+      <path d="M752,98 L804,132"/>
+    </g>
+    <g font-family="ui-monospace,monospace" font-size="11">
+      <rect x="808" y="22" width="82" height="30" rx="15" fill="var(--green-bg)" stroke="var(--green)"/>
+      <text x="849" y="42" fill="var(--green)" text-anchor="middle">serving</text>
+      <rect x="808" y="118" width="82" height="30" rx="15" fill="var(--red-bg)" stroke="var(--red)"/>
+      <text x="849" y="138" fill="var(--red)" text-anchor="middle">failed</text>
+      <rect x="608" y="180" width="282" height="32" rx="16" fill="var(--amber-bg)" stroke="var(--amber)"/>
+      <text x="749" y="201" fill="var(--amber)" text-anchor="middle">awaiting a bind line</text>
+    </g>
+    <rect x="16" y="240" width="874" height="44" rx="6" fill="none" stroke="var(--amber)" stroke-dasharray="4 3"/>
+    <text x="34" y="258" font-family="-apple-system,system-ui,sans-serif" font-size="11" fill="var(--amber)">Cert Camel never edits HAProxy configuration. It states the line to add:</text>
+    <text x="34" y="275" font-family="ui-monospace,monospace" font-size="10.5" fill="currentColor" opacity=".85">bind &lt;address&gt;:443 ssl crt-list /certs/example_com-crt-list.txt alpn h2,http/1.1</text>
+  </svg>
+  <figcaption><b>A serial number is the proof.</b> Each issuance carries one, unique to it, so
+    comparing what a node serves against what was just obtained distinguishes the new certificate
+    from the one it replaced &mdash; which a name or an expiry date cannot.</figcaption>
+</figure>
+
+<h3>How a wildcard is proved</h3>
+
+<p>A wildcard cannot be proved by asking for the name it covers, because several certificates may
+answer to that. It is probed with a synthetic <code>certcamel-probe.&lt;apex&gt;</code> that only a
+wildcard can match. The bare domain is probed too, but only for coverage &mdash; it says who is
+serving a name more than one certificate may legitimately hold.</p>
+
+<h3>Three outcomes</h3>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Outcome</th><th>Means</th><th>Do</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill good">serving</span></td>
+        <td>The node is answering with this exact certificate</td><td>Nothing</td></tr>
+    <tr><td><span class="pill warn">awaiting bind</span></td>
+        <td>Installed, but no configuration points at it yet</td>
+        <td>Add the bind line, reload HAProxy</td></tr>
+    <tr><td><span class="pill crit">failed</span></td>
+        <td>Rejected, or serving something else</td>
+        <td>Read the log &mdash; the node said why</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout warn">
+  <div class="h">Waiting for a bind line is not a failure</div>
+  <p>HAProxy refuses to load a configuration naming a certificate file that does not exist. A
+  brand-new frontend therefore has to be built in two steps: put the certificate on the node first,
+  then add the configuration pointing at it. A deployment that ends here has done everything asked
+  of it, so it reports success, sends no failure alert, and hands over the line to add. A node
+  already proved to be serving is never reported this way, even if some other list is unread &mdash;
+  the state means nothing could be verified, not that a file is unreferenced.</p>
+</div>
+
+<h2 id="agree">Where two parts must agree</h2>
+
+<p>Four values are produced in one place and consumed in another. Each is a plain string, so a
+mismatch is silent: nothing fails, the two sides simply describe different things.</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Value</th><th>Produced by</th><th>Consumed by</th><th>If they disagree</th></tr></thead>
+  <tbody>
+    <tr><td>The certificate identifier</td><td>the grouping, from the watched hosts</td>
+        <td>the folder, the filename, the crt-list name, renewal</td>
+        <td>a certificate is filed under a name nothing looks for</td></tr>
+    <tr><td>The crt-list path</td><td>deployment, from structure + identifier</td>
+        <td>the load balancer page's reporting</td>
+        <td>a working deployment is reported as never going to be served</td></tr>
+    <tr><td>The stored filename</td><td>the node's API, after rewriting dots</td>
+        <td>crt-list entries, bind lines, later lookups</td>
+        <td>a bind line names a file that does not exist</td></tr>
+    <tr><td>The deployment outcome</td><td>one deployment run</td>
+        <td>a log, an email, an audit entry, two pages</td>
+        <td>the same event is green in one place and red in another</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout good">
+  <div class="h">The identifier is derived, not stored</div>
+  <p>A certificate's identifier is computed from the hosts being watched, so it can change when the
+  watched set changes &mdash; giving the console its own address, for instance, moves its name onto a
+  certificate of its own with a new identifier. Anything holding an identifier from before must
+  re-derive it rather than remember it.</p>
+</div>
+
+<footer>
+  <p>Cert Camel is beta software, MIT licensed, and comes with no warranty.</p>
+</footer>
+
+</article>
+</div>
+</div>
+</body>
+</html>
