@@ -97,6 +97,21 @@ try {
     Check 'an empty section is dropped' ($text -notmatch 'Deployments') $text
     Check 'there is no markup in it'    ($text -notmatch '<') $text
 
+    # A row with no verdict still has to read as a ROW. Blank markers put it at
+    # the same indent as a note, where it looks like more detail about the line
+    # above rather than its own entry.
+    $plain = New-AlertMessage -Title 'T' -Sections @(
+        (New-AlertSection -Heading 'H' -Rows @(
+            (New-AlertRow -Text 'Failed thing' -Status 'bad' -Note 'the reason'),
+            (New-AlertRow -Text 'Quiet thing'  -Status 'none' -Note 'just so you know')
+        ))
+    )
+    $plainText = Format-AlertText -Message $plain
+    Check 'a row with no status is still marked' ($plainText -match '\[--\]\s+Quiet thing') $plainText
+    Check 'and is not indented like a note' `
+          ($plainText -notmatch '(?m)^\s{9}Quiet thing') `
+          'it would read as detail belonging to the row above'
+
     # ----------------------------------------------------------------------- #
     Write-Host "`nthe HTML rendering"
     $html = Format-AlertHtml -Message $msg

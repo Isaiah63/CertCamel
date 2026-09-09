@@ -2048,7 +2048,11 @@ function Format-AlertText {
     #>
     param([hashtable]$Message)
 
-    $mark = @{ ok = '[ok]  '; warn = '[!]   '; bad = '[FAIL]'; none = '      ' }
+    # All six characters wide so the text column lines up. 'none' gets a VISIBLE
+    # marker rather than blanks: blanks put the row at the same indent as a
+    # note, and a row with nothing to report then reads as more detail about the
+    # row above it instead of as its own line.
+    $mark = @{ ok = '[ok]  '; warn = '[!]   '; bad = '[FAIL]'; none = '[--]  ' }
 
     $out = New-Object Text.StringBuilder
     [void]$out.AppendLine([string]$Message.title)
