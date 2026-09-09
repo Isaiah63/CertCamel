@@ -675,13 +675,32 @@
        nothing will repeat it. */
     var shown = assigned.slice();
     Object.keys(byTarget).forEach(function(tid){
+      /* ...but only while the group still exists. byTarget accumulates on
+         purpose and is never pruned, so it keeps entries for targets deleted
+         from Settings months ago. Removing a target is a deliberate statement
+         that the tool no longer manages it - servers get rebuilt and destroyed
+         as a matter of course - so a pill for one is a warning with nothing to
+         act on: the group cannot be assigned, because it is not there. A
+         warning that can never be cleared is the kind that teaches people to
+         ignore warnings.
+
+         Skipping them here also keeps `newest` honest, since it is only
+         computed over what gets rendered - otherwise the row reports a "last
+         deployed" time belonging to a deployment nobody can see.
+
+         An ASSIGNED target missing from Settings is deliberately NOT hidden:
+         that is a broken configuration rather than a retired one, and it should
+         stay visible. */
+      if (!Object.prototype.hasOwnProperty.call(labels, tid)) { return; }
       if (shown.indexOf(tid) === -1) { shown.push(tid); }
     });
 
     var newest = null;
     shown.forEach(function(tid){
       var rec = byTarget[tid];
-      var label = (rec && rec.label) || labels[tid] || tid;
+      // Current name first: byTarget stores the label as it was at deploy
+      // time, so a renamed group would otherwise keep showing its old name.
+      var label = labels[tid] || (rec && rec.label) || tid;
       var isAssigned = assigned.indexOf(tid) !== -1;
 
       /* Deployed to, but not assigned. Renewal only pushes to assigned groups,
