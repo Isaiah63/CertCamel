@@ -240,10 +240,6 @@
        certificate, a wildcard, and this console's own. Says what is actually
        true instead, which is the part that matters when deciding what a Renew
        will take with it. */
-    var intro = el('p', 'mini',
-      certs.length + (certs.length === 1 ? ' certificate' : ' certificates') +
-      '. Renewing one renews every name on it.');
-    host.appendChild(intro);
 
     var actionsRow = el('div', 'toolbar');
     var renewAll = el('button', 'btn primary', 'Renew all expiring');

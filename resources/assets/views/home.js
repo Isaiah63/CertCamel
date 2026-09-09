@@ -847,6 +847,14 @@
   function cardFoot(parts){
     var foot = el('div', 'cardfoot');
     parts.forEach(function(p){ if (p) { foot.appendChild(p); } });
+    /* .cardfoot draws a rule above itself to separate notes from the card's
+       content. With nothing in it, that rule is a line under the last thing on
+       the card hanging over empty space. Both refreshControl and forecastNote
+       return an empty DocumentFragment when they have nothing to say - truthy,
+       appended, contributing no nodes - so a foot can be built and still be
+       empty. An empty fragment rather than null, because the callers
+       appendChild this straight and null would throw. */
+    if (!foot.childNodes.length) { return document.createDocumentFragment(); }
     return foot;
   }
 
