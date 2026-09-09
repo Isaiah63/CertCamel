@@ -579,6 +579,101 @@
     log.parentNode.appendChild(bar);
   }
 
+  /* Tooltips.
+
+     The browser's own tooltip is a small yellow box that appears UNDER the
+     pointer, after a delay it chooses, in a font that belongs to no design.
+     On a help icon the pointer then sits on top of the first words.
+
+     There are around fifty title attributes across these views and they are the
+     right place for the text to live, so this borrows rather than replaces:
+     on hover the title is moved to data-tip, which stops the native box, and
+     put back on the way out. Nothing at the call sites changes, and a title set
+     later still works.
+
+     Positioned against the ELEMENT, not the pointer, so it never covers what it
+     is describing. Fixed positioning, so a card with overflow cannot clip it. */
+  var tipBox = null, tipHost = null;
+
+  function hideTip(){
+    if (tipHost) {
+      // Put the title back, unless something replaced it while it was borrowed.
+      if (!tipHost.getAttribute('title') && tipHost.getAttribute('data-tip')) {
+        tipHost.setAttribute('title', tipHost.getAttribute('data-tip'));
+      }
+      tipHost.removeAttribute('data-tip');
+      tipHost.removeAttribute('aria-describedby');
+      tipHost = null;
+    }
+    if (tipBox) { tipBox.classList.add('hidden'); }
+  }
+
+  function showTip(host){
+    var text = host.getAttribute('title');
+    if (!text) { return; }                       // title="" is not a tooltip
+    hideTip();
+
+    if (!tipBox) {
+      tipBox = document.createElement('div');
+      tipBox.className = 'tip hidden';
+      tipBox.id = 'apptip';
+      tipBox.setAttribute('role', 'tooltip');
+      document.body.appendChild(tipBox);
+    }
+
+    host.setAttribute('data-tip', text);
+    host.removeAttribute('title');
+    host.setAttribute('aria-describedby', 'apptip');
+    tipHost = host;
+
+    tipBox.textContent = text;
+    tipBox.classList.remove('hidden');
+    tipBox.style.left = '0px';
+    tipBox.style.top  = '0px';
+
+    var r  = host.getBoundingClientRect();
+    var bw = tipBox.offsetWidth, bh = tipBox.offsetHeight;
+    var gap = 8;
+
+    // Above by preference, below when there is no room up there.
+    var top = r.top - bh - gap;
+    if (top < gap) { top = r.bottom + gap; }
+
+    // Centred on the element, then pulled back inside the window.
+    var left = r.left + (r.width / 2) - (bw / 2);
+    var maxLeft = document.documentElement.clientWidth - bw - gap;
+    if (left > maxLeft) { left = maxLeft; }
+    if (left < gap) { left = gap; }
+
+    tipBox.style.left = Math.round(left) + 'px';
+    tipBox.style.top  = Math.round(top) + 'px';
+  }
+
+  function tipTarget(node){
+    while (node && node !== document.body) {
+      if (node.nodeType === 1 && node.hasAttribute && node.hasAttribute('title')) { return node; }
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  document.addEventListener('mouseover', function(e){
+    var t = tipTarget(e.target);
+    if (t === tipHost) { return; }
+    if (t) { showTip(t); } else { hideTip(); }
+  }, true);
+
+  // Keyboard users get the same text: focus shows it, blur and Escape hide it.
+  document.addEventListener('focusin', function(e){
+    var t = tipTarget(e.target);
+    if (t) { showTip(t); }
+  }, true);
+  document.addEventListener('focusout', hideTip, true);
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') { hideTip(); }
+  }, true);
+  // A scroll moves the element out from under a fixed box that cannot follow it.
+  window.addEventListener('scroll', hideTip, true);
   // --- Theme ---------------------------------------------------------------- //
   // ADDING A THEME IS ONE CSS BLOCK (:root[data-theme="name"]{...} in app.css)
   // plus one entry here. Nothing else in the app knows a theme exists.

@@ -633,6 +633,22 @@ th.pick input,td.pick input{cursor:pointer; margin:0;}
   text-decoration:none; margin-bottom:.5rem;}
 .backlink:hover,.backlink:focus-visible{color:var(--text); text-decoration:underline;}
 
+/* Tooltip. Replaces the browser's yellow box, which appears under the pointer
+   in a font belonging to no design and covers the first words of its own text.
+   Positioned against the element instead, so it never hides what it describes.
+
+   position:fixed because these sit inside cards and tables that clip; the
+   coordinates come from getBoundingClientRect, which is already viewport
+   relative, so the two agree without further arithmetic. */
+.tip{position:fixed; z-index:80; max-width:26rem; pointer-events:none;
+  padding:.45rem .6rem; border-radius:var(--radius);
+  background:var(--surface-solid); color:var(--text);
+  border:1px solid var(--border); box-shadow:var(--shadow);
+  font-size:.78rem; line-height:1.45; white-space:normal;
+  animation:tipin .09s ease-out;}
+@keyframes tipin{from{opacity:0; transform:translateY(2px);} to{opacity:1; transform:none;}}
+@media (prefers-reduced-motion:reduce){.tip{animation:none;}}
+
 /* Row actions menu. Renew stays a visible button; the rest live behind this.
    position:FIXED, not absolute, and deliberately so: .tablewrap sets
    overflow-x:auto, and per spec that computes overflow-y to auto as well, so an
