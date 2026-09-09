@@ -615,6 +615,17 @@ th.pick input,td.pick input{cursor:pointer; margin:0;}
    belongs next to the thing that will do the hitting. */
 .selcount{font-size:.8rem; color:var(--muted); margin-left:.2rem; white-space:nowrap;}
 
+/* Renewals summary on Home, and the page it links to. */
+.renewsum{margin:.1rem 0 .35rem; font-size:.9rem;}
+.renewsum .w{color:var(--amber); font-weight:600;}
+.renewsum .d{color:var(--text);}
+/* The search box should take the room going spare; the window select stays at
+   its natural width so the two never fight over it. */
+.toolbar .input.grow{flex:1 1 16rem; min-width:10rem;}
+.backlink{display:inline-block; font-size:.8rem; color:var(--muted);
+  text-decoration:none; margin-bottom:.5rem;}
+.backlink:hover,.backlink:focus-visible{color:var(--text); text-decoration:underline;}
+
 /* Row actions menu. Renew stays a visible button; the rest live behind this.
    position:FIXED, not absolute, and deliberately so: .tablewrap sets
    overflow-x:auto, and per spec that computes overflow-y to auto as well, so an

@@ -759,46 +759,36 @@
       return new Date(x.renewAfter) - new Date(y.renewAfter);
     });
 
-    items.forEach(function(c){
-      var b = el('div', 'renewal');
-      b.appendChild(el('div', 'n', c.name || c.certId));
+    /* A summary, not the list. Every certificate the forecast considered used to
+       get a block here with no cap, filter or search - fine at four, a wall at
+       fifty, on the page whose job is to answer 'is anything about to happen'.
+       The detail moved to #/renewals, which can search and filter it. */
+    var due  = items.filter(function(c){ return c.due; }).length;
+    var next = items.filter(function(c){ return !c.due && c.renewAfter; })[0];
+    var unknown = items.filter(function(c){ return !c.due && !c.renewAfter; }).length;
 
-      if (c.due) {
-        b.appendChild(el('div', 'w', 'Due now — ' + (c.reason || 'the CA says so')));
-      } else if (c.renewAfter) {
-        // Two separate facts, and conflating them was the bug. The CA's window
-        // opening is a floor - nothing runs at that moment - and the run is when
-        // this tool acts on it. Showing only the first read as an appointment.
-        var run = CC.renewalRun(c.renewAfter, lastRenewTask);
-        if (run) {
-          b.appendChild(el('div', 'd', 'Renews ' + fmtDateTime(run)));
-          b.appendChild(el('div', 'g', 'CA window opens ' + fmtDateTime(c.renewAfter)));
-        } else {
-          // No usable schedule to work from, so the window is all that can be
-          // said honestly - naming a run time would be inventing one.
-          b.appendChild(el('div', 'd', 'CA window opens ' + fmtDateTime(c.renewAfter)));
-        }
-      } else {
-        b.appendChild(el('div', 'd', 'Renewal date not known yet'));
-      }
+    var sum = el('p', 'renewsum');
+    if (due) {
+      sum.appendChild(el('span', 'w', due + (due === 1 ? ' certificate is' : ' certificates are') + ' due now'));
+    } else if (next) {
+      var run = CC.renewalRun(next.renewAfter, lastRenewTask);
+      sum.appendChild(el('span', 'd', 'Next: ' + (next.name || next.certId) + ' — ' +
+        (run ? 'renews ' + fmtDateTime(run) : 'CA window opens ' + fmtDateTime(next.renewAfter))));
+    } else {
+      sum.appendChild(el('span', 'd', 'Nothing dated yet'));
+    }
+    card.appendChild(sum);
 
-      // Renewal and deployment are separate things. A certificate with nothing
-      // assigned renews and then sits on disk - renew.ps1 logs it and carries
-      // on, so "automation is on" reads as more reassuring than it should.
-      var tg = targetsFor(c.certId);
-      if (tg.length) {
-        b.appendChild(el('div', 'g', 'deploys to ' + tg.map(targetLabel).join(', ')));
-      } else if (isTracker(c.certId)) {
-        // Deployed nowhere BY DESIGN - this is the certificate serving this
-        // page, and it belongs to the tool rather than to a load balancer.
-        // Warning about it would train people to ignore a warning that is real
-        // on every other row.
-        b.appendChild(el('div', 'g', 'serves this console — nothing to deploy'));
-      } else {
-        b.appendChild(el('div', 'w', 'no load balancer assigned, so it will not deploy'));
-      }
-      card.appendChild(b);
-    });
+    /* Counts rather than rows: the one number worth carrying to a summary is how
+       many are NOT spoken for, because that is the state somebody has to act on. */
+    var line = items.length + (items.length === 1 ? ' certificate' : ' certificates') + ' tracked';
+    if (unknown) { line += ', ' + unknown + ' with no date yet'; }
+    card.appendChild(el('p', 'mini', line));
+
+    var more = el('button', 'btn sm', 'See all renewals');
+    more.type = 'button';
+    more.addEventListener('click', function(){ location.hash = '#/renewals'; });
+    card.appendChild(more);
 
     var stamp = el('p', 'mini');
     var how  = (f.mode === 'preview') ? 'a preview you ran' : 'the scheduled run';
@@ -904,6 +894,10 @@
       // Cached for the domain table, which renders before this returns. The
       // re-render is what makes the badges pick it up on the first paint too.
       lastRenewTask = taskOf(a, 'renew');
+      /* Shared with the renewals view, which would otherwise re-fetch the same
+         response to draw the same rows. It falls back to fetching when this is
+         empty, so nothing depends on the home page having been visited. */
+      CC.automationCache = res;
       if (res.forecast && !lastForecast) { lastForecast = res.forecast; render(); }
       else { lastForecast = res.forecast; }
     });
