@@ -491,6 +491,11 @@ h2 .rule{flex:1; height:1px; background:linear-gradient(90deg,var(--border),tran
    space beneath it. .pill.auto opts out: it is a list of rows, not a stat. */
 .pill{text-align:center;}
 .pill:not(.auto){display:flex; flex-direction:column; justify-content:center;}
+/* And a ceiling. flex:1 1 12rem with no maximum lets four tiles stretch to a
+   quarter of any window, so a two-character number sits in the middle of a
+   billboard. Capped, the row keeps its shape and the space goes to the
+   automation card beside it, which has content to put in it. */
+.pill:not(.auto){max-width:22rem;}
 .pill .k{font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:700;}
 .pill .val{font-size:1.5rem; font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin:.15rem 0;}
 .pill .sub{font-size:.78rem; color:var(--muted);}
