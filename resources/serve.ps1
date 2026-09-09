@@ -649,14 +649,19 @@ function Get-StateResponse {
                     passwordSet = [bool](Test-TrackerSecret -Key 'alerts:smtpPassword')
                 }
                 expiry             = @{ enabled = [bool]$settings.alerts.expiry.enabled; thresholds = @($settings.alerts.expiry.thresholds) }
-                # Missing from a settings.json written before this alert existed,
-                # and Get-TrackerSettings only backfills defaults at the TOP level -
-                # so an absent sub-key stays absent. [bool] on $null is $false,
-                # which is the right answer for "never turned on".
+                # Get-TrackerSettings now backfills alerts sub-keys as well as
+                # top-level ones, so these are present on any file it has read.
+                # [bool] on $null is still $false, which stays the right answer
+                # for a hand-edited file that reached here another way.
                 scheduledRenewal   = @{ enabled = [bool]$settings.alerts.scheduledRenewal.enabled }
                 renewalSuccess     = @{ enabled = [bool]$settings.alerts.renewalSuccess.enabled }
                 deploymentFailure  = @{ enabled = [bool]$settings.alerts.deploymentFailure.enabled }
-                monthlySummary     = @{ enabled = [bool]$settings.alerts.monthlySummary.enabled }
+                summary            = @{
+                    cadence   = $(if ($settings.alerts.summary.cadence) { [string]$settings.alerts.summary.cadence } else { 'off' })
+                    weeklyDay = $(if ($settings.alerts.summary.weeklyDay) { [string]$settings.alerts.summary.weeklyDay } else { 'Monday' })
+                    monthDay  = $(if ($settings.alerts.summary.monthDay) { [int]$settings.alerts.summary.monthDay } else { 1 })
+                }
+                htmlEmail          = @{ enabled = [bool]$settings.alerts.htmlEmail.enabled }
                 # Read by the Home checklist to tell "no thanks" from "not yet".
                 none               = [bool]($settings.alerts.ContainsKey('none') -and $settings.alerts.none)
             }
@@ -990,7 +995,32 @@ function Invoke-SaveSettings {
         $schedOn   = [bool]($al.PSObject.Properties['scheduledRenewal']  -and $al.scheduledRenewal.enabled)
         $renewOn   = [bool]($al.PSObject.Properties['renewalSuccess']    -and $al.renewalSuccess.enabled)
         $failOn    = [bool]($al.PSObject.Properties['deploymentFailure'] -and $al.deploymentFailure.enabled)
-        $monthlyOn = [bool]($al.PSObject.Properties['monthlySummary']    -and $al.monthlySummary.enabled)
+        # The summary is a cadence now, not a boolean, so "is it on" is "is it
+        # anything other than off". Anything unrecognised normalises to 'off':
+        # a stale client or a hand-made request must not be able to schedule
+        # mail nobody asked for.
+        $sum = $(if ($al.PSObject.Properties['summary']) { $al.summary } else { $null })
+        $cadence = $(if ($sum -and $sum.PSObject.Properties['cadence']) { [string]$sum.cadence } else { 'off' })
+        if ($cadence -notin @('off', 'daily', 'weekly', 'monthly')) { $cadence = 'off' }
+
+        $weeklyDay = $(if ($sum -and $sum.PSObject.Properties['weeklyDay']) { [string]$sum.weeklyDay } else { 'Monday' })
+        if ($weeklyDay -notin @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')) { $weeklyDay = 'Monday' }
+
+        $monthDay = 1
+        if ($sum -and $sum.PSObject.Properties['monthDay']) {
+            try { $monthDay = [int]$sum.monthDay } catch { $monthDay = 1 }
+        }
+        # 1-28 only. A 29th, 30th or 31st would skip whole months, and
+        # Test-SummaryDue's short-month fallback exists for files that already
+        # carry one rather than as a licence to store a new one.
+        if ($monthDay -lt 1 -or $monthDay -gt 28) { $monthDay = 1 }
+
+        $htmlOn = $true
+        if ($al.PSObject.Properties['htmlEmail'] -and $al.htmlEmail.PSObject.Properties['enabled']) {
+            $htmlOn = [bool]$al.htmlEmail.enabled
+        }
+
+        $monthlyOn = ($cadence -ne 'off')
 
         # "This install does not send email" is an explicit decision, and it is
         # the one thing the five toggles above cannot express: each already gates
@@ -1006,6 +1036,11 @@ function Invoke-SaveSettings {
         if ($noneOn) {
             $expiryOn = $false; $schedOn = $false; $renewOn = $false
             $failOn   = $false; $monthlyOn = $false
+            # The cadence is the stored form, so it has to be forced off too -
+            # leaving it set and relying on $monthlyOn is exactly the kind of
+            # disagreement between stored state and flag this block exists to
+            # prevent, and the summary task reads the cadence, not the flag.
+            $cadence  = 'off'
         }
 
         $anyOn     = $expiryOn -or $schedOn -or $renewOn -or $failOn -or $monthlyOn
@@ -1052,7 +1087,8 @@ function Invoke-SaveSettings {
             scheduledRenewal   = @{ enabled = $schedOn }
             renewalSuccess     = @{ enabled = $renewOn }
             deploymentFailure  = @{ enabled = $failOn }
-            monthlySummary     = @{ enabled = $monthlyOn }
+            summary            = @{ cadence = $cadence; weeklyDay = $weeklyDay; monthDay = $monthDay }
+            htmlEmail          = @{ enabled = $htmlOn }
         }
     }
 

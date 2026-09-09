@@ -74,16 +74,16 @@ $script:ScheduledTaskNames = @(
        label = 'Renew and deploy'
        level = 'Issues certificates and pushes them to load balancers'
        detail = "Renews only what the certificate authority says is due, deploys each one to its assigned load balancers, then verifies every node is really serving it." }
-    @{ key = 'check';  name = 'SSL Cert Check'
+    @{ key = 'check';  name = 'Cert Camel SSL Check'
        script = 'check-ssl.ps1'
        label = 'Expiry check'
        level = 'Read-only'
        detail = "Re-reads the expiry date of every tracked host so the page is current. Never issues or deploys anything." }
-    @{ key = 'report'; name = 'Cert Camel Monthly Report'
-       script = 'monthly-report.ps1'
-       label = 'Monthly summary email'
+    @{ key = 'report'; name = 'Cert Camel Status Summary'
+       script = 'status-summary.ps1'
+       label = 'Status summary email'
        level = 'Read-only'
-       detail = "Sends the summary email on the 1st. Registered as a daily task that does nothing on the other days, because there is no monthly trigger to reach for." }
+       detail = "Emails what every scheduled task, certificate and load balancer is doing, at whatever frequency Settings asks for. Registered daily and decides its own send day, because there is no monthly trigger to reach for." }
     @{ key = 'server'; name = 'Cert Camel Server'
        script = 'serve.ps1'
        # Just "Web page": the Home tile prints the label and the schedule side
@@ -681,7 +681,10 @@ function New-DefaultAlertSettings {
         scheduledRenewal  = @{ enabled = $false }
         renewalSuccess    = @{ enabled = $false }
         deploymentFailure = @{ enabled = $false }
-        monthlySummary    = @{ enabled = $false }
+        # Replaces the old monthlySummary boolean, migrated in
+        # Get-TrackerSettings. Same message, sent as often as asked for - a
+        # daily one is a heartbeat, where the absence of the mail is the signal.
+        summary           = @{ cadence = 'off'; weeklyDay = 'Monday'; monthDay = 1 }
         # The only alert setting that defaults ON, and the reason is that it is
         # not one: the others decide whether mail is SENT, where this decides
         # only what a message that was going to be sent anyway looks like.
@@ -759,6 +762,29 @@ function Get-TrackerSettings {
         if (-not $s.ContainsKey($k) -or $null -eq $s[$k]) { $s[$k] = $def[$k] }
     }
     $s.providers = @($s.providers)
+
+    <#
+      alerts.monthlySummary was a boolean; alerts.summary is a cadence. The
+      message did not change - it grew a scheduled-task section and can now be
+      sent daily or weekly - so an install that had the monthly email on keeps
+      getting exactly the monthly email.
+
+      Runs BEFORE the backfill below, which would otherwise write the 'off'
+      default over a monthly summary somebody had deliberately turned on.
+      monthlySummary is left in the file rather than deleted: it costs nothing,
+      an older build still reads it, and the first save from the Settings page
+      drops it anyway.
+    #>
+    if ($s.alerts -is [hashtable] -and
+        $s.alerts.ContainsKey('monthlySummary') -and -not $s.alerts.ContainsKey('summary')) {
+        $wasOn = $false
+        try { $wasOn = [bool]$s.alerts.monthlySummary.enabled } catch { $wasOn = $false }
+        $s.alerts['summary'] = @{
+            cadence   = $(if ($wasOn) { 'monthly' } else { 'off' })
+            weeklyDay = 'Monday'
+            monthDay  = 1
+        }
+    }
 
     # That loop is TOP-LEVEL only: it fills in a missing `alerts` wholesale but
     # never looks inside one that is already there. Every existing settings.json
@@ -1290,8 +1316,8 @@ function Get-ForeignCamelTasks {
     <#
       Scheduled tasks that belong to a DIFFERENT copy of Cert Camel.
 
-      The task names are fixed - "Cert Camel Renew", "SSL Cert Check" and the
-      rest - so there is exactly one of each on a machine no matter how many
+      The task names are fixed - "Cert Camel Renew", "Cert Camel SSL Check" and
+      the rest - so there is exactly one of each on a machine no matter how many
       copies of the folder exist. Registering them from a second copy does not
       add anything; it silently repoints the existing ones, and the first copy
       keeps looking healthy while nothing it owns ever runs again.
@@ -1386,7 +1412,10 @@ function Get-AutomationStatus {
             try { $entry.state = $stateNames[[int]$task.State] } catch { $entry.state = 'unknown' }
             try { if ($task.NextRunTime -and $task.NextRunTime.Year -gt 1999) { $entry.nextRun = $task.NextRunTime.ToString('o') } } catch { $null = $_ }
             try { if ($task.LastRunTime -and $task.LastRunTime.Year -gt 1999) { $entry.lastRun = $task.LastRunTime.ToString('o') } } catch { $null = $_ }
-            try { $entry.lastResult = [int]$task.LastTaskResult } catch { $null = $_ }
+            # [long] so a result that does not fit Int32 is reported rather than
+            # thrown away by the catch - a swallowed cast here reads downstream
+            # as "no result recorded", which is indistinguishable from success.
+            try { $entry.lastResult = [long]$task.LastTaskResult } catch { $null = $_ }
 
             try {
                 $d = $task.Definition
@@ -2132,6 +2161,275 @@ function Format-AlertHtml {
     [void]$out.AppendLine('</body></html>')
 
     return $out.ToString()
+}
+
+function Test-SummaryDue {
+    <#
+      Whether the status summary goes out today.
+
+      The task is registered DAILY whatever the cadence, and this decides. That
+      is the shape the monthly report always had, and the reasoning holds for
+      every cadence: PowerShell 5.1's New-ScheduledTaskTrigger has no monthly
+      trigger, the CIM trigger it does not expose is more machinery than an
+      email justifies, and a script that reads its own setting can be tested by
+      handing it a date instead of waiting for one.
+    #>
+    param([hashtable]$Settings, [datetime]$Now = (Get-Date))
+
+    $sum = $null
+    try { $sum = $Settings.alerts.summary } catch { $sum = $null }
+    if (-not $sum) { return $false }
+
+    switch ([string]$sum.cadence) {
+        'daily'  { return $true }
+        'weekly' {
+            $want = [string]$sum.weeklyDay
+            if (-not $want) { $want = 'Monday' }
+            return ($Now.DayOfWeek.ToString() -eq $want)
+        }
+        'monthly' {
+            $day = 1
+            try { if ($sum.monthDay) { $day = [int]$sum.monthDay } } catch { $day = 1 }
+            if ($day -lt 1) { $day = 1 }
+            # A 31st asked for in February would never fire at all, so the last
+            # day of a short month stands in. Silently skipping seven months of
+            # the year is exactly the kind of gap nobody notices until the one
+            # month they needed the mail.
+            $last = [DateTime]::DaysInMonth($Now.Year, $Now.Month)
+            if ($day -gt $last) { $day = $last }
+            return ($Now.Day -eq $day)
+        }
+        default { return $false }   # 'off', absent, or anything unrecognised
+    }
+}
+
+function Get-WorseStatus {
+    <#
+      The more serious of two row statuses. 'none' ranks with 'ok' because it
+      means "nothing to say", not "nothing is wrong" - an optional task that was
+      never set up must not turn a clear day into a warning.
+    #>
+    param([string]$A, [string]$B)
+    $rank = @{ ok = 0; none = 0; warn = 1; bad = 2 }
+    $ra = $rank[[string]$A]; if ($null -eq $ra) { $ra = 0 }
+    $rb = $rank[[string]$B]; if ($null -eq $rb) { $rb = 0 }
+    return $(if ($rb -gt $ra) { $B } else { $A })
+}
+
+function Get-NextSummaryDate {
+    <#
+      The next day the summary will go out, so the mail can say when to expect
+      the following one. That line is the whole point of a heartbeat: it turns
+      "no email" from ambiguous into overdue.
+
+      Walks forward asking Test-SummaryDue rather than doing calendar
+      arithmetic per cadence - one rule, so the answer cannot disagree with what
+      actually sends.
+    #>
+    param([hashtable]$Settings, [datetime]$Now = (Get-Date))
+    for ($i = 1; $i -le 400; $i++) {
+        $d = $Now.Date.AddDays($i)
+        if (Test-SummaryDue -Settings $Settings -Now $d) { return $d }
+    }
+    return $null
+}
+
+function Get-DeploymentRecords {
+    <#
+      Every deploy-<certId>.json, as objects. serve.ps1 reads these one at a
+      time while building state; the summary wants all of them.
+    #>
+    $out = @()
+    if (-not (Test-Path $script:JobsDir)) { return @() }
+    foreach ($f in @(Get-ChildItem -Path $script:JobsDir -Filter 'deploy-*.json' -File -ErrorAction SilentlyContinue)) {
+        try { $out += ((Get-Content $f.FullName -Raw -Encoding UTF8) | ConvertFrom-Json) }
+        catch { $null = $_ }   # unreadable: skipped, exactly as serve.ps1 treats one
+    }
+    return @($out)
+}
+
+function New-StatusSummaryMessage {
+    <#
+      The status summary, as a structured message plus the subject to send it
+      under.
+
+      **The subject line carries the verdict**, and that is the feature rather
+      than a detail: a daily mail that has to be OPENED to learn nothing is
+      wrong has just moved the chore from the server to the inbox. On a good day
+      this should cost one glance at a preview pane.
+
+      Built here rather than inside status-summary.ps1 so it can be tested by
+      handing it data, instead of by owning a Windows scheduler, a set of
+      certificates and a load balancer. Every input is a parameter with a live
+      default: the script passes nothing, the test passes fixtures.
+    #>
+    param(
+        [hashtable]$Settings,
+        [datetime]$Now = (Get-Date),
+        $Automation,
+        $Checker,
+        $Deployments,
+        [int]$ExpiryWarnDays = 30
+    )
+
+    # Get-AutomationStatus returns the WHOLE picture - @{ available; error;
+    # tasks; isServer } - not a bare list. Iterating the wrapper as though it
+    # were the list yields one nameless entry that looks unregistered, which is
+    # precisely the "lie in the dangerous direction" its own docstring warns
+    # about: it would report automation as dead while it ran perfectly.
+    if ($null -eq $Automation)  { $Automation  = Get-AutomationStatus }
+    if ($null -eq $Checker)     { $Checker     = Get-CheckerResults }
+    if ($null -eq $Deployments) { $Deployments = @(Get-DeploymentRecords) }
+
+    # Worst status seen, and the phrases that explain it. The FIRST phrase is
+    # what reaches the subject line, so problems are added worst-first within
+    # each section and tasks are checked before certificates: a task that is not
+    # running is a bigger deal than a certificate that has three weeks left.
+    $worst   = 'ok'
+    $trouble = @()
+
+    # ----- scheduled tasks -------------------------------------------------- #
+    # The real gap this summary exists to close. A task that quietly stops
+    # firing is invisible today: Task Scheduler still says Ready, nothing is
+    # logged, and the first symptom is an expired certificate weeks later.
+    $taskRows = @()
+
+    if (-not $Automation.available) {
+        # The scheduler itself could not be read. Saying "no tasks registered"
+        # here would claim automation is off when it may be running fine, so the
+        # summary reports what is actually known: that it could not look.
+        $taskRows += (New-AlertRow -Text 'Could not read the Windows scheduler' -Status 'warn' `
+            -Note ([string]$Automation.error))
+        $worst = Get-WorseStatus $worst 'warn'
+        $trouble += 'the scheduler could not be read'
+    }
+
+    foreach ($e in @($Automation.tasks)) {
+        $status = 'ok'
+        $note   = $null
+
+        if (-not $e.registered) {
+            # The web page task is genuinely optional - it is only offered on
+            # Windows Server - so its absence is a fact, not a fault. Calling it
+            # a problem would be the false alarm that teaches people to ignore
+            # this mail.
+            if ($e.key -eq 'server') { $status = 'none'; $note = 'not set up (optional)' }
+            else {
+                $status = 'bad'; $note = 'NOT REGISTERED - nothing is running this'
+                $worst = Get-WorseStatus $worst 'bad'; $trouble += "$($e.label) is not registered"
+            }
+        }
+        elseif (-not $e.enabled) {
+            $status = 'warn'; $note = 'registered but switched off'
+            $worst = Get-WorseStatus $worst 'warn'; $trouble += "$($e.label) is switched off"
+        }
+        else {
+            $bits = @()
+            if ($e.lastRun) { $bits += "last ran $(Format-TrackerTime -Time ([datetime]$e.lastRun) -Settings $Settings -Format 'd MMM HH:mm')" }
+            if ($e.nextRun) { $bits += "next $(Format-TrackerTime -Time ([datetime]$e.nextRun) -Settings $Settings -Format 'd MMM HH:mm')" }
+            $note = ($bits -join ', ')
+
+            # 0 is success. 267011 (0x41303) is "has not run yet", which is
+            # normal for something registered today and worth saying rather than
+            # colouring red. 267009 (0x41301) means it is running right now.
+            #
+            # [long], NOT [int]. An HRESULT failure code like 0x80070001 is
+            # 2147942401 unsigned, which overflows Int32 and makes the cast
+            # THROW - swallowing the failure and reporting a broken task as
+            # healthy, which is the one direction this must never fail in.
+            # COM hands these back as a signed int32 (so, negative), but a value
+            # arriving from anywhere else can be either.
+            $lr = $null
+            try { $lr = [long]$e.lastResult } catch { $lr = $null }
+            if ($null -ne $lr -and $lr -ne 0 -and $lr -ne 267009 -and $lr -ne 267011) {
+                $status = 'bad'
+                $note   = "last run failed (code $lr)" + $(if ($note) { " - $note" })
+                $worst = Get-WorseStatus $worst 'bad'; $trouble += "$($e.label) last run failed"
+            }
+            elseif ($lr -eq 267011) {
+                $status = 'none'
+                $note   = 'registered, has not run yet' + $(if ($e.nextRun) { ", next $(Format-TrackerTime -Time ([datetime]$e.nextRun) -Settings $Settings -Format 'd MMM HH:mm')" })
+            }
+        }
+        $taskRows += (New-AlertRow -Text ([string]$e.label) -Status $status -Note $note)
+    }
+
+    # ----- certificates ----------------------------------------------------- #
+    $results  = @($Checker.results)
+    $certRows = @()
+    $failing  = @($results | Where-Object { -not $_.ok })
+    $dated    = @($results | Where-Object { $_.ok -and $_.notAfter })
+    $soonest  = $null
+
+    foreach ($r in $failing) {
+        $certRows += (New-AlertRow -Text ([string]$r.host) -Status 'bad' -Note ([string]$r.error))
+    }
+    if ($failing.Count) {
+        $worst = Get-WorseStatus $worst 'bad'; $trouble += "$($failing.Count) host(s) unreachable"
+    }
+
+    if ($dated.Count) {
+        $sorted  = @($dated | Sort-Object { [datetime]$_.notAfter })
+        $soonest = [datetime]$sorted[0].notAfter
+        foreach ($r in $sorted) {
+            $days = [math]::Floor(([datetime]$r.notAfter - $Now).TotalDays)
+            if ($days -le $ExpiryWarnDays) {
+                $st = $(if ($days -le 7) { 'bad' } else { 'warn' })
+                $certRows += (New-AlertRow -Text ([string]$r.host) -Status $st `
+                    -Note "expires in $days day(s), $(Format-TrackerTime -Time ([datetime]$r.notAfter) -Settings $Settings -Format 'd MMM yyyy')")
+                $worst = Get-WorseStatus $worst $st; $trouble += "$($r.host) expires in $days day(s)"
+            }
+        }
+    }
+    # One row per host that needs something, then a COUNT for the rest. Listing
+    # forty healthy hosts is what stops this mail being skimmable, which is the
+    # only thing it has to be. Every row emitted so far is exactly one host, so
+    # the remainder is the subtraction.
+    $okCount = $results.Count - @($certRows).Count
+    if ($okCount -gt 0) {
+        $certRows += (New-AlertRow -Text "$okCount other host(s) valid and reachable" -Status 'ok')
+    }
+
+    # ----- deployments ------------------------------------------------------ #
+    $depRows = @()
+    foreach ($d in @($Deployments)) {
+        $ok = $true
+        try { $ok = [bool]$d.ok } catch { $ok = $true }
+        if ($ok) { continue }
+        $depRows += (New-AlertRow -Text ([string]$d.name) -Status 'bad' -Note ([string]$d.error))
+        $worst = Get-WorseStatus $worst 'bad'; $trouble += "$($d.name) did not deploy"
+    }
+
+    # ----- verdict and subject ---------------------------------------------- #
+    if ($worst -eq 'ok') {
+        $tail = "$($results.Count) host(s) checked"
+        if ($soonest) {
+            $tail += ", soonest expiry in $([math]::Floor(($soonest - $Now).TotalDays)) day(s)"
+        }
+        $summary = "all clear - $tail"
+    }
+    else {
+        $summary = $(if ($trouble.Count -eq 1) { '1 thing needs attention' }
+                     else { "$($trouble.Count) things need attention" }) + " - $($trouble[0])"
+    }
+
+    $next = Get-NextSummaryDate -Settings $Settings -Now $Now
+    # The timestamp goes through Format-TrackerTime so it carries the zone -
+    # "03:20" means nothing to a team spread across zones. The DATE does not: a
+    # calendar day has no such ambiguity, and "1 Oct 2026 EDT" reads as a
+    # mistake, so it is formatted plainly.
+    $footer = "Checked $(Format-TrackerTime -Time $Now -Settings $Settings -Format 'd MMM yyyy HH:mm')."
+    if ($next) {
+        $footer += " The next summary is due $($next.ToString('d MMM yyyy')) - if it does not arrive, something stopped it."
+    }
+
+    $message = New-AlertMessage -Title 'Cert Camel status' -Verdict $worst -Summary $summary -Footer $footer -Sections @(
+        (New-AlertSection -Heading 'Scheduled tasks'   -Rows $taskRows),
+        (New-AlertSection -Heading 'Certificates'      -Rows $certRows),
+        (New-AlertSection -Heading 'Deployments'       -Rows $depRows)
+    )
+
+    return @{ subject = "Cert Camel: $summary"; message = $message; verdict = $worst }
 }
 
 function Set-AlertMailBody {

@@ -992,8 +992,8 @@ the table shows the default.
 | Task | Runs | What that run does |
 |---|---|---|
 | `Cert Camel Renew` | every 6 hours, from the time you chose | Renews what the CA says is due, deploys each one, verifies every node is serving it |
-| `SSL Cert Check` | daily, same time | Re-reads expiry dates. Never issues or deploys |
-| `Cert Camel Monthly Report` | daily, same time | Emails a summary on the 1st; does nothing on other days |
+| `Cert Camel SSL Check` | daily, same time | Re-reads expiry dates. Never issues or deploys |
+| `Cert Camel Status Summary` | daily, same time | Emails the status summary on the days your chosen frequency asks for; does nothing on the others |
 
 ### Seeing and changing them
 
@@ -1236,7 +1236,7 @@ resources\            everything the program needs to run - not yours to edit
   renew.ps1           performs one renewal, then deploys it
   deploy.ps1          pushes to load balancers and verifies every node
   renew-due.ps1       renews whatever the CA says is due, sends expiry alerts (scheduled task)
-  monthly-report.ps1  sends the monthly summary email, if turned on (scheduled task)
+  status-summary.ps1  emails the status summary at the chosen frequency (scheduled task)
   check-lb.ps1        reads what each load balancer node is actually serving
   acme-lib.ps1        shared settings, secrets, grouping and alert-sending logic
   setup.ps1           what setup runs
