@@ -102,7 +102,13 @@
       var row = el('div', 'lbnode' + (n.reachable ? '' : ' down'));
       row.appendChild(el('span', 'dot ' + (n.reachable ? 'ok' : 'bad')));
       row.appendChild(el('span', 'lbname', n.name));
-      row.appendChild(el('span', 'lbid', n.node || '—'));
+      /* HAProxy's own name for itself, which is what tells two nodes behind one
+         address apart. Skipped when it matches the configured name: printing
+         "testhaproxy01 testhaproxy01" is noise, and the case this exists for is
+         precisely the one where the two DIFFER. */
+      if (n.node && n.node !== n.name) {
+        row.appendChild(el('span', 'lbid', n.node));
+      }
 
       var d = el('span', 'lbdetail');
       if (n.reachable) {

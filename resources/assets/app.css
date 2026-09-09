@@ -892,8 +892,13 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 /* Load balancers on Home. A grid rather than a table: four short facts per node
    that should stay on one line on a wide window and stack on a narrow one,
    which a table fights. */
+/* Content-sized name and id columns, matching .lbfe below. They were 6rem and
+   5rem, which a 13-character node name overflows - grid items do not clip, so
+   the name and the monospace id spilled right and printed on top of .lbdetail,
+   hiding the word "HAProxy". Fixed tracks were faking column alignment between
+   rows; auto tracks give that up and use the width that was going spare. */
 .lbnode{display:grid; align-items:baseline; gap:.15rem .8rem; padding:.5rem 0;
-  grid-template-columns:.9rem 6rem 5rem 1fr; border-top:1px solid var(--border);
+  grid-template-columns:.9rem auto auto 1fr; border-top:1px solid var(--border);
   font-size:.85rem;}
 .lbname{font-weight:700; color:var(--text);}
 /* HAProxy's own node name - the thing that tells two nodes behind one address
