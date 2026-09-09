@@ -820,19 +820,34 @@
         // Offer what every node agrees on. A frontend present on only one node
         // of a pair is a configuration difference worth seeing, not something to
         // quietly pick for someone.
-        var counts = {};
-        nodes.forEach(function(n){
+        /* Counted per NODE, not per occurrence.
+
+           The discovery call returns one entry per TLS BIND, and the key here is
+           frontend|port|crt-list with no address in it - so a frontend bound to
+           two addresses on the same port with the same crt-list counts twice on a
+           single node. That made it 2 where nodes.length was 1, which is not
+           equal, so a perfectly ordinary standalone frontend was reported as
+           "not on all 1 nodes - the pair is configured differently": a warning
+           about a pair, on a machine that has no pair.
+
+           A set of node indexes per key answers the question actually being
+           asked - on how many NODES does this appear - and is unaffected by how
+           many bind lines each node has. It also retires the '|obj' sentinel,
+           which shared a namespace with the real keys. */
+        var found = {};
+        nodes.forEach(function(n, i){
           (n.frontends || []).forEach(function(f){
             var key = f.frontend + '|' + (f.port || '') + '|' + (f.crtList || f.crt || '');
-            counts[key] = (counts[key] || 0) + 1;
-            counts[key + '|obj'] = f;
+            if (!found[key]) { found[key] = { obj: f, on: {} }; }
+            found[key].on[i] = true;
           });
         });
 
         var common = [], partial = [];
-        Object.keys(counts).forEach(function(k){
-          if (k.indexOf('|obj') >= 0) { return; }
-          (counts[k] === nodes.length ? common : partial).push(counts[k + '|obj']);
+        Object.keys(found).forEach(function(k){
+          var on = Object.keys(found[k].on).length;
+          if (on === nodes.length) { common.push(found[k].obj); }
+          else { partial.push({ f: found[k].obj, on: on }); }
         });
 
         /* Only when every node agrees. A pair that keeps its certificates in
@@ -1004,12 +1019,15 @@
       box.appendChild(row);
     });
 
-    partial.forEach(function(f){
+    partial.forEach(function(p){
       var row = el('div', 'testrow');
-      row.appendChild(el('span', 'n', f.frontend));
+      row.appendChild(el('span', 'n', p.f.frontend));
       row.appendChild(el('span', 'v bad', 'partial'));
+      // Says which nodes have it and which do not, rather than asserting a
+      // "pair" that may not exist.
       row.appendChild(el('span', 'd',
-        'not on all ' + nodeCount + ' nodes — the pair is configured differently, which is worth fixing first'));
+        'on ' + p.on + ' of ' + nodeCount + ' nodes — the nodes are configured differently, ' +
+        'which is worth fixing before pointing Cert Camel at this frontend'));
       box.appendChild(row);
     });
 
@@ -1099,7 +1117,11 @@
       argHost.appendChild(f);
     });
 
-    var results = el('div');
+    /* Classed so it can span. .provider is a grid, and only .phead, a nested
+       .fields and a direct .field are told to span every column - an unclassed
+       div lands in ONE 17rem column, which is why discovery results came out a
+       fifth of the width with the rest of the card empty beside them. */
+    var results = el('div', 'discovery');
     card.appendChild(results);
     test.addEventListener('click', function(){ testTarget(card.getAttribute('data-tid'), results); });
     disco.addEventListener('click', function(){ discoverTarget(card, results); });

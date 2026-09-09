@@ -908,15 +908,26 @@ tr.open > td{border-bottom:none;}
 
 .testrows{margin:.7rem 0 0; border:1px solid var(--border); border-radius:var(--radius-sm);
   background:var(--bg); overflow:hidden;}
-.testrow{display:flex; gap:.6rem; align-items:baseline; padding:.4rem .75rem;
-  border-bottom:1px solid var(--border); font-size:.8rem;}
+/* wrap, so a row with a long frontend name becomes two lines instead of one
+   line of overlapping text. min-width on a flex item does not stop it
+   overflowing - it only stops it SHRINKING - so a 25-character frontend name
+   was drawn straight over the status pill beside it. */
+.testrow{display:flex; flex-wrap:wrap; gap:.35rem .6rem; align-items:baseline;
+  padding:.4rem .75rem; border-bottom:1px solid var(--border); font-size:.8rem;}
 .testrow:last-child{border-bottom:none;}
-.testrow .n{font-weight:700; min-width:4.5rem;}
+/* Never shrinks below its text, and breaks a long name rather than spilling. */
+.testrow .n{font-weight:700; flex:0 1 auto; min-width:0; overflow-wrap:anywhere;}
 .testrow .v{font-size:.68rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
   padding:.1rem .4rem; border-radius:999px; border:1px solid transparent;}
 .testrow .v.ok{color:var(--green); background:var(--green-bg); border-color:var(--green);}
 .testrow .v.bad{color:var(--red); background:var(--red-bg); border-color:var(--red);}
-.testrow .d{color:var(--muted); word-break:break-word;}
+/* The pill is the one thing that must keep its shape. */
+.testrow .v{flex:none; white-space:nowrap;}
+/* Takes the width left over, and can shrink to nothing before it overflows. */
+.testrow .d{color:var(--muted); word-break:break-word; flex:1 1 12rem; min-width:0;}
+/* A long list of frontends should scroll inside its box rather than push the
+   Save button off the bottom of the page - a work load balancer has dozens. */
+.testrows{max-height:26rem; overflow-y:auto;}
 
 .field{margin:.9rem 0;}
 .field label{display:block; font-size:.7rem; font-weight:700; letter-spacing:.06em;
@@ -942,7 +953,10 @@ tr.open > td{border-bottom:none;}
 .provider .phead{display:flex; align-items:center; justify-content:space-between; gap:1rem;}
 .provider,.fields{display:grid; grid-template-columns:repeat(auto-fit,minmax(17rem,1fr));
   gap:0 1.3rem; align-items:start;}
-.provider .phead,.provider .fields,.provider>.field{grid-column:1 / -1;}
+.provider .phead,.provider .fields,.provider>.field,
+/* Test and Discover results. Without this they are an unclassed grid item and
+   get ONE 17rem column, with the rest of the card empty beside them. */
+.provider>.discovery{grid-column:1 / -1;}
 details{margin:1.4rem 0 0; font-size:.88rem;}
 summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 /* Per-certificate overrides in the assign dialog. Indented under their target
