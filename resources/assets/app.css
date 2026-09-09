@@ -883,7 +883,10 @@ tr.open > td{border-bottom:none;}
    auto-fit collapses the tracks it does not fill, so the two cards split the
    row evenly however wide the window is - and a lone card takes the full width
    rather than sitting in half of it. */
-.cardrow{display:grid; grid-template-columns:repeat(auto-fit,minmax(28rem,1fr));
+/* 24rem rather than 28rem: at 28 a third column needs about 1790px, so a
+   1500-1700px window - the common case on a desktop - got two very wide cards
+   holding short lists. */
+.cardrow{display:grid; grid-template-columns:repeat(auto-fit,minmax(24rem,1fr));
   gap:1.1rem; align-items:stretch; margin:0 0 1.3rem;}
 .cardrow > .card{margin:0; max-width:none; height:100%;}
 
