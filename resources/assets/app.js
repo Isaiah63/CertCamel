@@ -376,6 +376,86 @@
   }
   CertCamel.renderLog = renderLog;
 
+  /* The run log in its own window.
+
+     The log used to live in a panel at the top of the page, which forced a
+     choice nobody wins: reloading picks up the rewritten ssl-data.js, but it
+     also takes the log off the screen - so the one run you most need to read
+     was the one that vanished. The answer was to hold the panel and offer a
+     button, which left the table showing stale numbers until it was pressed.
+
+     In its own window the log survives the reload, so the page can refresh
+     every time and the button is not needed. Where the popup is blocked, or
+     the person closed it, everything below falls back to exactly the old
+     behaviour - this removes a decision rather than adding one.
+
+     Opened from the click that starts the run: a window opened later, when the
+     job finishes, is blocked as an unrequested popup. It polls the job itself
+     rather than being fed by this page, because this page is about to reload
+     out from under it. */
+  var logWin = null;
+
+  function openLogWindow(){
+    try {
+      var w = window.open('', 'certcamelJobLog',
+        'width=980,height=640,scrollbars=yes,resizable=yes');
+      if (!w || w.closed) { return null; }
+      try { w.document.write('<!doctype html><title>Starting...</title>'); w.document.close(); } catch (e) { /* about:blank not ready; the real write below still lands */ }
+      try { w.focus(); } catch (e) { /* focus refused: harmless */ }
+      return w;
+    }
+    catch (e) { return null; }
+  }
+
+  // Written once the job id exists. The window is already open by then, so no
+  // popup blocker is involved. Same origin, so it can carry the token and call
+  // the API directly.
+  function writeLogWindow(w, title, id){
+    var esc = function(t){ var d = document.createElement('div'); d.textContent = String(t); return d.innerHTML; };
+    var doc = [
+      '<!doctype html><html><head><meta charset="utf-8">',
+      '<title>', esc(title), ' - Cert Camel</title><style>',
+      ':root{color-scheme:dark light}',
+      'body{margin:0;padding:1rem 1.15rem;background:#10161b;color:#c6d3db;',
+      "font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}",
+      'h1{font:600 14px/1.3 system-ui,sans-serif;margin:0 0 .7rem;color:#e8eff4}',
+      'pre{margin:0;white-space:pre-wrap;word-break:break-word}',
+      '.e{color:#ff8a80}.w{color:#e0ad5c}.o{color:#6ec98a}',
+      '#s{margin:.8rem 0 0;font:12px/1.4 system-ui,sans-serif;color:#8fa1ad}',
+      '@media(prefers-color-scheme:light){body{background:#f6f8f9;color:#3c4a54}',
+      'h1{color:#131b21}.e{color:#b3261e}.w{color:#8a5a00}.o{color:#1f6f3f}#s{color:#66757f}}',
+      '</style></head><body><h1>', esc(title), '</h1>',
+      '<pre id="l">Starting...</pre><p id="s">Running...</p>',
+      '<script>(function(){',
+      'var id="', esc(id), '",tk="', esc(TOKEN), '";',
+      'var pre=document.getElementById("l"),st=document.getElementById("s"),t=null;',
+      'function lvl(x){var l=x.toLowerCase();',
+      'if(l.indexOf("[error]")>=0)return "e";',
+      'if(l.indexOf("[warn]")>=0)return "w";',
+      'if(l.indexOf("[ok]")>=0)return "o";return "";}',
+      'function draw(txt){var NLc=String.fromCharCode(10);',
+      'var parts=String(txt==null?"":txt).split(NLc),f=document.createDocumentFragment();',
+      'for(var i=0;i<parts.length;i++){if(i)f.appendChild(document.createTextNode(NLc));',
+      'var c=lvl(parts[i]);if(!c){f.appendChild(document.createTextNode(parts[i]));continue;}',
+      'var sp=document.createElement("span");sp.className=c;sp.textContent=parts[i];f.appendChild(sp);}',
+      'pre.textContent="";pre.appendChild(f);}',
+      'function poll(){var x=new XMLHttpRequest();x.open("GET","/api/job/"+id,true);',
+      'x.setRequestHeader("X-Tracker-Token",tk);',
+      'x.onreadystatechange=function(){if(x.readyState!==4)return;var j=null;',
+      'try{j=JSON.parse(x.responseText);}catch(e){}',
+      'if(!j){st.textContent="Lost contact with the server. The run may still be going.";',
+      'if(t)clearInterval(t);return;}',
+      'var atEnd=(window.innerHeight+window.pageYOffset)>=(document.body.scrollHeight-8);',
+      'draw(j.log);if(atEnd)window.scrollTo(0,document.body.scrollHeight);',
+      'if(!j.running){if(t)clearInterval(t);',
+      'st.textContent="Finished. Close this window when you have read it.";}};',
+      'x.send(null);}',
+      'poll();t=setInterval(poll,1500);',
+      '})();<' + '/script></body></html>'
+    ].join('');
+    try { w.document.open(); w.document.write(doc); w.document.close(); return true; }
+    catch (e) { return false; }
+  }
   CertCamel.runJob = function(title, method, path, body){
     if (jobTimer) { return; }
 
@@ -386,12 +466,17 @@
     panel.classList.remove('hidden');
     setBusy(true);
 
+    // Opened here, inside the click, or the browser refuses it.
+    logWin = openLogWindow();
+
     api(method, path, body, function(err, res){
       if (err || !res || !res.jobId) {
         log.textContent = err || 'The server did not start the job.';
+        if (logWin) { try { logWin.close(); } catch (e) { /* already gone */ } logWin = null; }
         setBusy(false);
         return;
       }
+      if (logWin && !writeLogWindow(logWin, title, res.jobId)) { logWin = null; }
       pollJob(res.jobId, log);
     });
   };
@@ -433,8 +518,18 @@
              after 900ms. When something failed, hold the panel and let the
              person press it themselves. */
           if (j.kind === 'check' || j.kind === 'renew' || j.kind === 'deploy') {
-            if (jobHadTrouble(j.log)) { offerReload(); }
-            else { window.setTimeout(function(){ location.reload(); }, 900); }
+            /* With the log in its own window there is nothing to weigh up: it
+               survives the reload, so the page can always refresh and show
+               current numbers. The old choice only still applies when that
+               window was blocked or has been closed. */
+            var haveWindow = false;
+            try { haveWindow = !!(logWin && !logWin.closed); }
+            catch (e) { haveWindow = false; }
+
+            if (haveWindow || !jobHadTrouble(j.log)) {
+              window.setTimeout(function(){ location.reload(); }, 900);
+            }
+            else { offerReload(); }
           }
           else { CertCamel.loadState(); }
         }
