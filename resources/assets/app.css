@@ -477,6 +477,13 @@ h2 .rule{flex:1; height:1px; background:linear-gradient(90deg,var(--border),tran
 /* --muted, not --faint. A tile's label is what makes its number mean anything,
    and on the tinted tiles (.good/.hot/.bad) the coloured ground pushed faint
    under AA. Both reasons point the same way. */
+/* Centred both ways: a stat tile is one number with a label above and a unit
+   below. Ragged left it floats in a corner of a box that stretches to a third
+   of the window, and because the tiles stretch to match the tallest card in the
+   row - the automation one - the content otherwise sits at the top with dead
+   space beneath it. .pill.auto opts out: it is a list of rows, not a stat. */
+.pill{text-align:center;}
+.pill:not(.auto){display:flex; flex-direction:column; justify-content:center;}
 .pill .k{font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:700;}
 .pill .val{font-size:1.5rem; font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin:.15rem 0;}
 .pill .sub{font-size:.78rem; color:var(--muted);}
@@ -1018,7 +1025,7 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 
 /* The automation tile carries a list rather than a single number, so it takes
    more of the row than the stat tiles beside it. */
-.pill.auto{flex:1.7 1 20rem;}
+.pill.auto{flex:1.7 1 20rem; text-align:left;}
 .autohead{display:flex; align-items:baseline; justify-content:space-between; gap:.6rem;}
 .pill.auto .val{font-size:1.15rem; margin:0;}
 .svclist{margin-top:.5rem;}
