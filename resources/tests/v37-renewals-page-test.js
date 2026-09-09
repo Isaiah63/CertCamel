@@ -26,10 +26,19 @@ function cert(id, names){
     caInherited:true, overridden:false, notAfter:day(40), hasLocalCert:true, issuedAt:day(-50) };
 }
 
+// Issued AFTER the forecast finished, which is the case that made three real
+// certificates read as though their expiry could not be found.
+function fresh(id){
+  var c = cert(id);
+  c.issuedAt = new Date(Date.now() + 60000).toISOString();
+  return c;
+}
+
 const STATE = {
   generated:new Date().toISOString(),
   certs:[ cert('soon.example.com'), cert('later.example.com'),
-          cert('nodate.example.com', ['nodate.example.com','alias.example.com']) ],
+          cert('nodate.example.com', ['nodate.example.com','alias.example.com']),
+          fresh('justissued.example.com') ],
   unmapped:[], haveZones:true, groupError:null,
   zones:{refreshed:new Date().toISOString(),count:1,errors:[]},
   deployment:{},
@@ -51,7 +60,8 @@ const AUTOMATION = {
   forecast:{ finishedAt:new Date().toISOString(), mode:'scheduled', considered:[
     {certId:'soon.example.com',   name:'soon.example.com',   due:false, renewAfter:day(0.5)},
     {certId:'later.example.com',  name:'later.example.com',  due:false, renewAfter:day(45)},
-    {certId:'nodate.example.com', name:'nodate.example.com', due:false, renewAfter:null}
+    {certId:'nodate.example.com', name:'nodate.example.com', due:false, renewAfter:null},
+    {certId:'justissued.example.com', name:'justissued.example.com', due:false, renewAfter:null}
   ]}
 };
 
@@ -112,7 +122,7 @@ w.CertCamel.loadState(function(){
         card.querySelectorAll('.renewal').length + ' blocks still rendered');
   check('it names the next one', /soon\.example\.com/.test(card.textContent), card.textContent);
   check('and counts the ones with no date',
-        /1 with no date yet/.test(card.textContent), card.textContent);
+        /2 with no date yet/.test(card.textContent), card.textContent);
   const more = Array.from(card.querySelectorAll('button')).filter(
     b => /See all renewals/.test(b.textContent))[0];
   check('there is a way through to the detail', !!more, 'no button');
@@ -127,10 +137,12 @@ w.CertCamel.loadState(function(){
         !d.getElementById('view-renewals').classList.contains('hidden'), 'still hidden');
 
   console.log('\nevery considered certificate is listed by default');
-  check('three rows', rows().length === 3, names().join(' | '));
+  check('four rows', rows().length === 4, names().join(' | '));
   check('soonest first', names()[0] === 'soon.example.com', names().join(' | '));
-  check('the undated one sorts last', names()[2] === 'nodate.example.com', names().join(' | '));
-  check('tally counts them', tally() === '3 of 3', tally());
+  check('the undated ones sort last',
+        names().slice(2).sort().join() === 'justissued.example.com,nodate.example.com',
+        names().join(' | '));
+  check('tally counts them', tally() === '4 of 4', tally());
 
   console.log('\nthe window filters by how soon it is due');
   setWindow('1');
@@ -138,7 +150,7 @@ w.CertCamel.loadState(function(){
         names().length === 1 && names()[0] === 'soon.example.com', names().join(' | '));
   check('an undated certificate is NOT claimed to be due',
         names().indexOf('nodate.example.com') === -1, names().join(' | '));
-  check('tally says how much is hidden', tally() === '1 of 3', tally());
+  check('tally says how much is hidden', tally() === '1 of 4', tally());
 
   setWindow('90');
   check('three months reaches the 45-day one',
@@ -150,6 +162,22 @@ w.CertCamel.loadState(function(){
   check('All brings the undated one back',
         names().indexOf('nodate.example.com') !== -1, names().join(' | '));
 
+  console.log('\na date missing because the forecast predates the certificate');
+  /* The forecast is not wrong there - it simply ran first. Saying only
+     "Renewal date not known yet" reads as a failure to read the expiry, which
+     is what three real certificates looked like after being issued three hours
+     after a sweep. */
+  function rowFor(name){
+    return rows().filter(function(r){ return r.querySelector('.n').textContent === name; })[0];
+  }
+  check('says the forecast predates it, not that the date is unknowable',
+        /issued since this forecast ran/i.test(rowFor('justissued.example.com').textContent),
+        rowFor('justissued.example.com').textContent);
+  check('a genuinely undated one still says so plainly',
+        /Renewal date not known yet/.test(rowFor('nodate.example.com').textContent),
+        rowFor('nodate.example.com').textContent);
+  check('and the fix is on the page', !!d.getElementById('renew-refresh'), 'no refresh button');
+
   console.log('\nsearch covers names and the domains they carry');
   search('later');
   check('matches the certificate name', names().join() === 'later.example.com', names().join(' | '));
@@ -160,7 +188,7 @@ w.CertCamel.loadState(function(){
   check('no matches says so', rows().length === 0 && /Nothing matches/.test(
         d.getElementById('renew-list').textContent), d.getElementById('renew-list').textContent);
   search('');
-  check('clearing it restores everything', rows().length === 3, names().join(' | '));
+  check('clearing it restores everything', rows().length === 4, names().join(' | '));
 
   console.log('\nsearch and window combine rather than override');
   setWindow('1');

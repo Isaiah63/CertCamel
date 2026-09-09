@@ -109,6 +109,19 @@
       });
       return found;
     }
+    /* A certificate issued AFTER the forecast ran has no date in it, and the
+       forecast is not wrong - it simply predates the certificate. Saying only
+       'Renewal date not known yet' there reads as a failure to read the
+       expiry, when the actual answer is 'ask again'. Three lab certificates
+       were issued three hours after a sweep and looked exactly like that. */
+    var forecastAt = f.finishedAt ? new Date(f.finishedAt).getTime() : 0;
+    function issuedAfterForecast(certId){
+      var c = certsById[certId];
+      if (!c || !c.issuedAt || !forecastAt) { return false; }
+      var t = new Date(c.issuedAt).getTime();
+      return !isNaN(t) && t > forecastAt;
+    }
+
     function isTracker(certId){
       var c = certsById[certId];
       return !!(c && c.tracker);
@@ -139,6 +152,20 @@
     sel.addEventListener('change', function(){ win = sel.value; paint(); });
     bar.appendChild(sel);
 
+    /* Always offered here, unlike on Home where it appears only when the card
+       decides the forecast is stale. This is the page somebody opens BECAUSE a
+       date looks wrong, so the way to fix it belongs in reach. Issues nothing. */
+    var refresh = el('button', 'btn sm', 'Work it out now');
+    refresh.type = 'button';
+    refresh.id = 'renew-refresh';
+    refresh.setAttribute('data-busy-disable', '');
+    refresh.title = 'Works out what would renew and stops. Issues nothing, deploys nothing.';
+    refresh.addEventListener('click', function(){
+      CC.automationCache = null;   // so the next render reads the new answer
+      CC.runJob('Working out what would renew', 'POST', '/api/forecast');
+    });
+    bar.appendChild(refresh);
+
     var tally = el('span', 'selcount', '');
     tally.id = 'renew-tally';
     bar.appendChild(tally);
@@ -149,7 +176,7 @@
     host.appendChild(list);
 
     host.appendChild(el('p', 'mini',
-      'Worked out ' + (f.at ? fmtDateTime(f.at) : 'by the scheduled run') +
+      'Worked out ' + (f.finishedAt ? fmtDateTime(f.finishedAt) : 'by the scheduled run') +
       '. Dates come from the certificate authority and can move.'));
 
     // --- rows ---------------------------------------------------------------
@@ -171,6 +198,8 @@
         } else {
           b.appendChild(el('div', 'd', 'CA window opens ' + fmtDateTime(c.renewAfter)));
         }
+      } else if (issuedAfterForecast(c.certId)) {
+        b.appendChild(el('div', 'w', 'Issued since this forecast ran - work it out again for its date'));
       } else {
         b.appendChild(el('div', 'd', 'Renewal date not known yet'));
       }
