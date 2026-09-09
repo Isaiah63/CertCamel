@@ -790,15 +790,16 @@
     more.addEventListener('click', function(){ location.hash = '#/renewals'; });
     card.appendChild(more);
 
-    var stamp = el('p', 'mini');
-    var how  = (f.mode === 'preview') ? 'a preview you ran' : 'the scheduled run';
-    var tail = (renew && renew.registered && renew.enabled)
-      ? ' Dates come from the certificate authority and can move.'
-      : ' Nothing is scheduled to act on these dates.';
-    stamp.textContent = 'Worked out ' + (f.finishedAt ? ago(f.finishedAt) : 'at an unknown time') +
-      ' by ' + how + '.' + tail;
+    /* No provenance line here any more - when the forecast was worked out, and
+       that CA dates move, is detail for the renewals page rather than a summary.
+       What survives is the half that is a WARNING rather than a note: a forecast
+       nothing is scheduled to act on is a list of dates that will pass. */
+    var idle = null;
+    if (!(renew && renew.registered && renew.enabled)) {
+      idle = el('p', 'mini', 'Nothing is scheduled to act on these dates.');
+    }
 
-    card.appendChild(cardFoot([stamp, forecastNote(fstate), refreshControl(needsRefresh(fstate, f))]));
+    card.appendChild(cardFoot([idle, forecastNote(fstate), refreshControl(needsRefresh(fstate, f))]));
     return card;
   }
 

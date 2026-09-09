@@ -531,10 +531,6 @@
     h.appendChild(el('span', 'badge cool', c.displayName || c.certId));
     card.appendChild(h);
 
-    card.appendChild(el('p', 'mini',
-      'The address this page is served on. It has its own certificate so that editing your ' +
-      'production list can never affect it, and it is deployed nowhere — it belongs to this tool, ' +
-      'not to a load balancer.'));
 
     var days = certDays(c);
     var grid = el('div', 'trackerfacts');

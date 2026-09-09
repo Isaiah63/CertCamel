@@ -224,8 +224,7 @@
     h.appendChild(el('span', 'rule'));
     host.appendChild(h);
 
-    host.appendChild(el('p', 'mini',
-      'TLS frontends reading a crt-list Cert Camel does not write. Not a problem — this is what is still outside the tool.'));
+    host.appendChild(el('p', 'mini', 'Front-ends with unmatched bindings.'));
 
     /* Collapsed by default. Two rows here today; on a load balancer with a
        hundred pre-existing frontends this is nearly all of them, in one card,
