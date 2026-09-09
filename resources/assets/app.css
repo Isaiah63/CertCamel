@@ -527,6 +527,13 @@ td.issuer{color:var(--muted); font-size:.85rem;}
 .err{color:var(--muted); font-size:.85rem; font-style:italic;}
 #certtable table{min-width:62rem;}
 #certtable td.names{min-width:20rem; color:var(--muted); font-size:.83rem;}
+/* The "+N more" in the covers cell. Reads as part of the sentence rather than
+   as a control, because it sits mid-text and a button chrome there would weigh
+   more than the names it is summarising. */
+.morebtn{font:inherit; color:var(--muted); background:none; border:0;
+  padding:0 0 0 .35rem; cursor:pointer; text-decoration:underline;
+  text-underline-offset:2px; white-space:nowrap;}
+.morebtn:hover{color:var(--text);}
 select.ca-pick{font:inherit; font-size:.8rem; color:var(--text);
   padding:.28rem .5rem; border:1px solid var(--border); border-radius:8px;
   background:var(--bg); max-width:14rem;}

@@ -415,7 +415,31 @@
       }
       tr.appendChild(name);
 
-      var covers = el('td', 'names', (c.names || []).join(', '));
+      /* A nine-name SAN certificate joined into one cell is three lines tall,
+         and because a table row is as tall as its tallest cell that one
+         certificate sets the height of the whole row. Show two and offer the
+         rest, which keeps the table scannable without hiding anything: the
+         count is in the button, so you can see there is more without expanding.
+
+         The threshold is SHOW + 1, because '+1 more' next to two names is more
+         furniture than just printing the third. */
+      var covered = c.names || [];
+      var SHOW = 2;
+      var covers = el('td', 'names');
+      if (covered.length <= SHOW + 1) {
+        covers.appendChild(el('span', null, covered.join(', ')));
+      } else {
+        var seen = el('span', null, covered.slice(0, SHOW).join(', '));
+        covers.appendChild(seen);
+        var more = el('button', 'morebtn', '+' + (covered.length - SHOW) + ' more');
+        more.type = 'button';
+        more.title = covered.slice(SHOW).join(', ');
+        more.addEventListener('click', function(){
+          seen.textContent = covered.join(', ');
+          more.parentNode.removeChild(more);
+        });
+        covers.appendChild(more);
+      }
       if (c.deferredNames && c.deferredNames.length) {
         covers.appendChild(el('div', 'mini', 'Not included: ' + c.deferredNames.join(', ')));
       }
