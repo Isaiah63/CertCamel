@@ -1267,7 +1267,53 @@
       'Confirms issuance, and lists each load balancer node with whether it ended up serving it.');
     toggle('al-deployment-failure', 'Automated deployment failed',
       'The most important one: the only signal an unattended renewal has stopped working.');
-    toggle('al-monthly-summary', 'Monthly summary', 'Sent on the 1st: everything due that month, and anything currently failing.');
+    /* A frequency, not a switch. A DAILY summary is a heartbeat: the verdict is
+       in the subject line so a good day costs one glance at a preview pane, and
+       because it arrives unconditionally, one that STOPS arriving is itself the
+       warning. Weekly and monthly are the same message, less often. */
+    var sumField = el('div', 'field');
+    sumField.appendChild(el('label', null, 'Status summary email'));
+    var sumSel = document.createElement('select');
+    sumSel.className = 'al-summary-cadence';
+    [['off', 'Do not send'],
+     ['daily', 'Every day'],
+     ['weekly', 'Every week'],
+     ['monthly', 'Every month, on the 1st']].forEach(function(o){
+      var opt = document.createElement('option');
+      opt.value = o[0];
+      opt.textContent = o[1];
+      sumSel.appendChild(opt);
+    });
+    sumField.appendChild(sumSel);
+    sumField.appendChild(el('p', 'hint',
+      'Every scheduled task, certificate and load balancer — what ran, when, and whether it worked. ' +
+      'Sent whether or not anything is wrong, which is the point: if one does not arrive, something stopped it.'));
+    card2.appendChild(sumField);
+
+    var weekField = el('div', 'field');
+    weekField.appendChild(el('label', null, 'Day of the week'));
+    var weekSel = document.createElement('select');
+    weekSel.className = 'al-summary-weekday';
+    ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].forEach(function(d){
+      var opt = document.createElement('option');
+      opt.value = d;
+      opt.textContent = d;
+      weekSel.appendChild(opt);
+    });
+    weekField.appendChild(weekSel);
+    card2.appendChild(weekField);
+
+    // Only meaningful for a weekly cadence, so it is hidden rather than left
+    // sitting there inviting somebody to set a day that changes nothing.
+    function syncSummaryFields(){
+      weekField.classList.toggle('hidden', sumSel.value !== 'weekly');
+    }
+    sumSel.addEventListener('change', syncSummaryFields);
+    syncSummaryFields();
+
+    toggle('al-html-email', 'Format alert emails',
+      'Sends a formatted version alongside the plain text and lets your mail client choose. ' +
+      'Turn it off for plain text only — nothing is lost either way, the words are the same.');
 
     p.appendChild(card2);
     return p;
@@ -1303,7 +1349,17 @@
       scheduledRenewal:  {enabled: root.querySelector('.al-scheduled-renewal').checked},
       renewalSuccess:    {enabled: root.querySelector('.al-renewal-success').checked},
       deploymentFailure: {enabled: root.querySelector('.al-deployment-failure').checked},
-      monthlySummary:    {enabled: root.querySelector('.al-monthly-summary').checked}
+      summary: {
+        cadence:   root.querySelector('.al-summary-cadence').value,
+        weeklyDay: root.querySelector('.al-summary-weekday').value,
+        // Fixed at the 1st. The stored setting takes any day, but offering 29
+        // to 31 in a dropdown would let somebody pick a date that skips
+        // February entirely, for no gain anybody asked for.
+        monthDay:  1
+      },
+      // Not gated by "does not send email" below: it is not a send, it is what
+      // an already-sent message looks like.
+      htmlEmail: {enabled: root.querySelector('.al-html-email').checked}
     };
 
     // Blank means "keep what is stored" - the same rule every other secret in
@@ -1321,12 +1377,12 @@
       alerts.scheduledRenewal.enabled = false;
       alerts.renewalSuccess.enabled = false;
       alerts.deploymentFailure.enabled = false;
-      alerts.monthlySummary.enabled = false;
+      alerts.summary.cadence = 'off';
     }
 
     var anyEnabled = alerts.expiry.enabled || alerts.scheduledRenewal.enabled ||
       alerts.renewalSuccess.enabled ||
-      alerts.deploymentFailure.enabled || alerts.monthlySummary.enabled;
+      alerts.deploymentFailure.enabled || alerts.summary.cadence !== 'off';
     if (anyEnabled && !alerts.smtp.host) {
       return {error: 'An SMTP host is required to send any alert.'};
     }
@@ -1625,7 +1681,26 @@
     root.querySelector('.al-scheduled-renewal').checked = !!(a.scheduledRenewal && a.scheduledRenewal.enabled);
     root.querySelector('.al-renewal-success').checked = !!(a.renewalSuccess && a.renewalSuccess.enabled);
     root.querySelector('.al-deployment-failure').checked = !!(a.deploymentFailure && a.deploymentFailure.enabled);
-    root.querySelector('.al-monthly-summary').checked = !!(a.monthlySummary && a.monthlySummary.enabled);
+
+    /* summary replaced the old monthlySummary boolean. The server migrates the
+       stored file, but a page held open across an upgrade can still be handed
+       either shape, so read the new one and fall back to the old. */
+    var sum = a.summary || {};
+    var cadence = sum.cadence;
+    if (!cadence) { cadence = (a.monthlySummary && a.monthlySummary.enabled) ? 'monthly' : 'off'; }
+    var cadenceSel = root.querySelector('.al-summary-cadence');
+    cadenceSel.value = cadence;
+    // A cadence the dropdown does not offer would leave the select blank and
+    // silently save as such; anything unrecognised shows as off, which is what
+    // the server would have stored anyway.
+    if (!cadenceSel.value) { cadenceSel.value = 'off'; }
+    root.querySelector('.al-summary-weekday').value = sum.weeklyDay || 'Monday';
+    cadenceSel.dispatchEvent(new Event('change'));
+
+    // Absent means on: it is backfilled server-side, and a page that defaulted
+    // it off would turn it off on the next save without anyone asking.
+    root.querySelector('.al-html-email').checked =
+      !(a.htmlEmail && a.htmlEmail.enabled === false);
   }
 
   CC.registerView('settings', {render: render});

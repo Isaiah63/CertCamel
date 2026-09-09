@@ -683,10 +683,10 @@ hidden window, with <code>StartWhenAvailable</code> so they catch up after the P
   <tbody>
     <tr><td><code>Cert Camel Renew</code></td><td>every 6 hours, from the time you chose</td><td>Renews what the CA says is due,
     deploys each one, verifies every node is serving it</td></tr>
-    <tr><td><code>SSL Cert Check</code></td><td>daily, same time</td><td>Re-reads expiry dates. Never
+    <tr><td><code>Cert Camel SSL Check</code></td><td>daily, same time</td><td>Re-reads expiry dates. Never
     issues or deploys anything</td></tr>
-    <tr><td><code>Cert Camel Monthly Report</code></td><td>daily 08:00</td><td>Emails the summary on
-    the 1st; does nothing on the other days</td></tr>
+    <tr><td><code>Cert Camel Status Summary</code></td><td>daily 08:00</td><td>Emails the status summary on
+    the days your chosen frequency asks for; does nothing on the others</td></tr>
   </tbody>
 </table></div>
 <p>Setup suggests a few minutes past the hour rather than the hour itself, because ACME rate limits are per-CA and shared by everyone,
@@ -1008,7 +1008,7 @@ resources\            everything the program needs to run - not yours to edit
   renew.ps1           performs one renewal, then deploys it
   deploy.ps1          pushes to load balancers and verifies every node
   renew-due.ps1       renews whatever the CA says is due, sends expiry alerts (scheduled task)
-  monthly-report.ps1  sends the monthly summary email, if turned on (scheduled task)
+  status-summary.ps1  emails the status summary at the chosen frequency (scheduled task)
   check-lb.ps1        reads what each load balancer node is actually serving
   acme-lib.ps1        shared settings, secrets, grouping and alert-sending logic
   setup.ps1           what setup runs

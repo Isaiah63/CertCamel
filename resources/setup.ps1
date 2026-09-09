@@ -1404,26 +1404,30 @@ if ($wantRenew -match '^[Yy]') {
 }
 
 # --------------------------------------------------------------------------- #
-# 7. Monthly summary email (optional)
+# 7. Status summary email (optional)
 # --------------------------------------------------------------------------- #
-# Registered as a daily task, not a monthly one: New-ScheduledTaskTrigger has
-# no monthly option in this PowerShell version, and monthly-report.ps1 already
-# no-ops itself on every day but the 1st. A daily trigger that mostly does
-# nothing is simpler to get right than reaching for the CIM trigger types the
-# cmdlet does not expose.
+# Registered as a daily task whatever the cadence: New-ScheduledTaskTrigger has
+# no monthly option in this PowerShell version, and status-summary.ps1 decides
+# its own send day from the cadence in Settings. A daily trigger that mostly
+# does nothing is simpler to get right than reaching for the CIM trigger types
+# the cmdlet does not expose.
 
 $reportTask   = Get-SetupTaskName 'report'
-$reportScript = Join-Path $appDir 'monthly-report.ps1'
+$reportScript = Join-Path $appDir 'status-summary.ps1'
 
 Write-Host ""
-Write-Host "  [+] Monthly summary email" -ForegroundColor Cyan
+Write-Host "  [+] Status summary email" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "      Registers '$reportTask' to check every morning and send a summary" -ForegroundColor DarkGray
-Write-Host "      email on the 1st of the month - only if the monthly summary alert" -ForegroundColor DarkGray
-Write-Host "      is turned on and email is configured under Settings > Alerts." -ForegroundColor DarkGray
+Write-Host "      Registers '$reportTask' to check every morning and email what every" -ForegroundColor DarkGray
+Write-Host "      task, certificate and load balancer is doing - daily, weekly or" -ForegroundColor DarkGray
+Write-Host "      monthly, whichever you pick under Settings > Alerts. Sends nothing" -ForegroundColor DarkGray
+Write-Host "      until you choose a frequency there and configure email." -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "      A daily one is a heartbeat: it says all-clear in the subject line," -ForegroundColor DarkGray
+Write-Host "      so a summary that stops arriving is itself the warning." -ForegroundColor DarkGray
 Write-Host ""
 
-$wantReport = Read-Host "      Register the monthly summary task? (Y/N)"
+$wantReport = Read-Host "      Register the status summary task? (Y/N)"
 
 if ($wantReport -match '^[Yy]') {
     try {
@@ -1434,12 +1438,13 @@ if ($wantReport -match '^[Yy]') {
             -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
 
         [void](Register-CamelTask -Name $reportTask -Action $mAction -Trigger $mTrigger `
-            -Settings $mSettings -Description 'Sends the monthly certificate summary email, if enabled under Settings > Alerts.')
+            -Settings $mSettings -Description 'Emails the certificate and automation status summary, at the frequency set under Settings > Alerts.')
 
         Write-Host ""
-        Write-Host "      Registered. Checks daily at $taskTimeText; only sends on the 1st." -ForegroundColor Green
-        Write-Host "      Try it safely first:" -ForegroundColor DarkGray
-        Write-Host "        powershell -ExecutionPolicy Bypass -File `"$reportScript`" -Force" -ForegroundColor DarkGray
+        Write-Host "      Registered. Checks daily at $taskTimeText; sends on the days your" -ForegroundColor Green
+        Write-Host "      chosen frequency asks for." -ForegroundColor Green
+        Write-Host "      See what today's would say, without sending it:" -ForegroundColor DarkGray
+        Write-Host "        powershell -ExecutionPolicy Bypass -File `"$reportScript`" -Force -WhatIfOnly" -ForegroundColor DarkGray
     }
     catch {
         Write-Host ""
@@ -1447,7 +1452,7 @@ if ($wantReport -match '^[Yy]') {
     }
 } else {
     Write-Host ""
-    Write-Host "      Skipped. Run monthly-report.ps1 by hand whenever you want one." -ForegroundColor Yellow
+    Write-Host "      Skipped. Run status-summary.ps1 by hand whenever you want one." -ForegroundColor Yellow
 }
 
 # --------------------------------------------------------------------------- #
