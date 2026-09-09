@@ -682,6 +682,12 @@ function New-DefaultAlertSettings {
         renewalSuccess    = @{ enabled = $false }
         deploymentFailure = @{ enabled = $false }
         monthlySummary    = @{ enabled = $false }
+        # The only alert setting that defaults ON, and the reason is that it is
+        # not one: the others decide whether mail is SENT, where this decides
+        # only what a message that was going to be sent anyway looks like.
+        # Multipart carries the plain text as well, so a client that cannot or
+        # will not render HTML shows exactly what it showed before.
+        htmlEmail         = @{ enabled = $true }
     }
 }
 
@@ -753,6 +759,19 @@ function Get-TrackerSettings {
         if (-not $s.ContainsKey($k) -or $null -eq $s[$k]) { $s[$k] = $def[$k] }
     }
     $s.providers = @($s.providers)
+
+    # That loop is TOP-LEVEL only: it fills in a missing `alerts` wholesale but
+    # never looks inside one that is already there. Every existing settings.json
+    # has an `alerts` block, so a newly added alert key would be absent on every
+    # install that matters and present only on fresh ones - which is how a
+    # setting that reads as "defaults to on" ends up off everywhere real.
+    # One level deeper, for alerts only, because that is the block that grows.
+    if ($s.alerts -is [hashtable]) {
+        $defAlerts = New-DefaultAlertSettings
+        foreach ($k in $defAlerts.Keys) {
+            if (-not $s.alerts.ContainsKey($k) -or $null -eq $s.alerts[$k]) { $s.alerts[$k] = $defAlerts[$k] }
+        }
+    }
 
     <#
       The DNS Made Easy API key used to live in settings.json in the clear, and
@@ -1914,6 +1933,252 @@ function Get-TrackerSecret {
     return $store[$Key]
 }
 
+# --------------------------------------------------------------------------- #
+# Alert messages: described once, rendered twice
+# --------------------------------------------------------------------------- #
+
+# Status colours for the HTML rendering. Deliberately paired with a WORD, and
+# every renderer prints both: a message that carries its meaning only in colour
+# is unreadable to anyone colour-blind, and unreadable to everyone in the
+# several mail clients that force-invert a palette they did not choose.
+$script:AlertPalette = @{
+    ok   = @{ bar = '#2e7d32'; chip = '#e8f5e9'; word = 'OK' }
+    warn = @{ bar = '#b26a00'; chip = '#fff4e5'; word = 'Check' }
+    bad  = @{ bar = '#c62828'; chip = '#fdecea'; word = 'Failed' }
+    none = @{ bar = '#c9ccd1'; chip = '#f4f5f7'; word = '' }
+}
+
+function New-AlertMessage {
+    <#
+      One alert, described once so it can be rendered twice.
+
+      Every sender used to build a plain-text string inline, which was fine
+      while plain text was the only format. Adding HTML that way would mean two
+      hand-written bodies per sender, drifting apart the first time somebody
+      edited one and not the other. So the SHAPE of a message is data now, and
+      the two Format-Alert* functions are the only places that know about
+      formatting at all.
+
+      Verdict is three values rather than a boolean because "nothing is wrong",
+      "one thing wants looking at eventually" and "something is broken right
+      now" deserve different subject lines. It drives the subject and the
+      banner; it does not decide whether the mail is sent.
+    #>
+    param(
+        [string]$Title,
+        [ValidateSet('ok', 'warn', 'bad')]
+        [string]$Verdict = 'ok',
+        [string]$Summary,
+        [array]$Sections = @(),
+        [string]$Footer
+    )
+    return @{
+        title    = $Title
+        verdict  = $Verdict
+        summary  = $Summary
+        sections = @($Sections)
+        footer   = $Footer
+    }
+}
+
+function New-AlertSection {
+    <#
+      A headed group of rows. A section with no rows is dropped by both
+      renderers rather than printed as an empty heading - "Deployments" followed
+      by nothing reads as a failure to look rather than as nothing to report.
+    #>
+    param([string]$Heading, [array]$Rows = @())
+    return @{ heading = $Heading; rows = @($Rows) }
+}
+
+function New-AlertRow {
+    <#
+      One line of a section. `Note` is secondary detail rendered UNDER the row
+      rather than beside it: a node name plus the reason it failed does not fit
+      on one line in a phone's mail client, and wrapping mid-reason is worse
+      than a second line.
+    #>
+    param(
+        [string]$Text,
+        [ValidateSet('ok', 'warn', 'bad', 'none')]
+        [string]$Status = 'none',
+        [string]$Note
+    )
+    return @{ text = $Text; status = $Status; note = $Note }
+}
+
+function Format-AlertText {
+    <#
+      The plain-text rendering, and the one that has to keep working: it is the
+      fallback part of every multipart message, what a screen reader is handed,
+      and what anyone reading mail in a terminal sees.
+
+      Markers rather than colour, left-aligned in a fixed width so the eye can
+      run down them. A row with no status still gets the indent, so rows line up
+      whether or not they carry a verdict.
+    #>
+    param([hashtable]$Message)
+
+    $mark = @{ ok = '[ok]  '; warn = '[!]   '; bad = '[FAIL]'; none = '      ' }
+
+    $out = New-Object Text.StringBuilder
+    [void]$out.AppendLine([string]$Message.title)
+    [void]$out.AppendLine('=' * ([string]$Message.title).Length)
+    if ($Message.summary) {
+        [void]$out.AppendLine('')
+        [void]$out.AppendLine([string]$Message.summary)
+    }
+
+    foreach ($s in @($Message.sections)) {
+        if (-not @($s.rows).Count) { continue }
+        [void]$out.AppendLine('')
+        [void]$out.AppendLine([string]$s.heading)
+        foreach ($r in @($s.rows)) {
+            $m = $mark[[string]$r.status]
+            if (-not $m) { $m = $mark['none'] }
+            [void]$out.AppendLine("  $m $($r.text)")
+            # Indented to clear the marker column, so a note reads as belonging
+            # to the row above rather than as another row.
+            if ($r.note) { [void]$out.AppendLine("         $($r.note)") }
+        }
+    }
+
+    if ($Message.footer) {
+        [void]$out.AppendLine('')
+        [void]$out.AppendLine([string]$Message.footer)
+    }
+
+    return $out.ToString().TrimEnd() + "`r`n"
+}
+
+function ConvertTo-AlertHtmlText {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    return [Net.WebUtility]::HtmlEncode($Text)
+}
+
+function Format-AlertHtml {
+    <#
+      The HTML rendering. Tables and inline styles ONLY.
+
+      Outlook on Windows lays mail out with Word, not a browser: no flexbox, no
+      grid, no <style> block or external stylesheet worth relying on, and
+      margins on block elements are unreliable. So structure is a table, spacing
+      is cell padding, and every rule is inline on the element it applies to.
+
+      No dark-mode media query. Outlook ignores one and several clients
+      force-invert regardless, so the palette is chosen to survive inversion
+      rather than to fight it - dark text on a white card, and status carried by
+      a word AND a colour, never by colour alone.
+    #>
+    param([hashtable]$Message)
+
+    $pal = $script:AlertPalette[[string]$Message.verdict]
+    if (-not $pal) { $pal = $script:AlertPalette['none'] }
+
+    $font = "font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+    $out  = New-Object Text.StringBuilder
+
+    [void]$out.AppendLine('<html><body style="margin:0;padding:0;background:#f4f5f7;">')
+    [void]$out.AppendLine(('<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f5f7;"><tr><td align="center" style="padding:18px 10px;">'))
+    [void]$out.AppendLine('<table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border:1px solid #e3e5e8;">')
+
+    # Banner: the verdict, as a colour bar and as a word.
+    [void]$out.AppendLine(('<tr><td style="border-left:6px solid {0};padding:16px 18px;">' -f $pal.bar))
+    [void]$out.AppendLine(('<div style="{0};font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:{1};padding-bottom:4px;">{2}</div>' -f `
+        $font, $pal.bar, (ConvertTo-AlertHtmlText $pal.word)))
+    [void]$out.AppendLine(('<div style="{0};font-size:19px;font-weight:600;color:#1b1d21;">{1}</div>' -f `
+        $font, (ConvertTo-AlertHtmlText ([string]$Message.title))))
+    if ($Message.summary) {
+        [void]$out.AppendLine(('<div style="{0};font-size:14px;color:#41454b;padding-top:6px;">{1}</div>' -f `
+            $font, (ConvertTo-AlertHtmlText ([string]$Message.summary))))
+    }
+    [void]$out.AppendLine('</td></tr>')
+
+    foreach ($s in @($Message.sections)) {
+        if (-not @($s.rows).Count) { continue }
+        [void]$out.AppendLine('<tr><td style="padding:0 18px;"><hr style="border:0;border-top:1px solid #e9ebee;margin:0;"></td></tr>')
+        [void]$out.AppendLine(('<tr><td style="padding:14px 18px 4px 18px;{0};font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7078;">{1}</td></tr>' -f `
+            $font, (ConvertTo-AlertHtmlText ([string]$s.heading))))
+        [void]$out.AppendLine('<tr><td style="padding:0 18px 12px 18px;"><table width="100%" cellpadding="0" cellspacing="0" border="0">')
+        foreach ($r in @($s.rows)) {
+            $rp = $script:AlertPalette[[string]$r.status]
+            if (-not $rp) { $rp = $script:AlertPalette['none'] }
+            $chip = ''
+            if ($rp.word) {
+                $chip = '<span style="{0};font-size:11px;color:{1};background:{2};border:1px solid {1};padding:1px 6px;white-space:nowrap;">{3}</span>' -f `
+                    $font, $rp.bar, $rp.chip, (ConvertTo-AlertHtmlText $rp.word)
+            }
+            [void]$out.AppendLine('<tr>')
+            [void]$out.AppendLine(('<td valign="top" style="padding:5px 8px 5px 0;width:1%;">{0}</td>' -f $chip))
+            $cell = '<div style="{0};font-size:14px;color:#1b1d21;">{1}</div>' -f `
+                $font, (ConvertTo-AlertHtmlText ([string]$r.text))
+            if ($r.note) {
+                $cell += '<div style="{0};font-size:12px;color:#6b7078;padding-top:2px;">{1}</div>' -f `
+                    $font, (ConvertTo-AlertHtmlText ([string]$r.note))
+            }
+            [void]$out.AppendLine(('<td valign="top" style="padding:5px 0;">{0}</td>' -f $cell))
+            [void]$out.AppendLine('</tr>')
+        }
+        [void]$out.AppendLine('</table></td></tr>')
+    }
+
+    if ($Message.footer) {
+        [void]$out.AppendLine(('<tr><td style="padding:12px 18px 16px 18px;border-top:1px solid #e9ebee;{0};font-size:12px;color:#6b7078;">{1}</td></tr>' -f `
+            $font, (ConvertTo-AlertHtmlText ([string]$Message.footer))))
+    }
+
+    [void]$out.AppendLine('</table></td></tr></table>')
+    [void]$out.AppendLine('</body></html>')
+
+    return $out.ToString()
+}
+
+function Set-AlertMailBody {
+    <#
+      Puts the body on a MailMessage, as one text part or as two alternative
+      parts.
+
+      Separate from Send-AlertEmail so the multipart contract can be TESTED. The
+      thing that has to hold - text part first, HTML part second, and no Body
+      set alongside them - is invisible from outside a function that also opens
+      a socket, and a test that has to stand up an SMTP server to check the
+      ordering of two MIME parts is a test nobody runs.
+    #>
+    param(
+        [Net.Mail.MailMessage]$MailMessage,
+        [hashtable]$Settings,
+        [string]$Body,
+        [hashtable]$Message
+    )
+
+    # Requires BOTH a structured message and the setting. A caller passing a
+    # plain -Body can never accidentally emit HTML, however the setting is left.
+    $htmlWanted = $false
+    try { $htmlWanted = [bool]$Settings.alerts.htmlEmail.enabled } catch { $htmlWanted = $false }
+
+    $text = $Body
+    if ($Message) { $text = Format-AlertText -Message $Message }
+
+    if ($Message -and $htmlWanted) {
+        # multipart/alternative, and THE ORDER IS NOT COSMETIC: a client picks
+        # the last view it can render, so text goes first and HTML second. Get
+        # it backwards and every client in the world shows the plain text.
+        #
+        # Body and IsBodyHtml are deliberately left unset - setting a Body as
+        # well as AlternateViews makes some servers emit the content twice, once
+        # as the body and once as a part.
+        $MailMessage.AlternateViews.Add([Net.Mail.AlternateView]::CreateAlternateViewFromString(
+            $text, [Text.Encoding]::UTF8, 'text/plain'))
+        $MailMessage.AlternateViews.Add([Net.Mail.AlternateView]::CreateAlternateViewFromString(
+            (Format-AlertHtml -Message $Message), [Text.Encoding]::UTF8, 'text/html'))
+    }
+    else {
+        $MailMessage.Body = $text
+        $MailMessage.IsBodyHtml = $false
+    }
+}
+
 function Send-AlertEmail {
     <#
       Sends one plain-text email through the configured SMTP profile. Throws on
@@ -1947,6 +2212,11 @@ function Send-AlertEmail {
         [hashtable]$Settings,
         [string]$Subject,
         [string]$Body,
+        # The structured form, from New-AlertMessage. When given, it replaces
+        # -Body and is rendered to both text and HTML. When absent this function
+        # behaves exactly as it always has, which is what lets the existing
+        # senders move across one at a time instead of all at once.
+        [hashtable]$Message,
         [string[]]$ToOverride
     )
 
@@ -1968,8 +2238,8 @@ function Send-AlertEmail {
         $msg.From = $from
         foreach ($addr in @($to)) { $msg.To.Add($addr) }
         $msg.Subject = $Subject
-        $msg.Body = $Body
-        $msg.IsBodyHtml = $false
+
+        Set-AlertMailBody -MailMessage $msg -Settings $Settings -Body $Body -Message $Message
 
         # A Message-ID we choose, rather than letting the server invent one we
         # never see. It is the only handle that survives into the receiving
