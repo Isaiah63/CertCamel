@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cert Camel &mdash; Setting up the HAProxy Data Plane API</title>
+<title>Cert Camel &mdash; Setting up the Data Plane API on HAProxy Enterprise</title>
 <link rel="icon" href="data:image/png;base64,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">
 <script>
 (function(){
@@ -159,16 +159,17 @@ footer{margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border)
   </div>
 </header>
 
-<p class="lede">Setting up the HAProxy Data Plane API so certificates can be replaced without a
-reload &mdash; and locking it down properly, because the thing you are about to switch on can
-rewrite your load balancer's configuration.</p>
+<p class="lede">Setting up the Data Plane API on <strong>HAProxy Enterprise (HAPEE)</strong> so
+certificates can be replaced without a reload &mdash; and locking it down properly, because the
+thing you are about to switch on can rewrite your load balancer's configuration.</p>
 
 <div class="callout">
-  <div class="h">Using HAProxy Enterprise?</div>
-  <p>HAPEE puts its configuration, binary and certificates under versioned paths, installs the
-  API from its own package and ships its own service unit &mdash; enough differences that the
-  commands below will not work as written. See the
-  <a href="haproxy-setup-hapee.html">HAPEE setup guide</a>.</p>
+  <div class="h">This is the HAPEE guide</div>
+  <p>Paths, package names and the service unit all differ from community HAProxy. Running the
+  community build? Use the <a href="haproxy-setup.html">HAProxy setup guide</a> instead.</p>
+  <p><strong>Version numbers are in the paths.</strong> Every <code>3.3</code> below is the HAPEE
+  version &mdash; <code>/etc/hapee-3.3/</code>, <code>hapee-3.3-lb</code>,
+  <code>dataplaneapi33</code>. Substitute yours throughout; step 2 tells you which you have.</p>
 </div>
 
 <div class="cols">
@@ -216,46 +217,34 @@ rewrite your load balancer's configuration.</p>
 </div>
 
 <h2 id="check">2. Check your version</h2>
-<pre><code>haproxy -v</code></pre>
+<pre><code>/opt/hapee-3.3/sbin/hapee-lb -v</code></pre>
 <p>You need <strong>2.2 or newer</strong>. 2.1 can replace a certificate HAProxy already knows
 about but cannot add a new one; below 2.1 there is no runtime certificate update at all.</p>
 
 <h2 id="install">3. Install the Data Plane API</h2>
-<h3>HAProxy Enterprise (HAPEE)</h3>
-<p>It ships with the product. Install the package and skip to step 4.</p>
-<pre><code>sudo apt-get install hapee-<span class="c">&lt;version&gt;</span>-lb-dataplaneapi   <span class="c"># Debian/Ubuntu</span>
-sudo yum install hapee-<span class="c">&lt;version&gt;</span>-lb-dataplaneapi       <span class="c"># RHEL/Rocky</span></code></pre>
+<p>It ships with the product &mdash; there is no separate download. The package name carries the
+HAPEE version with the dot removed, so HAPEE 3.3 wants <code>dataplaneapi33</code>:</p>
+<pre><code>sudo yum install hapee-extras-dataplaneapi<span class="c">&lt;version_no_dots&gt;</span> --allowerasing
 
-<h3>Community HAProxy</h3>
-<p>It is a separate download from
-<a href="https://github.com/haproxytech/dataplaneapi/releases" target="_blank" rel="noopener">haproxytech/dataplaneapi</a>.
-Pick the release matching your HAProxy minor version where possible.</p>
-<p>There are <code>.deb</code>, <code>.rpm</code> and <code>.apk</code> packages as well as a
-tarball. Prefer the package &mdash; it handles the paths and gives you something to uninstall:</p>
-<pre><code><span class="c"># Debian/Ubuntu - note "amd64" for packages</span>
-curl -fsSLO https://github.com/haproxytech/dataplaneapi/releases/download/v3.3.5/dataplaneapi_3.3.5_linux_amd64.deb
-sudo apt install ./dataplaneapi_3.3.5_linux_amd64.deb
-dataplaneapi --version</code></pre>
-<p>If you would rather drop in a binary, the tarball uses <code>x86_64</code> where the packages
-use <code>amd64</code> &mdash; an easy five minutes to lose:</p>
-<pre><code>curl -fsSLO https://github.com/haproxytech/dataplaneapi/releases/download/v3.3.5/dataplaneapi_3.3.5_linux_x86_64.tar.gz
-tar xzf dataplaneapi_3.3.5_linux_x86_64.tar.gz
-sudo install -m 0755 build/dataplaneapi /usr/local/bin/dataplaneapi</code></pre>
-
+<span class="c"># HAPEE 3.3</span>
+sudo yum install hapee-extras-dataplaneapi33 --allowerasing</code></pre>
+<p><code>--allowerasing</code> is there because the package can conflict with a community
+<code>dataplaneapi</code> left behind on the same host; without it yum refuses rather than
+replacing it.</p>
 <h2 id="socket">4. Give HAProxy an admin-level stats socket</h2>
 <p>The Data Plane API drives HAProxy through this socket. Without <code>level admin</code> it can
 read but not change anything.</p>
 <pre><code>global
-    stats socket /var/run/haproxy/admin.sock mode 660 level admin
+    stats socket /var/run/hapee-3.3/hapee-lb.sock mode 660 level admin
     stats timeout 30s</code></pre>
 <p>Note the mode: <code>660</code>, not <code>666</code>. Anyone who can write to this socket can
 reconfigure your load balancer, so it should be owned by a group only HAProxy and the Data Plane
 API belong to.</p>
 <p>Two things to check before adding the line: distro packages often ship a
-<code>stats socket</code> line already (Debian and Ubuntu's uses <code>/run/haproxy/admin.sock</code>)
+<code>stats socket</code> line already (Debian and Ubuntu's uses <code>/var/run/hapee-3.3/hapee-lb.sock</code>)
 &mdash; if one is there, add <code>level admin</code> to it rather than declaring a second socket.
 And the directory has to exist, or the reload fails to bind it; the packaged systemd unit creates
-<code>/run/haproxy</code> for you, so reuse that path if in doubt.</p>
+<code>/var/run/hapee-3.3</code> for you, so reuse that path if in doubt.</p>
 
 <h2 id="user">5. Create the API user &mdash; with a hashed password</h2>
 <p>The Data Plane API reads its credentials from a <code>userlist</code> in the HAProxy
@@ -266,10 +255,10 @@ openssl passwd -6</code></pre>
 <p>Then add the userlist. <strong><code>userlist</code> is a top-level section</strong> &mdash; it sits
 alongside <code>global</code>, <code>defaults</code>, <code>frontend</code> and <code>backend</code>,
 <em>not</em> inside any of them. Anywhere at that level works; near the top keeps it findable.</p>
-<pre><code><span class="c"># /etc/haproxy/haproxy.cfg</span>
+<pre><code><span class="c"># /etc/hapee-3.3/hapee-lb.cfg</span>
 
 global
-    stats socket /var/run/haproxy/admin.sock mode 660 level admin
+    stats socket /var/run/hapee-3.3/hapee-lb.sock mode 660 level admin
     stats timeout 30s
     <span class="c"># ... rest of your global section ...</span>
 
@@ -282,18 +271,18 @@ defaults
     <span class="c"># ... etc ...</span>
 
 frontend fe_https
-    bind *:443 ssl crt /etc/haproxy/ssl/example.com.pem
+    bind *:443 ssl crt /etc/hapee-3.3/ssl/example.com.pem
     default_backend be_app</code></pre>
 <div class="callout warn">
   <div class="h">Putting it inside <code>global</code> will not work</div>
   <p>HAProxy rejects <code>userlist</code> as an unknown keyword there, and the error names the line
   rather than explaining the nesting, so it is easy to misread as a typo in the hash. Check the file
   parses before reloading anything:</p>
-  <p><code>haproxy -c -f /etc/haproxy/haproxy.cfg</code></p>
+  <p><code>/opt/hapee-3.3/sbin/hapee-lb -c -f /etc/hapee-3.3/hapee-lb.cfg</code></p>
   <p>That validates the configuration without touching the running process. <code>Configuration file
   is valid</code> means you are clear to reload &mdash; and the reload is how the socket and
   userlist from steps 4 and 5 actually take effect:</p>
-  <p><code>sudo systemctl reload haproxy</code></p>
+  <p><code>sudo systemctl reload hapee-3.3-lb</code></p>
   <p>A reload is hitless: existing connections finish on the old process while new ones go to the
   new one. Nothing drops.</p>
 </div>
@@ -311,7 +300,7 @@ single most common cause of a 401.</p>
 tend to be shared around a team and pasted into chat, and this one can rewrite your configuration.</p>
 
 <h2 id="config">6. Configure the Data Plane API</h2>
-<p>Create <code>/etc/haproxy/dataplaneapi.yaml</code> (HAPEE uses
+<p>Create <code>/etc/hapee-extras/dataplaneapi.yml</code> (HAPEE uses
 <code>/etc/hapee-extras/dataplaneapi.yml</code>):</p>
 <pre><code>dataplaneapi:
   <span class="c"># Bind to one address, not everything. See step 8.</span>
@@ -325,16 +314,16 @@ tend to be shared around a team and pasted into chat, and this one can rewrite y
 
   resources:
     <span class="c"># Certificates uploaded through the API land HERE and nowhere else.</span>
-    ssl_certs_dir: /etc/haproxy/ssl
-    maps_dir: /etc/haproxy/maps
+    ssl_certs_dir: /etc/hapee-3.3/ssl
+    maps_dir: /etc/hapee-3.3/maps
 
 haproxy:
-  config_file: /etc/haproxy/haproxy.cfg
-  haproxy_bin: /usr/sbin/haproxy
+  config_file: /etc/hapee-3.3/hapee-lb.cfg
+  haproxy_bin: /opt/hapee-3.3/sbin/hapee-lb
 
   reload:
-    reload_cmd: systemctl reload haproxy
-    restart_cmd: systemctl restart haproxy
+    reload_cmd: systemctl reload hapee-3.3-lb
+    restart_cmd: systemctl restart hapee-3.3-lb
     reload_delay: 5
 
   <span class="c"># Must match the userlist name from step 5. This is the only auth</span>
@@ -343,41 +332,32 @@ haproxy:
   userlist:
     userlist: dataplaneapi</code></pre>
 <p>Make the directories, and keep the certificate one tight &mdash; it will hold private keys:</p>
-<pre><code>sudo mkdir -p /etc/haproxy/ssl /var/lib/dataplaneapi/transactions
-sudo chown -R haproxy:haproxy /etc/haproxy/ssl /var/lib/dataplaneapi
-sudo chmod 700 /etc/haproxy/ssl</code></pre>
+<pre><code>sudo mkdir -p /etc/hapee-3.3/ssl /var/lib/dataplaneapi/transactions
+sudo chown -R hapee-lb:hapee /etc/hapee-3.3/ssl /var/lib/dataplaneapi
+sudo chmod 700 /etc/hapee-3.3/ssl</code></pre>
 
 <h2 id="service">7. Run it as a service</h2>
-<p>HAPEE ships a unit already. For the community build, create
-<code>/etc/systemd/system/dataplaneapi.service</code>:</p>
-<pre><code>[Unit]
-Description=HAProxy Data Plane API
-After=network.target haproxy.service
-Requires=haproxy.service
-
-[Service]
-<span class="c"># Not root. It needs the config file, the certificate directory and the socket.</span>
-User=haproxy
-Group=haproxy
-ExecStart=/usr/local/bin/dataplaneapi -f /etc/haproxy/dataplaneapi.yaml
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target</code></pre>
-<pre><code>sudo systemctl daemon-reload
-sudo systemctl enable --now dataplaneapi
-sudo systemctl status dataplaneapi</code></pre>
+<p>HAPEE ships its own unit, <code>hapee-extras-dataplaneapi.service</code>. There is no unit
+file to write:</p>
+<pre><code>sudo systemctl enable hapee-extras-dataplaneapi
+sudo systemctl start hapee-extras-dataplaneapi
+sudo systemctl status hapee-extras-dataplaneapi</code></pre>
 <div class="callout warn">
-  <div class="h">Two things the <code>haproxy</code> user needs, and does not have by default</div>
+  <div class="h"><code>enable</code> does not start it</div>
+  <p>It only arranges for the service to come back after a reboot. On a fresh install the
+  API is not listening until <code>start</code> is called, and the symptom is a connection
+  refused from Cert Camel with a service that reports itself <em>enabled</em>. Either run both
+  commands, or use <code>sudo systemctl enable --now hapee-extras-dataplaneapi</code>.</p>
+</div>
+<div class="callout warn">
+  <div class="h">Two things the <code>hapee-lb</code> user needs, and does not have by default</div>
   <p><strong>Write access to the configuration.</strong> The Data Plane API does not only read
-  <code>haproxy.cfg</code>, it rewrites it &mdash; and that file is usually root-owned. Without
+  <code>hapee-lb.cfg</code>, it rewrites it &mdash; and that file is usually root-owned. Without
   write access the first change fails with a 500 that does not obviously say why:</p>
-  <p><code>sudo chown root:haproxy /etc/haproxy/haproxy.cfg &amp;&amp; sudo chmod 640 /etc/haproxy/haproxy.cfg</code></p>
-  <p><strong>Permission to reload HAProxy.</strong> Grant exactly that one command through sudoers,
+  <p><code>sudo chown root:hapee /etc/hapee-3.3/hapee-lb.cfg &amp;&amp; sudo chmod 640 /etc/hapee-3.3/hapee-lb.cfg</code></p>
+  <p><strong>Permission to reload HAPEE.</strong> Grant exactly that one command through sudoers,
   or use a polkit rule &mdash; whichever your organisation already does for service reloads.</p>
 </div>
-
 <h2 id="secure">8. Lock it down</h2>
 <div class="callout crit">
   <div class="h">Treat this like SSH access, because that is roughly what it is</div>
@@ -397,20 +377,20 @@ one</strong> &mdash; it deploys certificates <em>through</em> the API, so the AP
 has to be reachable before the tool can do anything. Chicken and egg. Make it by
 hand, once; it is an internal certificate that no browser ever sees.</p>
 
-<pre><code>sudo mkdir -p /etc/haproxy/ssl
+<pre><code>sudo mkdir -p /etc/hapee-3.3/ssl
 
 <span class="c"># One command, valid 10 years. Replace the IP with the address Cert Camel</span>
 <span class="c"># will actually connect to - that is what has to match the SAN.</span>
 sudo openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-  -keyout /etc/haproxy/ssl/dataplaneapi.key \
-  -out    /etc/haproxy/ssl/dataplaneapi.crt \
+  -keyout /etc/hapee-3.3/ssl/dataplaneapi.key \
+  -out    /etc/hapee-3.3/ssl/dataplaneapi.crt \
   -subj   "/CN=lb1" \
   -addext "subjectAltName = IP:10.0.0.11, DNS:lb1"
 
 <span class="c"># The key must not be world-readable. Match the user the API runs as.</span>
-sudo chown haproxy:haproxy /etc/haproxy/ssl/dataplaneapi.*
-sudo chmod 600 /etc/haproxy/ssl/dataplaneapi.key
-sudo chmod 644 /etc/haproxy/ssl/dataplaneapi.crt</code></pre>
+sudo chown hapee-lb:hapee /etc/hapee-3.3/ssl/dataplaneapi.*
+sudo chmod 600 /etc/hapee-3.3/ssl/dataplaneapi.key
+sudo chmod 644 /etc/hapee-3.3/ssl/dataplaneapi.crt</code></pre>
 
 <p><strong>Each node gets its own</strong>, with its own address in the SAN. Do not
 copy one between nodes &mdash; a certificate naming <code>10.0.0.11</code>
@@ -444,8 +424,8 @@ request</em>. Base64 is not encryption. Terminate TLS on the API:</p>
   tls:
     tls_host: 10.0.0.11
     tls_port: 5555
-    tls_certificate: /etc/haproxy/ssl/dataplaneapi.crt
-    tls_key: /etc/haproxy/ssl/dataplaneapi.key</code></pre>
+    tls_certificate: /etc/hapee-3.3/ssl/dataplaneapi.crt
+    tls_key: /etc/hapee-3.3/ssl/dataplaneapi.key</code></pre>
 <div class="callout crit">
   <div class="h">Get these key names exactly right &mdash; wrong ones fail silently</div>
   <p>The keys are <code>tls_host</code> and <code>tls_port</code>, not <code>host</code> and
@@ -613,7 +593,7 @@ probes both, so either is fine.</p>
 <div class="callout note">
   <div class="h">What the responses mean</div>
   <p><strong>A number</strong> &mdash; working. <strong>401</strong> &mdash; the userlist name in
-  the YAML does not match the one in <code>haproxy.cfg</code>, or the hash is wrong.
+  the YAML does not match the one in <code>hapee-lb.cfg</code>, or the hash is wrong.
   <strong>Connection refused</strong> &mdash; not running, or bound to an address you are not
   reaching it on. <strong>Timeout</strong> &mdash; a firewall between you and it.</p>
 </div>
@@ -624,7 +604,7 @@ whether hitless replacement is possible at all. A path containing a date or a ve
 updated in place, because next time it is a <em>different path</em> &mdash; which means editing the
 config, which means a reload.</p>
 <pre><code>Before                                     After
-/certs/2026.example.com/fullchain.pem  -&gt;  /etc/haproxy/ssl/example.com.pem
+/certs/2026.example.com/fullchain.pem  -&gt;  /etc/hapee-3.3/ssl/example.com.pem
 /certs/2027.example.com/fullchain.pem      (path never changes; contents replaced)</code></pre>
 <p>Two things to do:</p>
 <ol>
@@ -634,7 +614,7 @@ config, which means a reload.</p>
   bind line at it.</li>
 </ol>
 <pre><code>frontend fe_https
-    bind *:443 ssl crt /etc/haproxy/ssl/example.com.pem alpn h2,http/1.1</code></pre>
+    bind *:443 ssl crt /etc/hapee-3.3/ssl/example.com.pem alpn h2,http/1.1</code></pre>
 <p>Or, better, a crt-list &mdash; which additionally lets you add a <em>new</em> certificate at
 runtime, not just replace an existing one. Cert Camel makes direct use of this: give it the
 crt-list path (in the deployment group's <em>crt-list path</em> field, exactly as it appears on
@@ -643,10 +623,10 @@ hot-loaded &mdash; a brand-new certificate starts serving with no config edit an
 to schedule. The list must live inside <code>ssl_certs_dir</code>, since that is the only
 directory the API manages:</p>
 <pre><code>frontend fe_https
-    bind *:443 ssl crt-list /etc/haproxy/ssl/crt-list.txt alpn h2,http/1.1</code></pre>
-<pre><code><span class="c"># /etc/haproxy/ssl/crt-list.txt</span>
-/etc/haproxy/ssl/example.com.pem
-/etc/haproxy/ssl/other.com.pem</code></pre>
+    bind *:443 ssl crt-list /etc/hapee-3.3/ssl/crt-list.txt alpn h2,http/1.1</code></pre>
+<pre><code><span class="c"># /etc/hapee-3.3/ssl/crt-list.txt</span>
+/etc/hapee-3.3/ssl/example.com.pem
+/etc/hapee-3.3/ssl/other.com.pem</code></pre>
 <div class="callout good">
   <div class="h">One reload to migrate. Zero reloads afterwards.</div>
   <p>The move to stable paths costs exactly one restart. Every renewal after that is hitless. If
@@ -698,7 +678,7 @@ Certificates table, and press <strong>Deploy</strong>.</p>
   <div class="h">Without a crt-list, the filename must match what HAProxy actually binds</div>
   <p>HAProxy knows a certificate by its path, so on a plain <code>crt</code> bind line,
   <em>Certificate filename on HAProxy</em> has to be the exact name that line references. If your
-  bind line says <code>crt /etc/haproxy/ssl/lab.pem</code>, the filename is <code>lab.pem</code>
+  bind line says <code>crt /etc/hapee-3.3/ssl/lab.pem</code>, the filename is <code>lab.pem</code>
   &mdash; not the default <code>{certId}.pem</code>, and not the certificate's own name.</p>
   <p>Get it wrong and nothing looks wrong. The upload succeeds, the API reports success, and the
   file lands in <code>ssl_certs_dir</code> under a name no bind line references. (With a crt-list
@@ -760,8 +740,8 @@ machine and needs no configuration at all.</p>
   <thead><tr><th>Symptom</th><th>Usually</th></tr></thead>
   <tbody>
     <tr><td><code>401 Unauthorized</code></td>
-        <td>The <code>userlist</code> name in the YAML does not match <code>haproxy.cfg</code>, or
-        the hash was pasted with a line break. Confirm with <code>haproxy -c -f</code>.</td></tr>
+        <td>The <code>userlist</code> name in the YAML does not match <code>hapee-lb.cfg</code>, or
+        the hash was pasted with a line break. Confirm with <code>hapee-lb -c -f</code>.</td></tr>
     <tr><td><code>403 Forbidden</code></td>
         <td>Authenticated but not allowed to write &mdash; usually the stats socket is missing
         <code>level admin</code>.</td></tr>
@@ -806,7 +786,7 @@ VIP   10.0.0.10                  wherever the master is</code></pre>
   changed them.</p>
 </div>
 
-<h3>haproxy.cfg</h3>
+<h3>hapee-lb.cfg</h3>
 
 <p>Identical on both nodes except the <code>node</code> line. Nothing here is
 Cert&nbsp;Camel-specific except the admin socket and the <code>crt-list</code>,
@@ -814,14 +794,14 @@ both marked.</p>
 
 <pre><code>global
     log /dev/log local0
-    chroot /var/lib/haproxy
-    user haproxy
-    group haproxy
+    chroot /var/lib/hapee-3.3
+    user hapee-lb
+    group hapee
     daemon
 
     # REQUIRED BY THE DATA PLANE API. It drives HAProxy through this socket,
     # and "level admin" is what lets it load certificates at runtime.
-    stats socket /run/haproxy/admin.sock mode 660 level admin expose-fd listeners
+    stats socket /var/run/hapee-3.3/hapee-lb.sock mode 660 level admin expose-fd listeners
     stats timeout 30s
 
     # OPTIONAL, and think before you set it - see the note under this config.
@@ -852,7 +832,7 @@ frontend fe_https
     # CERT CAMEL WRITES THE crt-list, NOT THIS LINE. The bind stays as you
     # wrote it; deployment adds and updates entries in the file it points at,
     # so new certificates appear without the configuration changing.
-    bind *:443 ssl crt-list /etc/haproxy/certs/crt-list.txt alpn h2,http/1.1
+    bind *:443 ssl crt-list /etc/hapee-3.3/certs/crt-list.txt alpn h2,http/1.1
 
     http-response set-header Strict-Transport-Security "max-age=31536000"
     default_backend be_app
@@ -898,10 +878,10 @@ userlist dataplaneapi
 &mdash; HAProxy will not start with a <code>crt-list</code> that does not exist, and
 Cert Camel appends to it rather than creating it:</p>
 
-<pre><code># /etc/haproxy/certs/crt-list.txt
+<pre><code># /etc/hapee-3.3/certs/crt-list.txt
 # One line per certificate. Cert Camel maintains these.
-/etc/haproxy/certs/example.com.pem
-/etc/haproxy/certs/wildcard.example.com.pem</code></pre>
+/etc/hapee-3.3/certs/example.com.pem
+/etc/hapee-3.3/certs/wildcard.example.com.pem</code></pre>
 
 <div class="callout warn">
   <div class="h">The first entry is the default certificate</div>
@@ -928,8 +908,8 @@ currently holds it.</p>
 # The piece people leave out, and the one that matters most. Without it the VIP
 # happily stays on a node whose HAProxy has died - the machine is still up, so
 # VRRP sees nothing wrong, and every request goes to a dead listener.
-vrrp_script chk_haproxy {
-    script "/usr/bin/killall -0 haproxy"
+vrrp_script chk_hapee {
+    script "/usr/bin/killall -0 hapee-lb"
     interval 2
     timeout 2
     fall 2      # 2 failures before it counts as down
@@ -954,7 +934,7 @@ vrrp_instance VI_1 {
     }
 
     track_script {
-        chk_haproxy
+        chk_hapee
     }
 }</code></pre>
 
@@ -1012,8 +992,8 @@ dataplaneapi:
   tls:
     tls_host: 0.0.0.0
     tls_port: 5555
-    tls_certificate: /etc/haproxy/ssl/dataplaneapi.crt
-    tls_key: /etc/haproxy/ssl/dataplaneapi.key
+    tls_certificate: /etc/hapee-3.3/ssl/dataplaneapi.crt
+    tls_key: /etc/hapee-3.3/ssl/dataplaneapi.key
   scheme:
     - https
 
@@ -1031,18 +1011,18 @@ dataplaneapi:
     # your crt-list entries point at, or deployment succeeds and HAProxy keeps
     # serving the old certificate - one of the more confusing failures, because
     # nothing reports an error.
-    ssl_certs_dir: /etc/haproxy/ssl
+    ssl_certs_dir: /etc/hapee-3.3/ssl
     maps_dir: /var/lib/dataplaneapi/maps
     general_storage_dir: /var/lib/dataplaneapi/general
     spoe_dir: /var/lib/dataplaneapi/spoe
 
 haproxy:
-  config_file: /etc/haproxy/haproxy.cfg
-  haproxy_bin: /usr/sbin/haproxy
+  config_file: /etc/hapee-3.3/hapee-lb.cfg
+  haproxy_bin: /opt/hapee-3.3/sbin/hapee-lb
   reload:
     reload_delay: 2
-    reload_cmd: systemctl reload haproxy
-    restart_cmd: systemctl restart haproxy
+    reload_cmd: systemctl reload hapee-3.3-lb
+    restart_cmd: systemctl restart hapee-3.3-lb
     reload_strategy: custom
 
 log_targets:
@@ -1100,13 +1080,13 @@ which is what catches a standby that missed an update.</p>
 <h3>Checking it before you trust it</h3>
 
 <pre><code># configuration is valid
-haproxy -c -f /etc/haproxy/haproxy.cfg
+haproxy -c -f /etc/hapee-3.3/hapee-lb.cfg
 
 # who holds the VIP right now - run on both, exactly one should show it
 ip addr show eth0 | grep 10.0.0.10
 
 # watch a failover: stop HAProxy on the master and the VIP should move
-systemctl stop haproxy &amp;&amp; journalctl -fu keepalived
+systemctl stop hapee-3.3-lb &amp;&amp; journalctl -fu keepalived
 
 # what a node is actually serving, asked of the node itself
 echo | openssl s_client -connect 10.0.0.11:443 -servername example.com 2>/dev/null \
