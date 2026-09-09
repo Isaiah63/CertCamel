@@ -1548,6 +1548,122 @@ function Install-CamelServerTask {
     return @{ name = $def.name; port = $Port; command = "powershell.exe $argLine"; installed = $true }
 }
 
+function Get-LiveCamelSession {
+    <#
+      The session file, but only when it names a process that is really alive.
+      Returns the session object, or $null.
+
+      Deliberately NARROWER than serve.ps1's Get-SessionFileStatus, which tells
+      five states apart - missing, unreadable, malformed, stale, live - because
+      the launcher has to decide whether it is safe to DELETE the file, and
+      deleting somebody else's is how a running server gets orphaned. Nothing
+      outside serve.ps1 has that decision to make; the only question here is
+      "is one already serving", and answering it needs no opinion about cleanup.
+
+      The process name is checked as well as the pid. A stale file naming a pid
+      Windows has since recycled onto some unrelated program would otherwise
+      read as a running server, and the caller would skip the start that is the
+      whole point of it.
+    #>
+    $sessionFile = Join-Path $script:JobsDir 'session.json'
+    if (-not (Test-Path $sessionFile)) { return $null }
+
+    $s = $null
+    try { $s = [IO.File]::ReadAllText($sessionFile) | ConvertFrom-Json }
+    catch { return $null }   # unreadable, or not JSON: nothing to act on from here
+    if (-not $s -or -not $s.pid) { return $null }
+
+    $proc = $null
+    try { $proc = Get-Process -Id ([int]$s.pid) -ErrorAction Stop }
+    catch { return $null }   # names a process that has gone
+
+    if ($proc.ProcessName -notmatch '^(powershell|pwsh)$') { return $null }
+    return $s
+}
+
+function Start-CamelServerTaskIfIdle {
+    <#
+      Make sure the registered boot task is actually running, before something
+      else starts a server in a console instead.
+
+      THE BUG THIS EXISTS FOR. Install-CamelServerTask registers the task with an
+      -AtStartup trigger and does not start it, so between setup finishing and
+      the next reboot the task exists and nothing is running. Setup then offers
+      to open the tracker, 'Open Tracker.bat' finds no live session, and
+      serve.ps1 starts a server in THAT CONSOLE - service = $false, tied to the
+      signed-in session, gone at sign-out. On a server that is the wrong shape
+      entirely, and it looks fine until somebody signs out. A reboot "fixes" it
+      because the task finally runs and wins.
+
+      The same thing happens on a path that has nothing to do with first
+      install: stop the server, re-run setup, answer Y to "Keep it?", then Y to
+      "Open the tracker now?". Keeping a task does not start it.
+
+      THE WAIT IS NOT POLITENESS. Start-ScheduledTask returns as soon as the task
+      is queued, and serve.ps1 decides whether to start its own server by reading
+      the session file. Hand control back before that file exists and a second,
+      console-hosted server starts anyway - the race moves rather than closing.
+
+      Polls the session file rather than the port on purpose:
+      Get-NetTCPConnection needs the NetTCPIP module, which is absent on Server
+      2008 R2, and this is the one code path whose entire reason to exist is
+      working on a server. serve.ps1 writes the session file before it serves
+      anything, precisely so a launcher can find it.
+
+      Returns @{ action; taskName; ready; session } where action is one of
+      not-registered / already-running / started / would-start.
+    #>
+    param(
+        [int]$TimeoutSeconds = 8,
+        # Decide and report without starting anything, so the decision can be
+        # tested without registering a task or launching a server.
+        [switch]$WhatIfOnly
+    )
+
+    $def = @($script:ScheduledTaskNames) | Where-Object { $_.key -eq 'server' }
+    if (-not $def) { throw "No 'server' entry in the scheduled task map." }
+
+    $out = @{ action = 'not-registered'; taskName = $def.name; ready = $false; session = $null }
+
+    if (-not (Get-ScheduledTask -TaskName $def.name -ErrorAction SilentlyContinue)) {
+        # No boot task, so a console-hosted server is the correct outcome and
+        # this must not interfere with it.
+        return $out
+    }
+
+    $live = Get-LiveCamelSession
+    if ($live) {
+        $out.action  = 'already-running'
+        $out.ready   = $true
+        $out.session = $live
+        return $out
+    }
+
+    if ($WhatIfOnly) {
+        $out.action = 'would-start'
+        return $out
+    }
+
+    Start-ScheduledTask -TaskName $def.name -ErrorAction Stop
+    $out.action = 'started'
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 250
+        $live = Get-LiveCamelSession
+        if ($live) {
+            $out.ready   = $true
+            $out.session = $live
+            break
+        }
+    }
+
+    # ready = $false is a real answer, not a failure to report: the task was
+    # asked to start and did not come up in time. The caller says so and falls
+    # back to telling somebody the manual command.
+    return $out
+}
+
 function New-TrackerShortcut {
     <#
       A .lnk pointing at "Open Tracker.bat", carrying the Cert Camel icon.

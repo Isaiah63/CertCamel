@@ -1623,7 +1623,42 @@ Write-Host ""
 
 if (Test-Path $launcher) {
     $open = Read-Host "  Open the tracker now? (Y/N)"
-    if ($open -match '^[Yy]') { Start-Process -FilePath $launcher }
+    if ($open -match '^[Yy]') {
+        <#
+          Start the boot task FIRST, if there is one and it is not already
+          running. Without this the launcher finds no live session and serve.ps1
+          starts a server in a console window instead - tied to this sign-in,
+          gone at sign-out - even though a perfectly good background task is
+          registered and waiting for a reboot it has not had yet.
+
+          Here rather than beside the registration, because it catches the case
+          however it arose: newly registered above, or an existing one that was
+          kept at the "Keep it?" prompt and has never been started.
+
+          Best effort. A failure here means the launcher does what it always
+          did, which is the behaviour being improved on, not one to abort for.
+        #>
+        try {
+            $svc = Start-CamelServerTaskIfIdle
+            if ($svc.action -eq 'started' -and $svc.ready) {
+                Write-Host ""
+                Write-Host "  Started '$($svc.taskName)' first, so the page keeps running after you sign out." -ForegroundColor Green
+            }
+            elseif ($svc.action -eq 'started') {
+                Write-Host ""
+                Write-Host "  '$($svc.taskName)' was asked to start but has not come up yet." -ForegroundColor Yellow
+                Write-Host "  If the page opens in a console window, that copy stops when you sign out." -ForegroundColor DarkGray
+                Write-Host "  Start the background one with:" -ForegroundColor DarkGray
+                Write-Host "    Start-ScheduledTask -TaskName '$($svc.taskName)'" -ForegroundColor DarkGray
+            }
+        }
+        catch {
+            Write-Host ""
+            Write-Host "  Could not start the background service: $(($_.Exception.Message -split "`n")[0].Trim())" -ForegroundColor Yellow
+        }
+
+        Start-Process -FilePath $launcher
+    }
 }
 elseif (Test-Path $tracker) {
     # No fallback to opening $tracker directly: ssl-tracker.html now requires
