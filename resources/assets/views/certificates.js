@@ -70,90 +70,6 @@
                 function(err){ if (err) { window.alert(err); } });
   }
 
-  // --- Row actions menu -------------------------------------------------- //
-  // Only one open at a time, and it lives on document.body rather than inside
-  // the cell: .tablewrap sets overflow-x:auto, which per spec makes overflow-y
-  // auto too, so a menu rendered inside a row would be clipped by the table.
-  var openMenu = null;
-
-  function closeRowMenu(){
-    if (!openMenu) { return; }
-    if (openMenu.el.parentNode) { openMenu.el.parentNode.removeChild(openMenu.el); }
-    openMenu.trigger.setAttribute('aria-expanded', 'false');
-    openMenu = null;
-    document.removeEventListener('keydown', onMenuKey, true);
-    document.removeEventListener('mousedown', onMenuOutside, true);
-    window.removeEventListener('scroll', closeRowMenu, true);
-    window.removeEventListener('resize', closeRowMenu);
-  }
-
-  function onMenuKey(e){
-    if (e.key === 'Escape') {
-      var t = openMenu && openMenu.trigger;
-      closeRowMenu();
-      if (t) { t.focus(); }   // Escape should land you back where you opened it
-    }
-  }
-  function onMenuOutside(e){
-    if (!openMenu) { return; }
-    if (openMenu.el.contains(e.target) || openMenu.trigger.contains(e.target)) { return; }
-    closeRowMenu();
-  }
-
-  function buildRowMenu(items, forName){
-    var trigger = el('button', 'btn sm menu-trigger', '⋯');
-    trigger.type = 'button';
-    trigger.setAttribute('aria-haspopup', 'true');
-    trigger.setAttribute('aria-expanded', 'false');
-    trigger.title = 'More actions for ' + forName;
-    trigger.setAttribute('aria-label', 'More actions for ' + forName);
-
-    trigger.addEventListener('click', function(){
-      // A second click on the same trigger closes rather than reopening.
-      if (openMenu && openMenu.trigger === trigger) { closeRowMenu(); return; }
-      closeRowMenu();
-
-      var menu = el('div', 'rowmenu');
-      menu.setAttribute('role', 'menu');
-
-      // Every entry is a button now. The one <a> this ever built was the
-      // download link, and that became a fetch when the token came out of the
-      // URL, so the branch it needed went with it.
-      items.forEach(function(it){
-        var node = el('button', null, it.label);
-        node.type = 'button';
-        node.addEventListener('click', function(){ closeRowMenu(); it.run(); });
-        node.title = it.title || '';
-        node.setAttribute('role', 'menuitem');
-        menu.appendChild(node);
-      });
-
-      document.body.appendChild(menu);
-
-      // Positioned from the trigger, then nudged back inside the viewport if it
-      // would hang off the bottom or the right edge.
-      var r = trigger.getBoundingClientRect();
-      var mw = menu.offsetWidth, mh = menu.offsetHeight;
-      var left = Math.min(r.right - mw, window.innerWidth - mw - 8);
-      var top  = (r.bottom + mh + 8 > window.innerHeight) ? (r.top - mh - 4) : (r.bottom + 4);
-      menu.style.left = Math.max(8, left) + 'px';
-      menu.style.top  = Math.max(8, top) + 'px';
-
-      trigger.setAttribute('aria-expanded', 'true');
-      openMenu = { el: menu, trigger: trigger };
-
-      document.addEventListener('keydown', onMenuKey, true);
-      document.addEventListener('mousedown', onMenuOutside, true);
-      // Capture phase: the scroll that matters is the table's, not the window's.
-      window.addEventListener('scroll', closeRowMenu, true);
-      window.addEventListener('resize', closeRowMenu);
-
-      var first = menu.querySelector('button');
-      if (first) { first.focus(); }
-    });
-
-    return trigger;
-  }
 
   // Anything another system renews is excluded from bulk renewal, so "Renew all
   // expiring" can never quietly issue a second certificate for something already
@@ -270,11 +186,6 @@
   }
 
   function renderInner(){
-    // The menu lives on document.body, so a re-render (a finished job, a state
-    // refresh) would otherwise strip its trigger out of the table and leave the
-    // menu floating with nothing behind it.
-    closeRowMenu();
-
     var host = document.getElementById('view-certificates');
     host.textContent = '';
 
@@ -342,13 +253,139 @@
       if (expiring.length) { openPicker('renew', expiring.map(function(c){ return c.certId; })); }
     });
     actionsRow.appendChild(renewAll);
+
+    /* Selection drives every action.
+
+       Each row used to carry a Renew button and a '...' menu. That is a copy of
+       the same furniture per row, and no way to act on more than one thing -
+       after a node is repaired you want to redeploy several certificates, not
+       click through them one at a time.
+
+       A button enables only when its action is valid for EVERY ticked
+       certificate, with the reason in its title when it is not. Quietly acting
+       on the subset that happens to qualify would be the worst of the options. */
+    var sel = {};
+
+    function selectedCerts(){
+      return certs.filter(function(c){ return sel[c.certId]; });
+    }
+    function setEnabled(btn, ok, why){
+      btn.disabled = !ok;
+      btn.title = ok ? '' : why;
+    }
+    function pickedIds(list){
+      return list.map(function(c){ return c.certId; });
+    }
+
+    var count    = el('span', 'selcount', '');
+    count.id = 'sel-count';
+    var bRenew   = el('button', 'btn sm', 'Renew');
+    var bDeploy  = el('button', 'btn sm', 'Deploy');
+    var bAssign  = el('button', 'btn sm', 'Load balancers');
+    var bDown    = el('button', 'btn sm', 'Download');
+    var bExt     = el('button', 'btn sm', 'Managed elsewhere');
+    bRenew.id = 'btn-sel-renew';   bDeploy.id = 'btn-sel-deploy';
+    bAssign.id = 'btn-sel-assign'; bDown.id   = 'btn-sel-download';
+    bExt.id    = 'btn-sel-external';
+    [bRenew, bDeploy, bAssign, bDown, bExt].forEach(function(b){
+      b.type = 'button';
+      b.setAttribute('data-busy-disable', '');
+      actionsRow.appendChild(b);
+    });
+    actionsRow.appendChild(count);
+
+    var NOSEL = 'Tick a certificate first.';
+
+    bRenew.addEventListener('click', function(){
+      var picked = selectedCerts();
+      if (!picked.length) { return; }
+      /* The one action with a cost attached. Certificate authorities cap issuance
+         per week - Let's Encrypt allows 50 per registered domain and 5 duplicates -
+         so ticking everything and pressing Renew is how a limit gets spent on
+         certificates that had months left, leaving the one that actually expires
+         unable to issue. 'Renew all expiring' is safe because of its filter; this
+         button has no filter, so it asks instead. */
+      var notDue = picked.filter(function(c){ return !isExpiring(c); }).length;
+      if (notDue) {
+        var msg = 'Renew ' + picked.length + ' certificate(s)? ' + notDue +
+                  ' of them are not near expiry. Certificate authorities limit how many ' +
+                  'certificates you may issue per week, so renewing early can leave you ' +
+                  'unable to renew one that genuinely expires.';
+        if (!window.confirm(msg)) { return; }
+      }
+      openPicker('renew', pickedIds(picked));
+    });
+
+    bDeploy.addEventListener('click', function(){
+      var picked = selectedCerts();
+      if (picked.length) { openPicker('deploy', pickedIds(picked)); }
+    });
+    bAssign.addEventListener('click', function(){
+      var picked = selectedCerts();
+      if (picked.length) { openPicker('assign', pickedIds(picked)); }
+    });
+    bDown.addEventListener('click', function(){
+      selectedCerts().forEach(function(c){ downloadCert(c); });
+    });
+    bExt.addEventListener('click', function(){
+      var picked = selectedCerts();
+      if (!picked.length) { return; }
+      var makeExternal = !picked[0].external;
+      var left = picked.length;
+      picked.forEach(function(c){
+        api('POST', '/api/cert/' + encodeURIComponent(c.certId) + '/external',
+            {external: makeExternal}, function(err){
+          if (err) { window.alert(err); }
+          left--;
+          if (!left) { CC.loadState(); }
+        });
+      });
+    });
+
+    function syncToolbar(){
+      var picked = selectedCerts();
+      var n = picked.length;
+      count.textContent = n ? (n + ' selected') : '';
+
+      var allLocal = n > 0 && picked.every(function(c){ return c.hasLocalCert; });
+      var noneExt  = n > 0 && picked.every(function(c){ return !c.external; });
+      var allExt   = n > 0 && picked.every(function(c){ return c.external; });
+      var deployable = n > 0 && picked.every(function(c){
+        return !c.external && c.hasLocalCert && (c.targets || []).length;
+      });
+
+      setEnabled(bRenew,  noneExt, n ? 'Certificates marked "managed elsewhere" are never issued from here.' : NOSEL);
+      setEnabled(bAssign, noneExt, n ? 'Certificates marked "managed elsewhere" deploy nowhere.' : NOSEL);
+      setEnabled(bDown,   allLocal, n ? 'One or more of these has no local copy to download.' : NOSEL);
+      setEnabled(bDeploy, deployable, n ? 'Every selected certificate needs a local copy and at least one load balancer group.' : NOSEL);
+
+      /* Assign vs Change: the old row menu made that distinction and it is worth
+         keeping - "Assign" is the one that says a certificate currently deploys
+         nowhere, which is exactly the case people miss. With several ticked it
+         reads Assign only when NONE of them has a group yet. */
+      bAssign.textContent = !n ? 'Load balancers'
+        : (picked.some(function(c){ return (c.targets || []).length; })
+             ? 'Change load balancers' : 'Assign load balancers');
+
+      bExt.textContent = allExt ? 'Renew here' : 'Managed elsewhere';
+      setEnabled(bExt, n > 0 && (allExt || noneExt),
+                 n ? 'The selection mixes certificates managed here and managed elsewhere.' : NOSEL);
+
+      var all = document.getElementById('cert-all');
+      if (all) {
+        all.checked = n > 0 && n === certs.length;
+        all.indeterminate = n > 0 && n < certs.length;
+      }
+    }
     host.appendChild(actionsRow);
 
     var tw = el('div', 'tablewrap');
     var table = document.createElement('table');
     table.id = 'certtable';
-    table.innerHTML = '<thead><tr><th>Certificate</th><th>Covers</th><th>Issuer</th>' +
-      '<th>Expires</th><th class="n">Days left</th><th>Deployed</th><th></th></tr></thead>';
+    table.innerHTML = '<thead><tr>' +
+      '<th class="pick"><input type="checkbox" id="cert-all" aria-label="Select every certificate"></th>' +
+      '<th>Certificate</th><th>Covers</th><th>Issuer</th>' +
+      '<th>Expires</th><th class="n">Days left</th><th>Deployed</th></tr></thead>';
     var body = document.createElement('tbody');
     table.appendChild(body);
     tw.appendChild(table);
@@ -357,6 +394,19 @@
     certs.forEach(function(c){
       var days = certDays(c);
       var tr = el('tr');
+
+      var pick = el('td', 'pick');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'cert-pick';
+      cb.setAttribute('data-cert', c.certId);
+      cb.setAttribute('aria-label', 'Select ' + (c.displayName || c.zone));
+      cb.addEventListener('change', function(){
+        if (cb.checked) { sel[c.certId] = true; } else { delete sel[c.certId]; }
+        syncToolbar();
+      });
+      pick.appendChild(cb);
+      tr.appendChild(pick);
 
       var name = el('td', 'host');
       name.appendChild(document.createTextNode(c.displayName || c.zone));
@@ -442,66 +492,24 @@
 
       tr.appendChild(deploymentCell(c));
 
-      // Renew stays a visible button - it is the action people come here for,
-      // and burying the common case behind two clicks is a downgrade. The rest
-      // go in the menu, which is what removes four buttons from every row.
-      var acts = el('td', 'acts');
-      var items = [];
-
-      if (c.hasLocalCert) {
-        items.push({
-          label: 'Download certificate files',
-          title: 'Download the certificate, chain and private key as one PEM file',
-          run: function(){ downloadCert(c); }
-        });
-      }
-      /* The deployment cell used to be the ONLY way to reach this, with nothing
-         saying so - a status column that happened to be clickable. That is not
-         somewhere anybody looks for an action, and it cost a real misdiagnosis:
-         a group read as needing a push when the certificate was simply never
-         assigned to it. It is offered here whether or not anything is assigned
-         yet, because "none yet" is exactly the case that needs finding. */
-      if (!c.external) {
-        var hasTargets = (c.targets || []).length;
-        items.push({
-          label: hasTargets ? 'Change load balancers' : 'Assign load balancers',
-          title: hasTargets
-            ? 'Change which load balancer groups this certificate deploys to'
-            : 'Choose which load balancer groups this certificate deploys to. ' +
-              'Until one is chosen, renewal pushes it nowhere.',
-          run: function(){ openPicker('assign', [c.certId]); }
-        });
-      }
-      if (!c.external && c.hasLocalCert && (c.targets || []).length) {
-        items.push({
-          label: 'Deploy to load balancers',
-          title: 'Push this certificate to its load balancers and verify each one is serving it',
-          run: function(){ openPicker('deploy', [c.certId]); }
-        });
-      }
-      items.push({
-        label: c.external ? 'Renew here' : 'Managed elsewhere',
-        title: c.external
-          ? 'Bring this certificate back under this tool'
-          : 'Mark this as renewed by another system: keep watching it, but never issue it from here',
-        run: function(){
-          api('POST', '/api/cert/' + encodeURIComponent(c.certId) + '/external', {external: !c.external}, function(err){
-            if (err) { window.alert(err); return; }
-            CC.loadState();
-          });
-        }
-      });
-
-      if (!c.external) {
-        var rb = el('button', 'btn sm primary', 'Renew');
-        rb.type = 'button';
-        rb.addEventListener('click', function(){ openPicker('renew', [c.certId]); });
-        acts.appendChild(rb);
-      }
-      acts.appendChild(buildRowMenu(items, c.displayName || c.zone));
-      tr.appendChild(acts);
       body.appendChild(tr);
     });
+
+    /* Select-all sits in the header, and the count beside the buttons is what
+       keeps it honest: ticking everything and pressing Renew should never be
+       something done without seeing a number first. */
+    var allBox = document.getElementById('cert-all');
+    if (allBox) {
+      allBox.addEventListener('change', function(){
+        sel = {};
+        if (allBox.checked) { certs.forEach(function(c){ sel[c.certId] = true; }); }
+        Array.prototype.forEach.call(table.querySelectorAll('.cert-pick'), function(b){
+          b.checked = !!allBox.checked;
+        });
+        syncToolbar();
+      });
+    }
+    syncToolbar();
 
     var expiring = certs.filter(isExpiring);
     var skipped  = certs.filter(function(c){ return c.external; }).length;

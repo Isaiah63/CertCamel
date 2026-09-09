@@ -140,25 +140,26 @@ w.CertCamel.loadState(function(){
   console.log('  #view-home hidden again: ' + d.getElementById('view-home').classList.contains('hidden'));
   const certRows = d.querySelectorAll('#certtable tbody tr');
   console.log('  certificate rows rendered: ' + certRows.length);
-  // Download lives in the row actions menu, which renders on document.body
-  // rather than inside the table - so open the menu first. It is a button
-  // rather than a link because the token no longer travels in a URL: the page
-  // fetches the PEM with the header and saves the blob.
-  const menuTrigger = d.querySelector('#certtable .menu-trigger');
-  menuTrigger.click();
-  const dl = Array.from(d.querySelectorAll('.rowmenu button'))
-                  .find(b => b.textContent.indexOf('Download') === 0);
-  console.log('  download label: ' + (dl && dl.textContent));
+  // Download is a toolbar action on the ticked rows now. It is a button rather
+  // than a link because the token no longer travels in a URL: the page fetches
+  // the PEM with the header and saves the blob.
+  const firstBox = d.querySelector('#certtable .cert-pick');
+  firstBox.checked = true;
+  firstBox.dispatchEvent(new w.Event('change'));
+  const dl = d.getElementById('btn-sel-download');
+  console.log('  download enabled once something is ticked: ' + !dl.disabled);
   const beforeDl = calls.length;
   dl.click();
   const dlCall = calls.slice(beforeDl).find(c => c.indexOf('GET /api/download/') === 0);
   console.log('  download went over XHR: ' + dlCall);
   console.log('  NO token in the download URL: ' + (dlCall.indexOf('t=') === -1));
   console.log('  saved to a file: ' + saves[0]);
-  d.dispatchEvent(new w.KeyboardEvent('keydown', {key:'Escape'}));   // tidy up before the next step
+
 
   console.log('\n=== picker still works from the new view ===');
-  const renewBtn = Array.from(d.querySelectorAll('#certtable button')).find(b => b.textContent === 'Renew');
+  // Renew is a toolbar action too; the first row is still ticked from above.
+  const renewBtn = d.getElementById('btn-sel-renew');
+  w.confirm = () => true;   // this certificate is not near expiry, so it asks
   const before = calls.length;
   renewBtn.click();
   console.log('  picker opened: ' + !d.getElementById('picker').classList.contains('hidden'));
