@@ -138,7 +138,14 @@ $script:PluginCatalog = @{
     DMEasy = @{
         Label = 'DNS Made Easy'
         Args  = @(
-            @{ Name = 'DMEKey';        Label = 'API Key';    Secret = $false; Type = 'text'
+            # Secret, like every other credential - it was the only API key rendered
+            # back into the form in the clear on every page load.
+            #
+            # PlainToPlugin because Posh-ACME's DMEasy plugin declares [string]$DMEKey
+            # with no securestring variant, unlike NS1 and Cloudflare. Handing it the
+            # SecureString the other secrets use would stringify to
+            # "System.Security.SecureString" and the CA would answer 403.
+            @{ Name = 'DMEKey';        Label = 'API Key';    Secret = $true;  PlainToPlugin = $true; Type = 'text'
                Hint  = 'DNS Made Easy control panel: Config > Account Information > API Keys. Only the MAIN account can generate an API key - sub-accounts with full administrator rights cannot, however they are permissioned, and the option simply is not there rather than being refused. If you administer this zone through a sub-account you will need the account owner to issue the key.' }
             @{ Name = 'DMESecret';     Label = 'Secret Key'; Secret = $true;  Type = 'text' }
             @{ Name = 'DMEUseSandbox'; Secret = $false; Type = 'bool'
@@ -746,6 +753,36 @@ function Get-TrackerSettings {
         if (-not $s.ContainsKey($k) -or $null -eq $s[$k]) { $s[$k] = $def[$k] }
     }
     $s.providers = @($s.providers)
+
+    <#
+      The DNS Made Easy API key used to live in settings.json in the clear, and
+      the Settings page rendered it back into the form on every load - the only
+      credential in the app that did. Move any that are still there into
+      secrets.xml, where every other credential already lives.
+
+      Done on load rather than on the next save, because the point is to get the
+      value off disk. Guarded and best-effort: this runs on read paths too, and a
+      settings file that cannot be written must not stop one being read.
+    #>
+    $movedDme = $false
+    foreach ($prov in @($s.providers)) {
+        if (-not $prov -or [string]$prov.plugin -ne 'DMEasy') { continue }
+        if (-not ($prov.args -and $prov.args.ContainsKey('DMEKey'))) { continue }
+        $plainKey = [string]$prov.args['DMEKey']
+        if ($plainKey) {
+            # Never overwrite a key already stored: a re-entered value is newer
+            # than whatever this stale copy holds.
+            if (-not (Test-TrackerSecret -Key "$($prov.id):DMEKey")) {
+                try { Set-TrackerSecret -Key "$($prov.id):DMEKey" -Value $plainKey }
+                catch { $null = $_; continue }   # leave it be rather than lose it
+            }
+        }
+        $prov.args.Remove('DMEKey')
+        $movedDme = $true
+    }
+    if ($movedDme) {
+        try { Save-TrackerSettings -Settings $s } catch { $null = $_ }
+    }
     $s.targets   = @($s.targets)
     $s.cas       = @($s.cas)
     if (-not @($s.cas).Count) { $s.cas = $def.cas }
@@ -2872,7 +2909,16 @@ function Get-ProviderPluginArgs {
 
     foreach ($a in $catalog.Args) {
         if ($a.Secret) {
-            # Posh-ACME's secure parameter sets want the SecureString itself.
+            # Most plugins take a securestring. A few declare the parameter as
+            # [string] with no secure variant - DMEasy's DMEKey - and coercing a
+            # SecureString into one yields the literal text
+            # "System.Security.SecureString", which the CA rejects as a bad
+            # credential rather than as a bug. Those are marked PlainToPlugin.
+            if ($a.ContainsKey('PlainToPlugin') -and $a.PlainToPlugin) {
+                $plainVal = Get-TrackerSecret -Key "$($Provider.id):$($a.Name)" -AsPlainText
+                if ($plainVal) { $pluginArgs[$a.Name] = $plainVal }
+                continue
+            }
             $secure = Get-TrackerSecret -Key "$($Provider.id):$($a.Name)"
             if ($secure) { $pluginArgs[$a.Name] = $secure }
             continue
@@ -2906,8 +2952,12 @@ function Get-ProviderZones {
 
     switch ($Provider.plugin) {
         'DMEasy' {
-            $key = $null
-            if ($Provider.ContainsKey('args') -and $Provider.args -and $Provider.args.ContainsKey('DMEKey')) {
+            # From the secret store now. The args fallback is for a profile saved
+            # before the key became a secret and not yet migrated - Get-TrackerSettings
+            # moves those on load, so it only covers a hashtable built by hand.
+            $key = Get-TrackerSecret -Key "$($Provider.id):DMEKey" -AsPlainText
+            if (-not $key -and $Provider.ContainsKey('args') -and $Provider.args -and
+                $Provider.args.ContainsKey('DMEKey')) {
                 $key = $Provider.args.DMEKey
             }
             $secret = Get-TrackerSecret -Key "$($Provider.id):DMESecret" -AsPlainText
