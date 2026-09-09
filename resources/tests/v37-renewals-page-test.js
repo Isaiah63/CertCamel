@@ -99,6 +99,19 @@ const rows  = () => Array.from(d.querySelectorAll('#renew-list .renewal'));
 const names = () => rows().map(r => r.querySelector('.n').textContent);
 const tally = () => (d.getElementById('renew-tally') || {}).textContent;
 
+/* Is this exact name in the list?
+
+   An exact element match, not `names().indexOf(x) !== -1`. Both are correct on
+   an array, but the loose form trips CodeQL's
+   js/incomplete-url-substring-sanitization: the rule cannot tell an array of
+   certificate names from a URL being checked by substring, and the latter is a
+   real vulnerability. The same reasoning is written up at greater length in
+   v23-rate-limits-test.js, which tightens its match for the same reason.
+
+   It also says what the assertion means. "Is this name among them" is the claim
+   being made; a position in an array is an implementation detail of asking. */
+const has = (name) => names().some(n => n === name);
+
 function setWindow(v){
   const s = d.getElementById('renew-window');
   s.value = v;
@@ -149,18 +162,18 @@ w.CertCamel.loadState(function(){
   check('next 24 hours keeps only the imminent one',
         names().length === 1 && names()[0] === 'soon.example.com', names().join(' | '));
   check('an undated certificate is NOT claimed to be due',
-        names().indexOf('nodate.example.com') === -1, names().join(' | '));
+        !has('nodate.example.com'), names().join(' | '));
   check('tally says how much is hidden', tally() === '1 of 4', tally());
 
   setWindow('90');
   check('three months reaches the 45-day one',
-        names().indexOf('later.example.com') !== -1, names().join(' | '));
+        has('later.example.com'), names().join(' | '));
   check('but still not the undated one',
-        names().indexOf('nodate.example.com') === -1, names().join(' | '));
+        !has('nodate.example.com'), names().join(' | '));
 
   setWindow('all');
   check('All brings the undated one back',
-        names().indexOf('nodate.example.com') !== -1, names().join(' | '));
+        has('nodate.example.com'), names().join(' | '));
 
   console.log('\na date missing because the forecast predates the certificate');
   /* The forecast is not wrong there - it simply ran first. Saying only
