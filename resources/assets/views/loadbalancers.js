@@ -227,6 +227,20 @@
     host.appendChild(el('p', 'mini',
       'TLS frontends reading a crt-list Cert Camel does not write. Not a problem — this is what is still outside the tool.'));
 
+    /* Collapsed by default. Two rows here today; on a load balancer with a
+       hundred pre-existing frontends this is nearly all of them, in one card,
+       below the ones that ARE managed. The prose above stays outside the
+       <details> so the reason is readable without expanding - the section is
+       reassurance, and reassurance nobody can see is not reassurance.
+
+       Same <details class="pick-advanced"> the assign dialog uses, so it
+       inherits the existing details/summary styling rather than adding any. */
+    var det = document.createElement('details');
+    det.className = 'pick-advanced';
+    var sum = document.createElement('summary');
+    sum.textContent = um.length + (um.length === 1 ? ' frontend' : ' frontends');
+    det.appendChild(sum);
+
     var card = el('div', 'card wide');
     um.forEach(function(f){
       var r = el('div', 'lbfe');
@@ -239,7 +253,8 @@
       r.appendChild(c);
       card.appendChild(r);
     });
-    host.appendChild(card);
+    det.appendChild(card);
+    host.appendChild(det);
   }
 
   /* Both directions, deliberately. Which side is wrong depends on intent and
