@@ -805,9 +805,25 @@
     var btn = document.getElementById('btn-sidebar-toggle');
     if (localStorage.getItem(KEY) === '1') { document.body.classList.add('sidebar-collapsed'); }
     if (!btn) { return; }
+
+    /* The button said 'Collapse' in both states, and collapsed that is the one
+       label it cannot be: the sidebar is already collapsed and the only thing
+       the button does is the opposite. Easy to miss while the text was hidden
+       by the collapsed rail - the tooltip shows it either way. */
+    function label(){
+      var collapsed = document.body.classList.contains('sidebar-collapsed');
+      var word = collapsed ? 'Expand' : 'Collapse';
+      btn.title = word + ' sidebar';
+      var t = btn.querySelector('.navlabel');
+      if (t) { t.textContent = word; }
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+    label();
+
     btn.addEventListener('click', function(){
       var collapsed = document.body.classList.toggle('sidebar-collapsed');
       localStorage.setItem(KEY, collapsed ? '1' : '0');
+      label();
     });
   })();
 
