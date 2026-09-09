@@ -90,7 +90,7 @@
   }
 
   function nodeCard(g){
-    var card = el('div', 'card wide');
+    var card = el('div', 'card');
     card.appendChild(el('h4', null, 'Nodes'));
 
     if (!(g.nodes || []).length) {
@@ -164,7 +164,7 @@
   }
 
   function certCard(c, g){
-    var card = el('div', 'card wide lbcert ' + c.state);
+    var card = el('div', 'card lbcert ' + c.state);
 
     var head = el('div', 'lbcerthead');
     head.appendChild(el('span', 'lbcertname', c.name));
@@ -240,7 +240,7 @@
     sum.textContent = um.length + (um.length === 1 ? ' frontend' : ' frontends');
     det.appendChild(sum);
 
-    var card = el('div', 'card wide');
+    var card = el('div', 'card');
     um.forEach(function(f){
       var r = el('div', 'lbfe');
       r.appendChild(el('span', 'dot'));

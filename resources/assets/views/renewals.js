@@ -171,7 +171,7 @@
     bar.appendChild(tally);
     host.appendChild(bar);
 
-    var list = el('div', 'card wide');
+    var list = el('div', 'card');
     list.id = 'renew-list';
     host.appendChild(list);
 

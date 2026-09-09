@@ -97,7 +97,7 @@
   var domainsLoading  = false;
 
   function buildDomainsEditor(toggleBtn){
-    var card = el('div', 'card wide' + (domainsOpen ? '' : ' hidden'));
+    var card = el('div', 'card' + (domainsOpen ? '' : ' hidden'));
     card.appendChild(el('h4', null, 'domains.txt'));
     card.appendChild(CC.guideHint(
       'One host per line. "[Category Name]" groups everything below it, "#" starts a comment, ' +
@@ -525,7 +525,7 @@
      renew it", but "what is serving this page, is it still being looked after,
      and where is the file". Nothing here needs deciding, which is the point. */
   function trackerCard(c){
-    var card = el('div', 'card wide trackercard');
+    var card = el('div', 'card trackercard');
 
     var h = el('h3', null, 'This console');
     h.appendChild(el('span', 'badge cool', c.displayName || c.certId));

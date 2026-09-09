@@ -29,6 +29,13 @@
   --shadow:0 1px 2px rgba(17,24,39,.04), 0 10px 30px -14px rgba(17,24,39,.20);
   --radius:16px; --radius-sm:11px;
   --sidebar-w:15.5rem; --sidebar-w-collapsed:4.2rem;
+  /* One measure, and it governs TEXT rather than containers. Cards, callouts
+     and the actions rule each used to carry their own maximum - 64rem, 82rem,
+     52rem - so on a wide window they stopped at three different places and left
+     a ragged right edge with the space beyond it doing nothing. Containers now
+     fill their column and only running text is capped, which is the thing a
+     measure is actually for. */
+  --prose:60rem;
   /* Category-header band. Its own tokens rather than reusing --accent: that one
      is tuned for gradients and borders, where contrast barely matters, and it
      lands around 4.1:1 as small bold TEXT on the dark ground - under AA. These
@@ -583,7 +590,7 @@ tr.gone td.days{color:var(--red);}
 /* Callouts */
 .callout{border:1px solid var(--border); border-left-width:4px; border-radius:var(--radius-sm);
   padding:.85rem 1.1rem; margin:0 0 1.1rem; background:var(--surface); backdrop-filter:blur(14px);
-  max-width:82rem;}
+  max-width:var(--prose);}
 .callout .h{font-weight:700; font-size:.9rem; display:flex; align-items:center; gap:.5rem; margin-bottom:.15rem;}
 .callout p{margin:.3rem 0 0; font-size:.9rem;}
 .callout.warn{border-left-color:var(--amber); background:var(--amber-bg);} .callout.warn .h{color:var(--amber);}
@@ -825,7 +832,7 @@ tr.open > td{border-bottom:none;}
    divider running out past it. Left-aligned, and capped to the card width so
    the rule ends where the cards do. */
 .page-actions{display:flex; flex-wrap:wrap; gap:.5rem; justify-content:flex-start;
-  max-width:64rem; margin-top:1.5rem; padding-top:1.1rem; border-top:1px solid var(--border);}
+  margin-top:1.5rem; padding-top:1.1rem; border-top:1px solid var(--border);}
 
 /* Settings sub-navigation - the same visual language as the old modal tabs,
    now a page-level nav rather than something stacked inside a dialog. */
@@ -840,9 +847,9 @@ tr.open > td{border-bottom:none;}
 
 .card{border:1px solid var(--border); border-radius:var(--radius); padding:1.25rem 1.4rem;
   background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);
-  max-width:64rem; margin:0 0 1.3rem;}
-.card > .hint{max-width:52rem;}
-.card.wide{max-width:none;}
+  margin:0 0 1.3rem;}
+/* Text inside a card still has a measure - the card no longer does. */
+.card > .hint, .card > .mini, .card > p{max-width:var(--prose);}
 /* A card inside a panel is a grouping, not a second pane of glass. --surface is
    translucent, so a nested card stacks its own tint on the one behind it and
    ends up reading heavier than its container; dropping the blur and shadow
