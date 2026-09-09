@@ -90,7 +90,7 @@
   }
 
   function nodeCard(g){
-    var card = el('div', 'card wide');
+    var card = el('div', 'card');
     card.appendChild(el('h4', null, 'Nodes'));
 
     if (!(g.nodes || []).length) {
@@ -102,7 +102,13 @@
       var row = el('div', 'lbnode' + (n.reachable ? '' : ' down'));
       row.appendChild(el('span', 'dot ' + (n.reachable ? 'ok' : 'bad')));
       row.appendChild(el('span', 'lbname', n.name));
-      row.appendChild(el('span', 'lbid', n.node || '—'));
+      /* HAProxy's own name for itself, which is what tells two nodes behind one
+         address apart. Skipped when it matches the configured name: printing
+         "testhaproxy01 testhaproxy01" is noise, and the case this exists for is
+         precisely the one where the two DIFFER. */
+      if (n.node && n.node !== n.name) {
+        row.appendChild(el('span', 'lbid', n.node));
+      }
 
       var d = el('span', 'lbdetail');
       if (n.reachable) {
@@ -158,7 +164,7 @@
   }
 
   function certCard(c, g){
-    var card = el('div', 'card wide lbcert ' + c.state);
+    var card = el('div', 'card lbcert ' + c.state);
 
     var head = el('div', 'lbcerthead');
     head.appendChild(el('span', 'lbcertname', c.name));
@@ -218,10 +224,23 @@
     h.appendChild(el('span', 'rule'));
     host.appendChild(h);
 
-    host.appendChild(el('p', 'mini',
-      'TLS frontends reading a crt-list Cert Camel does not write. Not a problem — this is what is still outside the tool.'));
+    host.appendChild(el('p', 'mini', 'Front-ends with unmatched bindings.'));
 
-    var card = el('div', 'card wide');
+    /* Collapsed by default. Two rows here today; on a load balancer with a
+       hundred pre-existing frontends this is nearly all of them, in one card,
+       below the ones that ARE managed. The prose above stays outside the
+       <details> so the reason is readable without expanding - the section is
+       reassurance, and reassurance nobody can see is not reassurance.
+
+       Same <details class="pick-advanced"> the assign dialog uses, so it
+       inherits the existing details/summary styling rather than adding any. */
+    var det = document.createElement('details');
+    det.className = 'pick-advanced';
+    var sum = document.createElement('summary');
+    sum.textContent = um.length + (um.length === 1 ? ' frontend' : ' frontends');
+    det.appendChild(sum);
+
+    var card = el('div', 'card');
     um.forEach(function(f){
       var r = el('div', 'lbfe');
       r.appendChild(el('span', 'dot'));
@@ -233,7 +252,8 @@
       r.appendChild(c);
       card.appendChild(r);
     });
-    host.appendChild(card);
+    det.appendChild(card);
+    host.appendChild(det);
   }
 
   /* Both directions, deliberately. Which side is wrong depends on intent and

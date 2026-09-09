@@ -29,6 +29,13 @@
   --shadow:0 1px 2px rgba(17,24,39,.04), 0 10px 30px -14px rgba(17,24,39,.20);
   --radius:16px; --radius-sm:11px;
   --sidebar-w:15.5rem; --sidebar-w-collapsed:4.2rem;
+  /* One measure, and it governs TEXT rather than containers. Cards, callouts
+     and the actions rule each used to carry their own maximum - 64rem, 82rem,
+     52rem - so on a wide window they stopped at three different places and left
+     a ragged right edge with the space beyond it doing nothing. Containers now
+     fill their column and only running text is capped, which is the thing a
+     measure is actually for. */
+  --prose:60rem;
   /* Category-header band. Its own tokens rather than reusing --accent: that one
      is tuned for gradients and borders, where contrast barely matters, and it
      lands around 4.1:1 as small bold TEXT on the dark ground - under AA. These
@@ -477,6 +484,18 @@ h2 .rule{flex:1; height:1px; background:linear-gradient(90deg,var(--border),tran
 /* --muted, not --faint. A tile's label is what makes its number mean anything,
    and on the tinted tiles (.good/.hot/.bad) the coloured ground pushed faint
    under AA. Both reasons point the same way. */
+/* Centred both ways: a stat tile is one number with a label above and a unit
+   below. Ragged left it floats in a corner of a box that stretches to a third
+   of the window, and because the tiles stretch to match the tallest card in the
+   row - the automation one - the content otherwise sits at the top with dead
+   space beneath it. .pill.auto opts out: it is a list of rows, not a stat. */
+.pill{text-align:center;}
+.pill:not(.auto){display:flex; flex-direction:column; justify-content:center;}
+/* And a ceiling. flex:1 1 12rem with no maximum lets four tiles stretch to a
+   quarter of any window, so a two-character number sits in the middle of a
+   billboard. Capped, the row keeps its shape and the space goes to the
+   automation card beside it, which has content to put in it. */
+.pill:not(.auto){max-width:22rem;}
 .pill .k{font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:700;}
 .pill .val{font-size:1.5rem; font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin:.15rem 0;}
 .pill .sub{font-size:.78rem; color:var(--muted);}
@@ -508,6 +527,13 @@ td.issuer{color:var(--muted); font-size:.85rem;}
 .err{color:var(--muted); font-size:.85rem; font-style:italic;}
 #certtable table{min-width:62rem;}
 #certtable td.names{min-width:20rem; color:var(--muted); font-size:.83rem;}
+/* The "+N more" in the covers cell. Reads as part of the sentence rather than
+   as a control, because it sits mid-text and a button chrome there would weigh
+   more than the names it is summarising. */
+.morebtn{font:inherit; color:var(--muted); background:none; border:0;
+  padding:0 0 0 .35rem; cursor:pointer; text-decoration:underline;
+  text-underline-offset:2px; white-space:nowrap;}
+.morebtn:hover{color:var(--text);}
 select.ca-pick{font:inherit; font-size:.8rem; color:var(--text);
   padding:.28rem .5rem; border:1px solid var(--border); border-radius:8px;
   background:var(--bg); max-width:14rem;}
@@ -576,7 +602,7 @@ tr.gone td.days{color:var(--red);}
 /* Callouts */
 .callout{border:1px solid var(--border); border-left-width:4px; border-radius:var(--radius-sm);
   padding:.85rem 1.1rem; margin:0 0 1.1rem; background:var(--surface); backdrop-filter:blur(14px);
-  max-width:82rem;}
+  max-width:var(--prose);}
 .callout .h{font-weight:700; font-size:.9rem; display:flex; align-items:center; gap:.5rem; margin-bottom:.15rem;}
 .callout p{margin:.3rem 0 0; font-size:.9rem;}
 .callout.warn{border-left-color:var(--amber); background:var(--amber-bg);} .callout.warn .h{color:var(--amber);}
@@ -606,6 +632,41 @@ tr.gone td.days{color:var(--red);}
 
 td.acts{white-space:nowrap; text-align:right;}
 td.acts .btn{margin-left:.35rem;}
+
+/* Selection column. Narrow and content-width so it never steals room from the
+   certificate name, with the box centred against a wrapping row. */
+th.pick,td.pick{width:1.6rem; padding-right:0; vertical-align:middle;}
+th.pick input,td.pick input{cursor:pointer; margin:0;}
+/* Sits AFTER the action buttons: it answers "how many will this hit", so it
+   belongs next to the thing that will do the hitting. */
+.selcount{font-size:.8rem; color:var(--muted); margin-left:.2rem; white-space:nowrap;}
+
+/* Renewals summary on Home, and the page it links to. */
+.renewsum{margin:.1rem 0 .35rem; font-size:.9rem;}
+.renewsum .w{color:var(--amber); font-weight:600;}
+.renewsum .d{color:var(--text);}
+/* The search box should take the room going spare; the window select stays at
+   its natural width so the two never fight over it. */
+.toolbar .input.grow{flex:1 1 16rem; min-width:10rem;}
+.backlink{display:inline-block; font-size:.8rem; color:var(--muted);
+  text-decoration:none; margin-bottom:.5rem;}
+.backlink:hover,.backlink:focus-visible{color:var(--text); text-decoration:underline;}
+
+/* Tooltip. Replaces the browser's yellow box, which appears under the pointer
+   in a font belonging to no design and covers the first words of its own text.
+   Positioned against the element instead, so it never hides what it describes.
+
+   position:fixed because these sit inside cards and tables that clip; the
+   coordinates come from getBoundingClientRect, which is already viewport
+   relative, so the two agree without further arithmetic. */
+.tip{position:fixed; z-index:80; max-width:26rem; pointer-events:none;
+  padding:.45rem .6rem; border-radius:var(--radius);
+  background:var(--surface-solid); color:var(--text);
+  border:1px solid var(--border); box-shadow:var(--shadow);
+  font-size:.78rem; line-height:1.45; white-space:normal;
+  animation:tipin .09s ease-out;}
+@keyframes tipin{from{opacity:0; transform:translateY(2px);} to{opacity:1; transform:none;}}
+@media (prefers-reduced-motion:reduce){.tip{animation:none;}}
 
 /* Row actions menu. Renew stays a visible button; the rest live behind this.
    position:FIXED, not absolute, and deliberately so: .tablewrap sets
@@ -783,7 +844,7 @@ tr.open > td{border-bottom:none;}
    divider running out past it. Left-aligned, and capped to the card width so
    the rule ends where the cards do. */
 .page-actions{display:flex; flex-wrap:wrap; gap:.5rem; justify-content:flex-start;
-  max-width:64rem; margin-top:1.5rem; padding-top:1.1rem; border-top:1px solid var(--border);}
+  margin-top:1.5rem; padding-top:1.1rem; border-top:1px solid var(--border);}
 
 /* Settings sub-navigation - the same visual language as the old modal tabs,
    now a page-level nav rather than something stacked inside a dialog. */
@@ -798,9 +859,9 @@ tr.open > td{border-bottom:none;}
 
 .card{border:1px solid var(--border); border-radius:var(--radius); padding:1.25rem 1.4rem;
   background:var(--surface); backdrop-filter:blur(14px); box-shadow:var(--shadow);
-  max-width:64rem; margin:0 0 1.3rem;}
-.card > .hint{max-width:52rem;}
-.card.wide{max-width:none;}
+  margin:0 0 1.3rem;}
+/* Text inside a card still has a measure - the card no longer does. */
+.card > .hint, .card > .mini, .card > p{max-width:var(--prose);}
 /* A card inside a panel is a grouping, not a second pane of glass. --surface is
    translucent, so a nested card stacks its own tint on the one behind it and
    ends up reading heavier than its container; dropping the blur and shadow
@@ -829,7 +890,10 @@ tr.open > td{border-bottom:none;}
    auto-fit collapses the tracks it does not fill, so the two cards split the
    row evenly however wide the window is - and a lone card takes the full width
    rather than sitting in half of it. */
-.cardrow{display:grid; grid-template-columns:repeat(auto-fit,minmax(28rem,1fr));
+/* 24rem rather than 28rem: at 28 a third column needs about 1790px, so a
+   1500-1700px window - the common case on a desktop - got two very wide cards
+   holding short lists. */
+.cardrow{display:grid; grid-template-columns:repeat(auto-fit,minmax(24rem,1fr));
   gap:1.1rem; align-items:stretch; margin:0 0 1.3rem;}
 .cardrow > .card{margin:0; max-width:none; height:100%;}
 
@@ -892,8 +956,13 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 /* Load balancers on Home. A grid rather than a table: four short facts per node
    that should stay on one line on a wide window and stack on a narrow one,
    which a table fights. */
+/* Content-sized name and id columns, matching .lbfe below. They were 6rem and
+   5rem, which a 13-character node name overflows - grid items do not clip, so
+   the name and the monospace id spilled right and printed on top of .lbdetail,
+   hiding the word "HAProxy". Fixed tracks were faking column alignment between
+   rows; auto tracks give that up and use the width that was going spare. */
 .lbnode{display:grid; align-items:baseline; gap:.15rem .8rem; padding:.5rem 0;
-  grid-template-columns:.9rem 6rem 5rem 1fr; border-top:1px solid var(--border);
+  grid-template-columns:.9rem auto auto 1fr; border-top:1px solid var(--border);
   font-size:.85rem;}
 .lbname{font-weight:700; color:var(--text);}
 /* HAProxy's own node name - the thing that tells two nodes behind one address
@@ -994,7 +1063,7 @@ summary{cursor:pointer; color:var(--muted); font-size:.8rem; font-weight:650;}
 
 /* The automation tile carries a list rather than a single number, so it takes
    more of the row than the stat tiles beside it. */
-.pill.auto{flex:1.7 1 20rem;}
+.pill.auto{flex:1.7 1 20rem; text-align:left;}
 .autohead{display:flex; align-items:baseline; justify-content:space-between; gap:.6rem;}
 .pill.auto .val{font-size:1.15rem; margin:0;}
 .svclist{margin-top:.5rem;}

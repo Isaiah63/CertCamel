@@ -152,6 +152,10 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
       <div id="view-certificates" class="view hidden"></div>
       <div id="view-loadbalancers" class="view hidden"></div>
       <div id="view-settings" class="view hidden"></div>
+      <!-- No nav item: this page is reached from the renewals card on Home,
+           and links back. Adding a seventh nav entry for a detail view would
+           cost more than it returns. -->
+      <div id="view-renewals" class="view hidden"></div>
       <div id="view-logs" class="view hidden"></div>
       <div id="view-docs" class="view hidden"></div>
 
@@ -199,6 +203,7 @@ html[data-sidebar-precollapse] .sidebar{width:var(--sidebar-w-collapsed); flex-b
 <script src="assets/views/certificates.js"></script>
 <script src="assets/views/loadbalancers.js"></script>
 <script src="assets/views/settings.js"></script>
+<script src="assets/views/renewals.js"></script>
 <script src="assets/views/logs.js"></script>
 <script src="assets/views/docs.js"></script>
 </body>

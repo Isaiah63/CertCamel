@@ -201,21 +201,32 @@ w.CertCamel.loadState(function(){
   check('the rate-limit warning is on the card, not behind the click',
         /counts against the certificate authority rate limits/.test(txt(card)), txt(card));
 
-  console.log('\n=== assigning is reachable from the row menu, not only the cell ===');
-  function menuFor(hostText){
-    const row = Array.from(cview.querySelectorAll('tr')).filter(function(tr){
-      return new RegExp(hostText).test(txt(tr)) && tr.querySelector('.menu-trigger');
+  console.log('\n=== assigning is reachable from the toolbar ===');
+  /* This used to be driven through a per-row '...' menu. The row is just data
+     now and the actions live in the toolbar, but the distinction being checked
+     is the same one and still matters: "Assign" is what says a certificate
+     currently deploys nowhere. */
+  function pickRow(hostText){
+    Array.from(cview.querySelectorAll('#certtable .cert-pick')).forEach(function(b){
+      if (b.checked) { b.checked = false; b.dispatchEvent(new w.Event('change')); }
+    });
+    const row = Array.from(cview.querySelectorAll('#certtable tbody tr')).filter(function(tr){
+      return new RegExp(hostText).test(txt(tr));
     })[0];
-    row.querySelector('.menu-trigger').click();
-    return Array.from(d.querySelectorAll('.rowmenu [role=menuitem]')).map(txt);
+    const box = row.querySelector('.cert-pick');
+    box.checked = true;
+    box.dispatchEvent(new w.Event('change'));
+    return txt(d.getElementById('btn-sel-assign'));
   }
-  const unassigned = menuFor('nodns\\.example\\.com');
+  const unassigned = pickRow('nodns\\.example\\.com');
   check('an unassigned certificate offers "Assign load balancers"',
-        unassigned.indexOf('Assign load balancers') !== -1, unassigned.join(' | '));
-  const already = menuFor('auto1\\.example\\.com');
-  check('an assigned one offers "Change load balancers"',
-        already.indexOf('Change load balancers') !== -1, already.join(' | '));
-  check('and still offers Deploy', already.indexOf('Deploy to load balancers') !== -1, already.join(' | '));
+        unassigned === 'Assign load balancers', unassigned);
+  const already = pickRow('auto1\\.example\\.com');
+  check('one that already has groups offers "Change load balancers"',
+        already === 'Change load balancers', already);
+  check('and Deploy is available for it',
+        !d.getElementById('btn-sel-deploy').disabled,
+        d.getElementById('btn-sel-deploy').title);
 
   console.log('\n=== the cell says "not assigned", which is the actual fact ===');
   const nrow = Array.from(cview.querySelectorAll('tr')).filter(function(tr){
