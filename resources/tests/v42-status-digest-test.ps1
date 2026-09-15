@@ -232,6 +232,29 @@ try {
           'the count must exclude the three rows already printed'
     Check 'the verdict is bad'  ($certMsg.verdict -eq 'bad') "got $($certMsg.verdict)"
 
+    Write-Host "`na wildcard renewal line is not an unreachable host"
+    <#
+      A "*.example.com" line in domains.txt is a renewal instruction. The checker
+      carries it through with ok = $false because nothing was probed - there is
+      no host of that name - and leaves it out of its own unreachable tally. This
+      summary did not, so an install with a single wildcard line reported "1 thing
+      needs attention - 1 host(s) unreachable" every day, with a blank reason. A
+      heartbeat that cries wolf teaches people to stop reading it.
+    #>
+    $withWild = New-Checker @(
+        (New-Host 'a.example.com' -DaysLeft 60),
+        (New-Host 'b.example.com' -DaysLeft 75),
+        ([pscustomobject]@{ host = '*.example.com'; port = 443; ok = $false; notAfter = $null
+                            error = $null; renewOnly = $true })
+    )
+    $wildMsg = New-StatusSummaryMessage -Settings (New-Settings 'daily') -Now (Get-Date) `
+        -Automation (New-Automation $goodTasks) -Checker $withWild -Deployments @()
+    $wildText = Format-AlertText -Message $wildMsg.message
+    Check 'the verdict stays all clear' ($wildMsg.verdict -eq 'ok') "got $($wildMsg.verdict) - $($wildMsg.subject)"
+    Check 'nothing is called unreachable' ($wildText -notmatch 'unreachable') $wildText
+    Check 'the wildcard line is not counted as a host' `
+          ($wildMsg.subject -match '2 host\(s\) checked') $wildMsg.subject
+
     # ----------------------------------------------------------------------- #
     Write-Host "`ndeployments"
     $depMsg = New-StatusSummaryMessage -Settings (New-Settings 'daily') -Now (Get-Date) `

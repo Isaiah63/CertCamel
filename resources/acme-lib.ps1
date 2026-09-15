@@ -2475,7 +2475,19 @@ function New-StatusSummaryMessage {
     }
 
     # ----- certificates ----------------------------------------------------- #
-    $results  = @($Checker.results)
+    # Only what was actually measured. A "*.example.com" line in domains.txt is a
+    # renewal instruction the checker carries through unprobed, with ok = $false
+    # because there was nothing to connect to. Counting it made every install
+    # with a wildcard line report an unreachable host every day, blank reason and
+    # all - check-ssl.ps1 already leaves these out of its own tally. A wildcard
+    # that WAS probed at a check address carries checkedAt, and counts like any
+    # other host.
+    #
+    # Plain member access, not PSObject.Properties: results arrive as objects
+    # from ssl-data.js but as hashtables from callers and tests, and a
+    # hashtable's PSObject.Properties lists its .NET members rather than its
+    # keys - so that form would never see checkedAt on one.
+    $results  = @($Checker.results | Where-Object { -not ($_.renewOnly -and -not $_.checkedAt) })
     $certRows = @()
     $failing  = @($results | Where-Object { -not $_.ok })
     $dated    = @($results | Where-Object { $_.ok -and $_.notAfter })
