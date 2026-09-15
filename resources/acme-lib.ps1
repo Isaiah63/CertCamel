@@ -5923,6 +5923,96 @@ function New-HAProxyCrtList {
               -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists`?version=$cfgVer")
 }
 
+function Format-BindLineAddress {
+    <#
+      A bind line with its address filled in, when this node's verify address
+      says what the frontend's address is.
+
+      The line exists to be pasted into a load balancer's configuration, so the
+      rule is asymmetric: fill it only from an address the operator configured
+      for exactly this purpose, and otherwise leave "<address>" standing. A
+      guessed address pasted into a bind line is worse than a placeholder - it
+      parses, reloads, and listens somewhere nobody meant.
+
+      An IPv6 verify address is also left as the placeholder. HAProxy's bind
+      syntax for IPv6 is not the bracketed form a URL uses, and producing the
+      wrong one would hand somebody a line that fails to parse.
+    #>
+    param([string]$BindLine, [string]$VerifyHost, $VerifyPort)
+
+    if (-not $BindLine -or -not $VerifyHost) { return $BindLine }
+    if ($VerifyHost.Contains(':')) { return $BindLine }
+
+    $port = 443
+    try { if ($VerifyPort) { $port = [int]$VerifyPort } } catch { $port = 443 }
+    if ($port -lt 1 -or $port -gt 65535) { return $BindLine }
+
+    return $BindLine.Replace('<address>:443', "${VerifyHost}:$port")
+}
+
+function Test-AwaitingManualSetup {
+    <#
+      Is this node's deployment waiting on setup only the operator can do?
+
+      THE CASE. A node whose Data Plane API cannot edit crt-lists (see
+      Sync-HAProxyCrtList, action 'not-editable') can still serve a certificate
+      through a list maintained by hand - but on a FIRST deployment nothing
+      references it yet, and nothing can until somebody adds the crt-list line
+      and the bind. HAProxy will not reload against a bind naming a file that
+      does not exist, so the certificate has to be pushed first. That is the same
+      order the awaiting-bind state already honours for nodes Cert Camel can
+      edit, and calling it a failed deployment fires an alert on the documented
+      way to set a certificate up.
+
+      So true only when ALL of these hold - and deliberately no looser than the
+      awaiting-bind guard, because a state that forgives one thing is one bad edit
+      away from forgiving everything:
+
+        - the push succeeded
+        - the crt-list step reported not-editable
+        - nothing proved the certificate served
+        - every failed check says "on disk but not in use": the right serial is
+          loaded and simply unreferenced. A wrong serial, a certificate not
+          present, one not covering its names - all still fail hard.
+        - THIS CERTIFICATE HAS NEVER BEEN SERVED ON THIS GROUP. A deployment that
+          used to work and has stopped - a bind removed, a line deleted - is a
+          real failure and must alert, not quietly become "awaiting".
+
+      KNOWN LIMIT, stated so nobody rediscovers it: with a verify address set,
+      T3 checks the wire instead of the API. A wire probe to a frontend that does
+      not reference the certificate gets a connection error or some other
+      certificate, which is indistinguishable from a real failure - so this stays
+      false and the run fails as before. deploy.ps1 still prints the steps.
+    #>
+    param($Node, [int]$Proved, $PreviousTarget, [switch]$PreviousUnreadable)
+
+    if (-not $Node) { return $false }
+    if (-not ($Node.push -and $Node.push.ok)) { return $false }
+
+    $cl = $null
+    if ($Node -is [hashtable]) { if ($Node.ContainsKey('crtList')) { $cl = $Node.crtList } }
+    elseif ($Node.PSObject.Properties['crtList']) { $cl = $Node.crtList }
+    if (-not ($cl -and $cl.ok -and $cl.action -eq 'not-editable')) { return $false }
+
+    if ($Proved -gt 0) { return $false }
+
+    $failed = @(@($Node.verify) | Where-Object { $_ -and -not $_.ok })
+    if (-not $failed.Count) { return $false }
+    foreach ($c in $failed) {
+        if (-not ([string]$c.error).StartsWith('on disk but not in use')) { return $false }
+    }
+
+    # A record that could not be read is treated as "served before": that only
+    # ever makes a first deployment fail loudly, never makes a broken one quiet.
+    if ($PreviousUnreadable) { return $false }
+    if ($PreviousTarget) {
+        $wasOk = $false
+        try { $wasOk = [bool]$PreviousTarget.ok } catch { $wasOk = $false }
+        if ($wasOk) { return $false }
+    }
+    return $true
+}
+
 function Sync-HAProxyCrtList {
     <#
       Make sure a pushed certificate is referenced by the node's crt-list, so a
@@ -5992,6 +6082,23 @@ function Sync-HAProxyCrtList {
             $out.action = 'not-editable'
             $out.note   = "this node's Data Plane API$(if ($v) { " ($v)" }) does not let Cert Camel edit crt-lists" +
                           $(if ($why) { " ($why)" } else { '' })
+
+            # What the operator has to do by hand, ready to paste. The entry names
+            # the certificate as the node actually stores it - read from its
+            # storage record, which these nodes do serve - because a hand-typed
+            # name is exactly how a list ends up pointing at a file that is not
+            # there. Falls back the same way the editable path below does.
+            $entryPath = $null
+            try {
+                $stored = @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
+                              -Path "/$ApiVersion/services/haproxy/storage/ssl_certificates" -InsecureTls:$InsecureTls)
+                $rec = @($stored | Where-Object { $_.storage_name -eq $CertStorageName }) | Select-Object -First 1
+                if ($rec -and $rec.file) { $entryPath = [string]$rec.file }
+            } catch { $null = $_ }   # the fallback below is the same one the editable path uses
+            if (-not $entryPath) { $entryPath = ($CrtListPath -replace '/[^/]+$', '') + '/' + $CertStorageName }
+
+            $out.entryLine = $entryPath
+            $out.bindLine  = "bind <address>:443 ssl crt-list $($out.path) alpn h2,http/1.1"
             return $out
         }
 

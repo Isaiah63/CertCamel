@@ -405,7 +405,7 @@ try {
                                     # it invites a paste that fails, on a load balancer.
                                     Write-Log "  $nodeName : NOT served yet - no bind line references this list." 'warn'
                                     Write-Log "      Add this to the frontend, then reload HAProxy however this host does that:"
-                                    Write-Log "      $($sync.bindLine)"
+                                    Write-Log "      $(Format-BindLineAddress -BindLine $sync.bindLine -VerifyHost $vt.host -VerifyPort $vt.port)"
                                 }
                             }
                             else { Write-Log "  $nodeName : crt-list FAILED - $($sync.error)" 'error' }
@@ -423,6 +423,27 @@ try {
                     (-not $_.push.ok) -or ($_.ContainsKey('crtList') -and -not $_.crtList.ok)
                 }).Count -eq 0)
                 $entry.targets += $tResult
+            }
+
+            # The previous deployment record, read BEFORE T3 rather than only when
+            # it is rewritten afterwards. Deciding whether a node that cannot edit
+            # crt-lists is "waiting for setup" needs to know whether this
+            # certificate has ever been served on that group: a first deployment
+            # is the one time not being served is expected, and a deployment that
+            # used to work and has stopped must still fail. An unreadable record
+            # counts as "served before" - that only ever makes a first deployment
+            # fail loudly, never makes a broken one quiet.
+            $prevByTarget = @{}
+            $prevUnreadable = $false
+            $prevEarlyFile = Join-Path $script:JobsDir "deploy-$certId.json"
+            if (Test-Path $prevEarlyFile) {
+                try {
+                    $prevEarly = (Get-Content $prevEarlyFile -Raw -Encoding UTF8) | ConvertFrom-Json
+                    if ($prevEarly -and $prevEarly.PSObject.Properties['byTarget'] -and $prevEarly.byTarget) {
+                        foreach ($pp in $prevEarly.byTarget.PSObject.Properties) { $prevByTarget[$pp.Name] = $pp.Value }
+                    }
+                }
+                catch { $prevUnreadable = $true }
             }
 
             # --- T3: what is each node actually serving? ------------------ #
@@ -610,6 +631,31 @@ try {
                                            $n.ContainsKey('crtList') -and $n.crtList -and
                                            $n.crtList.ok -and $n.crtList.needsBind -and
                                            $proved -eq 0)
+                        # A node that cannot edit crt-lists, deployed for the first
+                        # time: the file is on the node and nothing references it yet,
+                        # because nothing can until the operator adds the line and the
+                        # bind. The same third outcome as awaiting-bind, under a guard
+                        # at least as narrow - see Test-AwaitingManualSetup.
+                        $prevTarget = $(if ($prevByTarget.ContainsKey([string]$t.targetId)) { $prevByTarget[[string]$t.targetId] } else { $null })
+                        $awaitingSetup = Test-AwaitingManualSetup -Node $n -Proved $proved `
+                                             -PreviousTarget $prevTarget -PreviousUnreadable:$prevUnreadable
+                        if ($awaitingSetup) { $awaiting = $true }
+
+                        # The steps, ready to paste, whenever a node that cannot edit
+                        # crt-lists is not proved to be serving - waiting or not. On a
+                        # first deployment they are the setup; on a broken one they are
+                        # the fix. The address is filled only from a configured verify
+                        # address, never guessed.
+                        if ($n.ContainsKey('crtList') -and $n.crtList -and $n.crtList.action -eq 'not-editable' -and $proved -eq 0) {
+                            $head = $(if ($awaitingSetup) { 'waiting for setup' } else { 'not being served' })
+                            Write-Log "  $($n.name) : $head - this node's API cannot edit crt-lists, so these steps are yours:" 'warn'
+                            Write-Log "      1. add this line to $($n.crtList.path)"
+                            Write-Log "           $($n.crtList.entryLine)"
+                            Write-Log "      2. make the frontend's bind read that list:"
+                            Write-Log "           $(Format-BindLineAddress -BindLine $n.crtList.bindLine -VerifyHost $n.verifyHost -VerifyPort $n.verifyPort)"
+                            Write-Log "      Then validate and reload HAProxy however this host does that, and deploy again."
+                        }
+
                         $n.awaitingBind = $awaiting
 
                         if ($awaiting) { $t.awaitingBind = $true; continue }

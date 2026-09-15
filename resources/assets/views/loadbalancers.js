@@ -302,11 +302,15 @@
        camelnuggets.com is on disk as camelnuggets_com-crt-list.txt - and a bind
        naming the dotted path would simply fail to parse. */
     var bindPath = c.crtListOnDisk || c.crtList || '<path>';
+    /* The bind line is Cert Camel's to state; how to validate and reload is not.
+       This used to print "haproxy -c -f /etc/haproxy/haproxy.cfg" and
+       "systemctl reload haproxy", which are wrong on HAPEE and in a container -
+       and a command that does not fit invites a paste that fails on a load
+       balancer. deploy.ps1 dropped the same text for the same reason. */
     body.appendChild(el('pre', 'log',
-      'bind <address>:443 ssl crt-list ' + bindPath + '\n\n' +
-      '# check the config parses, then reload without dropping connections\n' +
-      'haproxy -c -f /etc/haproxy/haproxy.cfg\n' +
-      'systemctl reload haproxy'));
+      'bind <address>:443 ssl crt-list ' + bindPath + ' alpn h2,http/1.1'));
+    body.appendChild(el('p', 'mini',
+      'Replace <address> with the frontend’s address, then validate the configuration and reload HAProxy however this host does that.'));
     if (c.crtListOnDisk && c.crtListOnDisk !== c.crtList) {
       body.appendChild(el('p', 'mini',
         'That is not the path in your settings (' + c.crtList + '). The Data Plane API rewrites dots in a filename, ' +
