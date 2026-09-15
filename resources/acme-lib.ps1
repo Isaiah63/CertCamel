@@ -1835,6 +1835,86 @@ function Get-RenewalForecast {
     catch { return $null }
 }
 
+function Split-WildcardCheckAddress {
+    <#
+      "*.example.com @ address[:port]" -> where to read a wildcard's certificate.
+
+      A wildcard has no host of its own to connect to, so on its own it can be
+      renewed but never measured. The tracker could only ever borrow a date from
+      some other name in the zone, and a zone listing nothing but its wildcard
+      had nothing to borrow - the certificate deployed, served, and showed no
+      expiry anywhere. The suffix names a real endpoint that serves it.
+
+      Returns $null for any line without the suffix, which includes every plain
+      hostname: those mean exactly what they always have. Otherwise:
+
+        wildcard   *.example.com, lower-cased
+        apex       example.com
+        checkHost  the address to connect to (brackets stripped from IPv6)
+        checkPort  443 unless given
+        sniName    see below
+
+      THE SNI IS A DECISION, NOT A COPY OF THE ADDRESS. A single-label subdomain
+      of the zone is sent as itself: it is a real site, and a server that binds
+      certificates by hostname (IIS among them) only answers correctly for a name
+      it recognises. Anything else gets certcamel-probe.<apex>, a name only this
+      wildcard can match:
+
+        - an IP address, which is not a name at all
+        - the apex, which is the tempting stand-in and the wrong one - it is the
+          name most likely claimed by a second certificate, and an exact SNI
+          match beats a wildcard, so probing it measures whoever won that name.
+          deploy.ps1's identity probe makes the same choice for the same reason.
+        - a deeper name like a.b.example.com, which *.example.com does not
+          match: wildcards cover exactly one label, so sending it would only
+          ever fetch some other certificate
+        - a name outside the zone
+    #>
+    param([string]$Entry)
+
+    $t = ([string]$Entry).Trim()
+    if (-not $t.StartsWith('*.')) { return $null }
+    $at = $t.IndexOf('@')
+    if ($at -lt 0) { return $null }
+
+    $wild = $t.Substring(0, $at).Trim().TrimEnd('.').ToLowerInvariant()
+    $addr = $t.Substring($at + 1).Trim()
+    if (-not $wild.StartsWith('*.') -or $wild.Length -le 2 -or -not $addr) { return $null }
+
+    $apex     = $wild.Substring(2)
+    $port     = 443
+    $hostPart = $addr
+
+    if ($addr -match '^\[(?<h>[^\]]+)\](:(?<p>\d+))?$') {
+        # [2001:db8::1]:8443 - the only unambiguous way to put a port on IPv6.
+        $hostPart = $Matches.h
+        if ($Matches.p) { $port = [int]$Matches.p }
+    }
+    elseif ($addr -match '^(?<h>[^:\s]+):(?<p>\d+)$') {
+        $hostPart = $Matches.h
+        $port     = [int]$Matches.p
+    }
+    # Anything else with a colon is a bare IPv6 literal, whose groups cannot be
+    # told apart from a port. It is taken whole, on 443.
+
+    $hostPart = $hostPart.Trim().TrimEnd('.').ToLowerInvariant()
+    if (-not $hostPart -or $hostPart.Contains(' ') -or $port -lt 1 -or $port -gt 65535) { return $null }
+
+    $sni = "certcamel-probe.$apex"
+    if ($hostPart.EndsWith(".$apex")) {
+        $label = $hostPart.Substring(0, $hostPart.Length - $apex.Length - 1)
+        if ($label -and -not $label.Contains('.')) { $sni = $hostPart }
+    }
+
+    return @{
+        wildcard  = $wild
+        apex      = $apex
+        checkHost = $hostPart
+        checkPort = $port
+        sniName   = $sni
+    }
+}
+
 function Get-WatchedHostNames {
     <#
       Every hostname domains.txt asks to be watched, normalised.
@@ -1857,7 +1937,13 @@ function Get-WatchedHostNames {
         foreach ($line in ([IO.File]::ReadAllText($script:DomainsFile, [Text.Encoding]::UTF8) -split "`r?`n")) {
             $t = ([string]$line).Trim()
             if (-not $t -or $t.StartsWith('#') -or $t.StartsWith('[')) { continue }
-            $name = ($t -split ':')[0].Trim().TrimEnd('.').ToLowerInvariant()
+            # A wildcard line may carry "@ address[:port]" saying where it is
+            # served. That is where to LOOK, not part of the name - and splitting
+            # on the first colon would otherwise take an address's port for the
+            # name's.
+            $wc = Split-WildcardCheckAddress -Entry $t
+            if ($wc) { $name = $wc.wildcard }
+            else     { $name = ($t -split ':')[0].Trim().TrimEnd('.').ToLowerInvariant() }
             if ($name -and $out -notcontains $name) { $out += $name }
         }
     }
@@ -3963,6 +4049,12 @@ function Get-CertificateGroups {
     # against a wildcard certificate, so contaminating the SAN cert would break
     # exactly the hosts it exists to serve.
     $wildcardZones = @{}
+    # Dates a wildcard read at its own check address, keyed by the WILDCARD'S
+    # OWN NAME - never by zone. One DNS zone can carry several wildcards
+    # (*.example.com and *.test.example.com), and a date read for one must never
+    # land on another's certificate. Held apart from $groups because a zone that
+    # lists only its wildcard never gets a group.
+    $wildcardNotAfter = @{}
 
     foreach ($r in $Results) {
         $hostName = ([string]$r.host).ToLowerInvariant()
@@ -3976,7 +4068,18 @@ function Get-CertificateGroups {
         if ($haveZones) { $match = Resolve-HostZone -HostName $lookupName -Zones $zones }
 
         if ($isWildcard) {
-            if ($match) { $wildcardZones[$match.zone] = $match }
+            if ($match) {
+                $wildcardZones[$match.zone] = $match
+                # Only a probe that passed check-ssl's coverage guard has a date.
+                # A failed one has none to give, and must not be made to - that
+                # would be the borrowed date this exists to replace.
+                if ($r.ok -and $r.notAfter) {
+                    $na = [datetime]$r.notAfter
+                    if (-not $wildcardNotAfter.ContainsKey($hostName) -or $na -lt $wildcardNotAfter[$hostName]) {
+                        $wildcardNotAfter[$hostName] = $na
+                    }
+                }
+            }
             else {
                 $unmapped += @{
                     host     = $hostName
@@ -4214,6 +4317,13 @@ function Get-CertificateGroups {
                     $na = $g.notAfterByHost[$nk]
                     if (-not $ownNotAfter -or $na -lt $ownNotAfter) { $ownNotAfter = $na }
                 }
+            }
+            # A wildcard checked at an address measured its OWN certificate, so
+            # that date wins - over a borrowed one, and over the apex's, which may
+            # well belong to a different certificate. Looked up by zone rather
+            # than through $g, which does not exist for a wildcard-only zone.
+            if ($k.kind -eq 'wildcard' -and $wildcardNotAfter.ContainsKey([string]$k.display)) {
+                $ownNotAfter = $wildcardNotAfter[[string]$k.display]
             }
             if ($ownNotAfter)            { $notAfter = $ownNotAfter.ToString('o') }
             elseif ($g -and $g.notAfter) { $notAfter = $g.notAfter.ToString('o') }

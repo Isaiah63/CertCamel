@@ -112,6 +112,10 @@
       'The apex goes on the wildcard certificate, because *.example.com does not match a bare ' +
       'example.com — the other certificate leaves it out so the two never compete for one name. ' +
       'Both stay watched.'));
+    card.appendChild(el('p', 'hint',
+      'A wildcard has no site of its own to check, so on its own it gets no expiry date. Say where ' +
+      'it is served and the checker reads it there: *.example.com @ app.example.com, or an address ' +
+      'with :port if it is not 443.'));
 
     var ta = document.createElement('textarea');
     ta.className = 'domains-text';

@@ -37,7 +37,10 @@ $tmpFile    = "$outFile.tmp"
 
 # This script is otherwise standalone - the monitoring half needs nothing
 # installed, which is a property worth keeping. acme-lib is only dot-sourced for
-# the run log and audit trail: it defines functions and a few paths, costs about
+# the run log, the audit trail and Split-WildcardCheckAddress - the one parser for
+# a wildcard line's "@ address" suffix, so the checker and the page can never read
+# that line differently. Probing itself stays in the worker below. acme-lib
+# defines functions and a few paths, costs about
 # 100ms, and pulls in nothing external (Posh-ACME is loaded on demand elsewhere).
 #
 # $PSScriptRoot, NOT $root. They stopped being the same thing when the program
@@ -90,9 +93,27 @@ foreach ($line in Get-Content $domainList -Encoding UTF8) {
     # the renewal side can build a wildcard certificate for the zone, and is
     # skipped by the checker rather than reported as an unreachable host.
     if ($entry.StartsWith('*.')) {
-        $targets += [pscustomobject]@{
-            Host = $entry.ToLowerInvariant(); Port = 443
-            Category = $category; RenewOnly = $true
+        # "*.example.com @ address[:port]" also says where the wildcard is served,
+        # so its certificate can be read there and its own expiry tracked. Without
+        # the suffix it stays a renewal instruction with nothing to measure.
+        #
+        # RenewOnly stays true either way: every consumer that reads it as "this
+        # line asks for a wildcard certificate" must keep reading it that way.
+        # Probed is what says a measurement was taken.
+        $wc = Split-WildcardCheckAddress -Entry $entry
+        if ($wc) {
+            $targets += [pscustomobject]@{
+                Host = $wc.wildcard; Port = $wc.checkPort
+                Category = $category; RenewOnly = $true
+                ConnectHost = $wc.checkHost; SniName = $wc.sniName; Probed = $true
+            }
+        }
+        else {
+            $targets += [pscustomobject]@{
+                Host = $entry.ToLowerInvariant(); Port = 443
+                Category = $category; RenewOnly = $true
+                ConnectHost = $null; SniName = $null; Probed = $false
+            }
         }
         continue
     }
@@ -118,12 +139,19 @@ if ($targets.Count -eq 0) {
 # defined inside the block, and it takes only primitives as arguments.
 
 $worker = {
-    param([string]$HostName, [int]$Port, [string]$Category, [int]$Timeout)
+    # ConnectHost and SniName are set only for a wildcard checked at an address:
+    # connect THERE, ask for THAT name, and report under HostName, the wildcard.
+    # Absent, both fall back to HostName - every other host, exactly as before.
+    param([string]$HostName, [int]$Port, [string]$Category, [int]$Timeout,
+          [string]$ConnectHost, [string]$SniName, [bool]$RenewOnly)
 
     $ErrorActionPreference = 'Stop'
+    if (-not $ConnectHost) { $ConnectHost = $HostName }
+    if (-not $SniName)     { $SniName     = $HostName }
 
     function Get-RemoteCertificate {
-        param([string]$HostName, [int]$Port, [int]$Timeout)
+        param([string]$HostName, [int]$Port, [int]$Timeout, [string]$SniName)
+        if (-not $SniName) { $SniName = $HostName }
 
         $client = $null
         $stream = $null
@@ -166,8 +194,10 @@ $worker = {
             $stream = New-Object Net.Security.SslStream($client.GetStream(), $false, $validate)
 
             # AuthenticateAsClient sends SNI, so shared-IP hosts return their own
-            # certificate rather than whatever the default vhost serves.
-            $stream.AuthenticateAsClient($HostName)
+            # certificate rather than whatever the default vhost serves. The name
+            # connected to, except for a wildcard checked at an address, where
+            # Split-WildcardCheckAddress chose it.
+            $stream.AuthenticateAsClient($SniName)
 
             New-Object Security.Cryptography.X509Certificates.X509Certificate2 $stream.RemoteCertificate
         }
@@ -235,18 +265,30 @@ $worker = {
     }
 
     try {
-        $cert = Get-RemoteCertificate -HostName $HostName -Port $Port -Timeout $Timeout
+        $cert = Get-RemoteCertificate -HostName $ConnectHost -Port $Port -Timeout $Timeout -SniName $SniName
+
+        # A wildcard's date is only its own if the certificate that answered
+        # really IS that wildcard. A mistyped address, a default vhost, or a
+        # server that did not recognise the SNI all hand back some other
+        # certificate, and taking its expiry would put a confident, wrong date on
+        # the row - so a mismatch is an error, and carries no date at all.
+        $sansHere   = @(Get-CertificateSans $cert)
+        $coverError = $null
+        if ($HostName.StartsWith('*.') -and ($sansHere -notcontains $HostName)) {
+            $coverError = "${ConnectHost}:$Port served $($cert.Subject), not $HostName"
+        }
+        $checkedAt = $(if ($HostName.StartsWith('*.')) { "${ConnectHost}:$Port" } else { $null })
 
         [pscustomobject]@{
             host      = $HostName
             port      = $Port
             category  = $Category
-            ok        = $true
-            notAfter  = $cert.NotAfter.ToString('o')
-            notBefore = $cert.NotBefore.ToString('o')
+            ok        = (-not $coverError)
+            notAfter  = $(if ($coverError) { $null } else { $cert.NotAfter.ToString('o') })
+            notBefore = $(if ($coverError) { $null } else { $cert.NotBefore.ToString('o') })
             issuer    = Get-IssuerLabel $cert.Issuer
             subject   = Get-DnField $cert.Subject 'CN'
-            sans      = @(Get-CertificateSans $cert)
+            sans      = $sansHere
             # The serial is unique per issuance, which makes it the only value
             # that proves a specific certificate is the one being served. Expiry
             # dates cannot do that: two certificates issued the same day look
@@ -254,8 +296,9 @@ $worker = {
             # rather than evidence. Deployment verification compares serials.
             serial     = $cert.SerialNumber
             thumbprint = $cert.Thumbprint
-            renewOnly = $false
-            error     = $null
+            renewOnly = $RenewOnly
+            error     = $coverError
+            checkedAt = $checkedAt
         }
     }
     catch {
@@ -275,8 +318,9 @@ $worker = {
             sans      = @()
             serial     = $null
             thumbprint = $null
-            renewOnly = $false
+            renewOnly = $RenewOnly
             error     = $msg
+            checkedAt = $(if ($HostName.StartsWith('*.')) { "${ConnectHost}:$Port" } else { $null })
         }
     }
 }
@@ -285,7 +329,7 @@ $worker = {
 # Check every host, in parallel
 # --------------------------------------------------------------------------- #
 
-$wildcardCount = @($targets | Where-Object { $_.RenewOnly }).Count
+$wildcardCount = @($targets | Where-Object { $_.RenewOnly -and -not $_.Probed }).Count
 $hostCount     = $targets.Count - $wildcardCount
 
 Write-Host ""
@@ -296,8 +340,9 @@ Write-Host ""
 
 $now = Get-Date
 
-# Only real hosts get probed; wildcard entries are recorded as-is.
-$probeTargets = @($targets | Where-Object { -not $_.RenewOnly })
+# Real hosts get probed, and so does a wildcard that says where it is served.
+# A bare wildcard line is recorded as-is.
+$probeTargets = @($targets | Where-Object { -not $_.RenewOnly -or $_.Probed })
 
 $poolSize = [Math]::Max(1, [Math]::Min($Concurrency, [Math]::Max(1, $probeTargets.Count)))
 $pool = [runspacefactory]::CreateRunspacePool(1, $poolSize)
@@ -312,7 +357,10 @@ try {
                   AddArgument($t.Host).
                   AddArgument($t.Port).
                   AddArgument($t.Category).
-                  AddArgument($TimeoutSeconds)
+                  AddArgument($TimeoutSeconds).
+                  AddArgument([string]$t.ConnectHost).
+                  AddArgument([string]$t.SniName).
+                  AddArgument([bool]$t.RenewOnly)
 
         $running += [pscustomobject]@{
             Shell  = $ps
@@ -357,7 +405,9 @@ try {
             $byKey[$key] = [pscustomobject]@{
                 host = $r.Target.Host; port = $r.Target.Port; category = $r.Target.Category
                 ok = $false; notAfter = $null; notBefore = $null; issuer = $null
-                subject = $null; sans = @(); serial = $null; thumbprint = $null; renewOnly = $false
+                subject = $null; sans = @(); serial = $null; thumbprint = $null
+                renewOnly = [bool]$r.Target.RenewOnly
+                checkedAt = $(if ($r.Target.Probed) { "$($r.Target.ConnectHost):$($r.Target.Port)" } else { $null })
                 error = ($_.Exception.Message -split "`n")[0].Trim()
             }
         }
@@ -371,7 +421,7 @@ finally {
 
 $results = @()
 foreach ($t in $targets) {
-    if ($t.RenewOnly) {
+    if ($t.RenewOnly -and -not $t.Probed) {
         # Carried through with nothing measured: there is no certificate to read
         # from a name that does not resolve. The page keeps these out of the
         # expiry table and the renewal side turns them into a wildcard cert.
@@ -404,9 +454,12 @@ foreach ($r in $results) {
         $lastCategory = $r.category
     }
 
-    $label = if ($r.port -eq 443) { $r.host } else { "$($r.host):$($r.port)" }
+    # A checked wildcard's port belongs to the address it was read from, not to
+    # the wildcard, so it is shown with that address.
+    $label = if ($r.checkedAt) { "$($r.host) via $($r.checkedAt)" }
+             elseif ($r.port -eq 443) { $r.host } else { "$($r.host):$($r.port)" }
 
-    if ($r.renewOnly) {
+    if ($r.renewOnly -and -not $r.checkedAt) {
         Write-Host ("$pad{0,-34} {1,-8}       {2}" -f $label, 'WILDCARD', 'renewal only - nothing to measure') -ForegroundColor DarkCyan
     }
     elseif ($r.ok) {
@@ -459,7 +512,7 @@ $expiring = @($live | Where-Object {
                  $d = ([datetime]$_.notAfter - $now).TotalDays
                  $d -ge 0 -and $d -le 30
              }).Count
-$failed   = @($results | Where-Object { -not $_.ok -and -not $_.renewOnly }).Count
+$failed   = @($results | Where-Object { -not $_.ok -and -not ($_.renewOnly -and -not $_.checkedAt) }).Count
 
 Write-Host ""
 if ($expired -gt 0) {
