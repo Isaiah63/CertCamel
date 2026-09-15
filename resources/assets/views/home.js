@@ -93,7 +93,10 @@
     }
 
     var now = new Date();
-    var watched = data.results.filter(function(r){ return !r.renewOnly; });
+    /* A wildcard line is a renewal instruction with nothing to measure, so it
+       stays out of this table - unless it was checked at an address, in which
+       case it has a real certificate, a real date and a real place here. */
+    var watched = data.results.filter(function(r){ return !r.renewOnly || r.checkedAt; });
 
     var rows = watched.map(function(r){
       var days = r.ok && r.notAfter ? daysUntil(r.notAfter) : null;
@@ -289,7 +292,11 @@
 
         var hcell = el('td', 'host');
         hcell.appendChild(document.createTextNode(r.raw.host));
-        if (r.raw.port && r.raw.port !== 443) { hcell.appendChild(el('span', 'port', ':' + r.raw.port)); }
+        if (r.raw.checkedAt) {
+          // Where a wildcard was read from. The port belongs to that address,
+          // not to the wildcard, so it travels with the address.
+          hcell.appendChild(el('span', 'port', ' via ' + r.raw.checkedAt));
+        } else if (r.raw.port && r.raw.port !== 443) { hcell.appendChild(el('span', 'port', ':' + r.raw.port)); }
         tr.appendChild(hcell);
 
         var status = el('td');

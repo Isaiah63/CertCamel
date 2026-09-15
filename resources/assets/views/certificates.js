@@ -112,6 +112,10 @@
       'The apex goes on the wildcard certificate, because *.example.com does not match a bare ' +
       'example.com — the other certificate leaves it out so the two never compete for one name. ' +
       'Both stay watched.'));
+    card.appendChild(el('p', 'hint',
+      'A wildcard has no site of its own to check, so on its own it gets no expiry date. Say where ' +
+      'it is served and the checker reads it there: *.example.com @ app.example.com, or an address ' +
+      'with :port if it is not 443.'));
 
     var ta = document.createElement('textarea');
     ta.className = 'domains-text';
@@ -449,6 +453,14 @@
       // purpose.
       if (c.apexOnWildcard) {
         covers.appendChild(el('div', 'mini', c.zone + ' is on the wildcard certificate for this zone'));
+      }
+      /* The same rule one level down: test.example.com rides on
+         *.test.example.com. The apex already has its own line above, so it is
+         not repeated here. */
+      var onOwnWild = (c.movedToWildcard || []).filter(function(n){ return n !== c.zone; });
+      if (onOwnWild.length) {
+        covers.appendChild(el('div', 'mini', onOwnWild.join(', ') +
+          (onOwnWild.length === 1 ? ' is on its wildcard certificate' : ' are on their wildcard certificates')));
       }
       // The rule has changed what will be issued, but the certificate on disk
       // predates it and still carries the moved name - so it is still competing
