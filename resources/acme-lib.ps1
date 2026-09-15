@@ -4055,6 +4055,12 @@ function Get-CertificateGroups {
     # land on another's certificate. Held apart from $groups because a zone that
     # lists only its wildcard never gets a group.
     $wildcardNotAfter = @{}
+    # Every wildcard line per zone, in domains.txt order. One DNS zone can ask
+    # for several - *.jurystatus.com beside *.test.jurystatus.com - and each is a
+    # certificate of its own. Recording only WHETHER a zone had a wildcard folded
+    # them into one *.<zone> certificate and silently dropped every wildcard below
+    # it: they were never ordered, and nothing said so.
+    $wildcardNames = @{}
 
     foreach ($r in $Results) {
         $hostName = ([string]$r.host).ToLowerInvariant()
@@ -4062,7 +4068,10 @@ function Get-CertificateGroups {
         # A wildcard is matched against the zone it covers, not itself.
         $lookupName = $hostName
         $isWildcard = $hostName.StartsWith('*.')
-        if ($isWildcard) { $lookupName = $hostName.Substring(2) }
+        # The wildcard's name now comes from what was typed rather than being
+        # rebuilt from the DNS zone, so a trailing dot ("*.dev.example.com.")
+        # would otherwise travel into the certificate id and the order name.
+        if ($isWildcard) { $hostName = $hostName.TrimEnd('.'); $lookupName = $hostName.Substring(2) }
 
         $match = $null
         if ($haveZones) { $match = Resolve-HostZone -HostName $lookupName -Zones $zones }
@@ -4070,6 +4079,8 @@ function Get-CertificateGroups {
         if ($isWildcard) {
             if ($match) {
                 $wildcardZones[$match.zone] = $match
+                if (-not $wildcardNames.ContainsKey($match.zone)) { $wildcardNames[$match.zone] = @() }
+                if ($wildcardNames[$match.zone] -notcontains $hostName) { $wildcardNames[$match.zone] += $hostName }
                 # Only a probe that passed check-ssl's coverage guard has a date.
                 # A failed one has none to give, and must not be made to - that
                 # would be the borrowed date this exists to replace.
@@ -4174,7 +4185,12 @@ function Get-CertificateGroups {
     foreach ($zone in $allZones) {
         $g = $null
         if ($groups.ContainsKey($zone)) { $g = $groups[$zone] }
-        $wantsWildcard = $wildcardZones.ContainsKey($zone)
+        # Every wildcard this zone asked for, and the bare names they carry. The
+        # zone's OWN wildcard (*.<zone>) is what moves the apex; a deeper one moves
+        # its own base the same way.
+        $zoneWilds     = @($(if ($wildcardNames.ContainsKey($zone)) { $wildcardNames[$zone] } else { @() }))
+        $wildBases     = @($zoneWilds | ForEach-Object { $_.Substring(2) })
+        $wantsWildcard = ($zoneWilds -contains "*.$zone")
 
         # Provider details come from whichever source knows the zone.
         $zoneInfo = $(if ($g) { $g } else { $wildcardZones[$zone] })
@@ -4223,7 +4239,13 @@ function Get-CertificateGroups {
         $kinds = @()
         if ($g -and @($g.names).Count) {
             $snames = @($g.names)
-            if ($wantsWildcard) { $snames = @($snames | Where-Object { $_ -ne $zone }) }
+            # A name a wildcard carries as its base comes OFF this certificate, or
+            # one name would sit on two certificates of equal specificity and
+            # HAProxy would only ever serve one of them. The apex under *.<zone>
+            # was the first case; test.<zone> under *.test.<zone> is the same rule
+            # one level down.
+            $moved = @($snames | Where-Object { $wildBases -contains $_ })
+            if ($moved.Count) { $snames = @($snames | Where-Object { $wildBases -notcontains $_ }) }
 
             # Pulled out BEFORE the SAN kind is built, or it would appear on both.
             if ($trackerName -and (@($snames) -contains $trackerName)) {
@@ -4237,20 +4259,25 @@ function Get-CertificateGroups {
                 $kinds += @{
                     kind = 'san'; id = $zone; display = $zone; names = $snames
                     apexOnWildcard = [bool]$wantsWildcard
+                    movedToWildcard = @($moved)
                 }
             }
         }
-        if ($wantsWildcard) {
+        foreach ($wn in $zoneWilds) {
+            $base = $wn.Substring(2)
             # "*" is not legal in a Windows filename, so the identifier used for
-            # folders and URLs is "wildcard.<zone>" while the display name is the
-            # wildcard itself.
+            # folders and URLs is "wildcard.<base>" while the display name is the
+            # wildcard itself. For the zone's own wildcard that is still
+            # "wildcard.<zone>", so every certificate issued before this kept its
+            # identifier, its folder, its order and its settings.
             #
-            # The apex rides along because *.example.com does NOT match
-            # example.com - a wildcard-only certificate leaves the bare domain
-            # uncovered, which is a confusing outage to debug.
+            # The base rides along because *.example.com does NOT match
+            # example.com, and *.test.example.com does not match test.example.com
+            # either. A wildcard-only certificate leaves the bare name uncovered,
+            # which is a confusing outage to debug.
             $kinds += @{
-                kind = 'wildcard'; id = "wildcard.$zone"; display = "*.$zone"
-                names = @("*.$zone", $zone)
+                kind = 'wildcard'; id = "wildcard.$base"; display = $wn
+                names = @($wn, $base)
             }
         }
         if ($trackerHere) {
@@ -4319,9 +4346,10 @@ function Get-CertificateGroups {
                 }
             }
             # A wildcard checked at an address measured its OWN certificate, so
-            # that date wins - over a borrowed one, and over the apex's, which may
-            # well belong to a different certificate. Looked up by zone rather
-            # than through $g, which does not exist for a wildcard-only zone.
+            # that date wins - over a borrowed one, and over the base name's, which
+            # may well belong to a different certificate. Looked up by the
+            # wildcard's own name, never its zone: a zone can carry several
+            # wildcards, and $g does not exist for a zone that lists only those.
             if ($k.kind -eq 'wildcard' -and $wildcardNotAfter.ContainsKey([string]$k.display)) {
                 $ownNotAfter = $wildcardNotAfter[[string]$k.display]
             }
@@ -4330,14 +4358,17 @@ function Get-CertificateGroups {
 
             # The apex rule changes what gets ISSUED, not what is already on
             # disk. Until this certificate is renewed, the old one still carries
-            # the apex and still contests it in HAProxy - which looks exactly
+            # each moved name - the apex, or a deeper wildcard's base - and still
+            # contests it in HAProxy - which looks exactly
             # like the bug the rule was written to prevent. Say so on the row
             # rather than letting someone rediscover it during a deployment.
             #
             # Only parsed for a certificate the rule actually affects, so the
             # common case pays nothing.
             $staleNames = @()
-            if ($k.ContainsKey('apexOnWildcard') -and $k.apexOnWildcard -and (Test-Path $pemPath)) {
+            $movesNames = ($k.ContainsKey('apexOnWildcard') -and $k.apexOnWildcard) -or
+                          ($k.ContainsKey('movedToWildcard') -and @($k.movedToWildcard).Count -gt 0)
+            if ($movesNames -and (Test-Path $pemPath)) {
                 try {
                     $leafDer = @(Read-PemBlocks -Text ([IO.File]::ReadAllText($pemPath)) |
                                  Where-Object { $_.Label -eq 'CERTIFICATE' -and $_.Der })[0]
@@ -4359,6 +4390,7 @@ function Get-CertificateGroups {
                 # True when this zone's wildcard owns the apex, so the UI can
                 # explain why it is absent here rather than looking like a loss.
                 apexOnWildcard = [bool]$(if ($k.ContainsKey('apexOnWildcard')) { $k.apexOnWildcard } else { $false })
+                movedToWildcard = @($(if ($k.ContainsKey('movedToWildcard')) { $k.movedToWildcard } else { @() }))
                 staleNames     = @($staleNames)
                 providerId    = $zoneInfo.providerId
                 providerLabel = $zoneInfo.providerLabel

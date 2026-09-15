@@ -454,6 +454,14 @@
       if (c.apexOnWildcard) {
         covers.appendChild(el('div', 'mini', c.zone + ' is on the wildcard certificate for this zone'));
       }
+      /* The same rule one level down: test.example.com rides on
+         *.test.example.com. The apex already has its own line above, so it is
+         not repeated here. */
+      var onOwnWild = (c.movedToWildcard || []).filter(function(n){ return n !== c.zone; });
+      if (onOwnWild.length) {
+        covers.appendChild(el('div', 'mini', onOwnWild.join(', ') +
+          (onOwnWild.length === 1 ? ' is on its wildcard certificate' : ' are on their wildcard certificates')));
+      }
       // The rule has changed what will be issued, but the certificate on disk
       // predates it and still carries the moved name - so it is still competing
       // for it wherever it is deployed.
