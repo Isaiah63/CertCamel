@@ -125,7 +125,11 @@
            "not referenced" and the fix dialog sends someone to check a bind
            line that was never the problem. */
         else if (n.crtListApi === false) {
-          d.textContent += '  ·  no crt-list API — certificates cannot be referenced';
+          /* Not "certificates cannot be referenced" - that was false. HAProxy
+             reads a crt-list from its bind line whether or not this API can edit
+             the file, so lists maintained by hand keep serving. What is missing
+             is Cert Camel's ability to add entries to them. */
+          d.textContent += '  ·  can’t edit crt-lists here — existing ones still work';
           d.className = 'lbdetail bad';
         }
       } else {
