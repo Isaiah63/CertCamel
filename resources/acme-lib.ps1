@@ -5778,24 +5778,35 @@ function Get-DataPlaneCrtLists {
       The crt-lists this API manages, or $null when it does not manage crt-lists
       at all - which is a capability answer, not an empty result.
 
-      Data Plane API 3.1 has NO crt-list routes whatsoever: storage and runtime
-      alike answer 404. 3.3 has both. That is safely distinguishable from "the
-      API manages none", because an empty storage listing answers 200 with an
-      empty array - verified against the maps and general endpoints on the same
-      build, which are configured but empty.
+      Two builds have been seen answer 404 to the listing: community Data Plane
+      API 3.1, which has no crt-list routes whatsoever, and HAPEE's Data Plane
+      v3.3.8-ee1. So this is NOT a version rule - this comment used to say "3.3
+      has both", and a 3.3 node proved it wrong. What a 404 establishes is only
+      that this node will not let Cert Camel list, and so not edit, its
+      crt-lists. That is safely distinguishable from "the API manages none",
+      because an empty storage listing answers 200 with an empty array.
 
-      Worth the distinction: on 3.1 a certificate uploads perfectly and then
-      nothing can ever reference it, and the bare 404 that used to surface read
-      as a mistyped path rather than as an API that cannot do this at all.
+      It does NOT mean crt-lists do not work on the node. HAProxy reads a crt-list
+      from its bind line whether or not this API can touch the file, and a list
+      maintained by hand keeps serving - Sync-HAProxyCrtList treats this as a
+      limit on editing, not as a failed deployment.
+
+      -Detail receives what the node actually said. It used to be thrown away,
+      which left an operator a confident explanation and nothing to check it
+      against.
     #>
-    param([string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion, [switch]$InsecureTls)
+    param([string]$BaseUrl, [string]$User, [string]$Password, [string]$ApiVersion, [switch]$InsecureTls,
+          [ref]$Detail)
 
     try {
         return @(Invoke-DataPlaneRequest -BaseUrl $BaseUrl -User $User -Password $Password `
                    -Path "/$ApiVersion/services/haproxy/storage/ssl_crt_lists" -InsecureTls:$InsecureTls)
     }
     catch {
-        if ($_.Exception.Message -match 'HTTP 404') { return $null }
+        if ($_.Exception.Message -match 'HTTP 404') {
+            if ($Detail) { $Detail.Value = ($_.Exception.Message -split "`n")[0].Trim() }
+            return $null
+        }
         throw
     }
 }
@@ -5956,20 +5967,32 @@ function Sync-HAProxyCrtList {
     }
 
     try {
-        # Can this API do crt-lists at all? $null means the routes are absent,
-        # which is a different failure from "manages none" and needs saying
-        # differently - there is nothing the operator can fix at this end.
+        # Can this API edit crt-lists at all? $null means the node will not even
+        # list them.
+        #
+        # That is a limit on EDITING, not a failed deployment, and treating it as
+        # one was wrong in a way that hurt. HAProxy reads a crt-list from its bind
+        # line whether or not this API can touch the file, so on a node whose
+        # lists are maintained by hand the certificate uploaded, loaded and was
+        # served - and the run was reported as failed anyway. The only escape was
+        # clearing the group's crt-list setting, which then made the Load
+        # balancers page lose track of the very frontend serving it.
+        #
+        # So say what was not done and leave the verdict to T3, which runs next
+        # and checks what the node actually serves. A certificate nobody put in
+        # the list still fails there, "on disk but not in use" - the safety this
+        # step gave is kept, and only the false failure goes.
+        $why   = $null
         $lists = Get-DataPlaneCrtLists -BaseUrl $BaseUrl -User $User -Password $Password `
-                   -ApiVersion $ApiVersion -InsecureTls:$InsecureTls
+                   -ApiVersion $ApiVersion -InsecureTls:$InsecureTls -Detail ([ref]$why)
         if ($null -eq $lists) {
             $v = Get-DataPlaneVersionString -BaseUrl $BaseUrl -User $User -Password $Password `
                    -ApiVersion $ApiVersion -InsecureTls:$InsecureTls
-            throw ("This node's Data Plane API$(if ($v) { " ($v)" }) has no crt-list API - " +
-                   'storage/ssl_crt_lists is not a route it serves, and neither is the runtime ' +
-                   'equivalent, so the certificate uploads and then nothing can reference it. ' +
-                   'Data Plane API 3.3 has these routes and 3.1 does not. Either upgrade this ' +
-                   "node's API, or clear the crt-list setting for this group and reference the " +
-                   'certificate from a bind line by hand.')
+            $out.ok     = $true
+            $out.action = 'not-editable'
+            $out.note   = "this node's Data Plane API$(if ($v) { " ($v)" }) does not let Cert Camel edit crt-lists" +
+                          $(if ($why) { " ($why)" } else { '' })
+            return $out
         }
 
         # The full path the entry must carry. Read it from the certificate's own

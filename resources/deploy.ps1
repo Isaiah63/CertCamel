@@ -340,7 +340,7 @@ try {
                         # line, and that genuinely is a warning.
                         if ($push.renamed) {
                             if ($crtListPath) {
-                                Write-Log "  $nodeName : stored as '$($push.storedName)' (the API rewrites dots) - the crt-list is kept in step with that name"
+                                Write-Log "  $nodeName : stored as '$($push.storedName)' (the API rewrites dots) - any crt-list entry must name that file"
                             } else {
                                 Write-Log "  $nodeName : stored as '$($push.storedName)', not '$($push.remoteName)' - your bind line must reference '$($push.storedName)'" 'warn'
                             }
@@ -357,7 +357,17 @@ try {
                                         -ApiVersion $push.apiVersion -CrtListPath $crtListPath `
                                         -CertStorageName $push.storedName -InsecureTls:$insecure
                             $nResult.crtList = $sync
-                            if ($sync.ok) {
+                            if ($sync.ok -and $sync.action -eq 'not-editable') {
+                                # Checked FIRST: the branches below would otherwise
+                                # print "already referenced", which is exactly what
+                                # nobody here knows. This node's lists are maintained
+                                # by hand, so say what was not done and what has to be
+                                # true, and let T3 - which checks what is actually
+                                # served - give the verdict.
+                                Write-Log "  $nodeName : crt-list not edited - $($sync.note)."
+                                Write-Log "      $($sync.path) must already list $($push.storedName); T3 below confirms whether it is served."
+                            }
+                            elseif ($sync.ok) {
                                 if ($sync.action -eq 'created') {
                                     Write-Log "  $nodeName : crt-list created - $($sync.path), containing $($push.storedName)" 'ok'
                                     if ($sync.path -ne $crtListPath) {

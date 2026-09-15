@@ -104,10 +104,11 @@ foreach ($t in $targets) {
 
             # The Data Plane API's own BUILD version, which is a different thing
             # from the /v3 path version already reported as apiVersion. Worth
-            # showing next to the HAProxy version: whether a node can manage
-            # crt-lists at all is a property of this number - 3.1 has no
-            # crt-list routes, 3.3 has them - so without it the warning below
-            # reads as arbitrary. Trimmed of the build hash the API appends.
+            # showing next to the HAProxy version, because whether a node lets
+            # Cert Camel edit crt-lists varies by build - and not as a simple
+            # version rule: community 3.1 has no crt-list routes, and HAPEE's
+            # v3.3.8-ee1 answers 404 as well. Trimmed of the build hash the API
+            # appends.
             $dpVersion = Get-DataPlaneVersionString -BaseUrl ([string]$n.url) -User $user -Password $pass `
                             -ApiVersion $s.apiVersion -InsecureTls:$insec
             if ($dpVersion) { $dpVersion = (([string]$dpVersion).Trim() -split '\s+')[0] }
@@ -118,13 +119,18 @@ foreach ($t in $targets) {
             # bind line must name the file that exists. Read rather than derived,
             # because a list somebody created by hand keeps its dots.
             try {
+                $why = $null
                 $cl = Get-DataPlaneCrtLists -BaseUrl ([string]$n.url) -User $user -Password $pass `
-                        -ApiVersion $s.apiVersion -InsecureTls:$insec
+                        -ApiVersion $s.apiVersion -InsecureTls:$insec -Detail ([ref]$why)
                 if ($null -eq $cl) {
-                    # Not an error, and worth saying: this API has no crt-list
-                    # routes at all, so nothing here can ever reference a
-                    # certificate. Data Plane API 3.1 is like this; 3.3 is not.
-                    Write-Line "    this API has no crt-list support - certificates can be stored but not referenced" 'warn'
+                    # Not an error, and worth saying precisely. This node will not
+                    # let Cert Camel list or edit its crt-lists - but HAProxy still
+                    # reads any crt-list a bind names, so lists maintained by hand
+                    # keep working and the certificates in them are still served.
+                    # The old wording, "certificates can be stored but not
+                    # referenced", was false on exactly the node that prompted this:
+                    # a frontend on the same page was serving one through a crt-list.
+                    Write-Line "    this node's API does not edit crt-lists$(if ($why) { " ($why)" }) - existing crt-lists still work; new certificates must be added to them by hand" 'warn'
                 } else {
                     $crtListApi = $true
                     $crtLists   = @($cl | ForEach-Object { [string]$_.file })
